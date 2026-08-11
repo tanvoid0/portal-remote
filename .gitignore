@@ -1,0 +1,30 @@
+# --- .NET / server ---
+server/**/bin/
+server/**/obj/
+*.user
+*.suo
+
+# --- Android / Gradle ---
+android/**/build/
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# --- IDE ---
+.idea/
+.vs/
+*.iml
+.vscode/
+
+# --- Claude Code local settings ---
+.claude/settings.local.json
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+desktop.ini
