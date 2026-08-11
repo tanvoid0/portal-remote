@@ -75,4 +75,8 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.accompanist.permissions)
+
+    // JVM-only: the mirror's touch->desktop transform can't be exercised on a
+    // device (injecting a pinch needs /dev/input access SELinux won't grant).
+    testImplementation(kotlin("test"))
 }

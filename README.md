@@ -18,21 +18,42 @@ docs/      design-system.md — shared design tokens/motion spec for both UIs
 | 0 | Pairing (QR / manual entry), WebSocket hello round-trip | ✅ Done, verified live |
 | 1 | Trackpad, keyboard, media keys | ✅ Done, verified live |
 | 2 | File browser: list / download / upload | ✅ Done, verified live |
-| 3 | Screen mirroring | ⬜ Not started |
+| 3 | Screen mirroring | ✅ Done, verified live |
 
-Phases 0–2 have been built **and exercised end-to-end** — real Android build,
+Phases 0–3 have been built **and exercised end-to-end** — real Android build,
 real Windows server, actual mouse movement/clicks measured, actual files
 uploaded and downloaded and diffed byte-for-byte, actual volume level read
-back from the Windows Core Audio API. This isn't just "the code compiles."
+back from the Windows Core Audio API, actual desktop frames streamed to a
+phone and tapped on with the resulting cursor position read back. This isn't
+just "the code compiles."
+
+**Phase 3 shape**: GDI `BitBlt` capture (with the mouse cursor composited in by
+hand — Windows doesn't include it in a screen grab) → JPEG → an MJPEG
+`multipart/x-mixed-replace` response on `/screen/mjpeg` → an Android `Image`
+sized to the frame's exact aspect ratio, so a touch is just a fraction of the
+picture. Taps go back over the existing control socket as
+`mouse_move_abs {nx, ny, mon}` — normalised 0..1 coordinates, so the phone
+never needs to know the desktop's pixel geometry. Capture defaults to the
+**primary monitor**, not the whole virtual desktop: on a three-monitor PC that
+would be a 5:1 letterbox strip on the phone. `/screen/monitors` lists the
+displays and the app shows a chip per display (plus "All") when there's more
+than one. Two quality presets — Smooth (15fps / 960px / q50) and Sharp
+(8fps / 1600px / q78) — because no single setting suits both "watch a video"
+and "read a line of code". Measured ~10fps and ~200KB/s at 960px/q50 over
+loopback.
+
+Pinch zooms up to 4× and two fingers pan once zoomed (at 1× the same two-finger
+drag scrolls the remote desktop instead, since there's nothing to pan). A
+finger is roughly 130 desktop pixels wide on a 3440px display shown at phone
+width, so zoom is what makes small targets actually hittable rather than a
+nicety.
 
 ### What's next — pick one
 
-- **Phase 3: screen mirroring.** `mss`/BitBlt-style capture → JPEG → MJPEG
-  `multipart/x-mixed-replace` stream → Android `Image` view with tap-to-click
-  passthrough. The one remaining piece of the original plan. Expect
-  noticeably higher latency than RDP/Moonlight; `dxcam`/Desktop Duplication
-  API is the upgrade path if MJPEG isn't good enough, H.264/WebRTC beyond
-  that.
+- **Mirror upgrades.** Desktop Duplication API (`dxcam`-style) instead of
+  BitBlt if the frame rate needs to go higher, H.264/WebRTC beyond that. Still
+  unimplemented: keyboard input directly from the mirror screen (today you
+  switch to the Keyboard tab for that).
 - **Gamepad emulation.** Explicitly dropped early on because no ViGEmBus
   driver was installed and the server was going to be Python. Neither
   blocker applies anymore — the server is .NET 8, and `Nefarius.ViGEm.Client`
@@ -93,6 +114,14 @@ the token from the server's `config.json`.
   holding the pairing token can fill the disk. Acceptable for a personal
   LAN tool; would want a cap before this became multi-user or
   internet-facing.
+- **The mirror streams whatever is on screen** to anyone holding the token,
+  including whatever happens to be open — password managers, private chats.
+  It's behind the same single token as everything else, so treat the token as
+  granting "sees and controls my desktop", not "can move my mouse". GDI
+  capture fails outright against the lock screen and the UAC secure desktop;
+  the stream handler treats that as a skipped frame and holds the response
+  open rather than dropping the client, so the mirror should resume on unlock
+  (coded for, not yet exercised live).
 - Anyone holding the pairing token has the practical equivalent of physical
   keyboard/mouse access to the PC — same trust model as RDP or TeamViewer.
   Rotate the token from the tray menu if it's ever suspected leaked.
@@ -116,3 +145,24 @@ that got root-caused and fixed rather than worked around:
    site through the blip — the first fix attempt used two call sites for
    "connected" vs. "reconnecting" and still lost state on the transition,
    which is itself a useful lesson about Compose recomposition identity.
+3. **Whole-desktop capture is the wrong default.** The mirror originally
+   captured the full virtual screen, which on the development PC is
+   7280×1440 across three monitors — a 5:1 strip roughly 250px tall on the
+   phone, i.e. useless. This only surfaced because the first captured frame
+   was actually looked at rather than assumed correct; the fix (per-monitor
+   capture defaulting to primary) reshaped the wire protocol too, since taps
+   now carry which monitor they're relative to.
+4. **A two-finger scroll ended in a right-click.** Found while building the
+   mirror's gesture handling, but the bug was already live in
+   `TrackpadScreen`: `totalMove` only accumulated in the one-finger branch, so
+   after any two-finger scroll it was still 0 and the release path read that
+   as a two-finger *tap*. Fixed in both handlers at the cause — two-finger
+   movement now counts towards `totalMove` like any other movement — rather
+   than by special-casing the release.
+
+Two things about the mirror are **not** verified live: pinch/pan and
+two-finger scroll (injecting real multitouch needs `/dev/input` write access,
+which SELinux denies on a production emulator image), and lock-screen
+resume. The pan/zoom coordinate transform is covered by JVM unit tests instead
+(`android/app/src/test/.../MirrorTransformTest.kt`, `gradlew testDebugUnitTest`)
+— that's the part where a mistake silently misplaces every click.

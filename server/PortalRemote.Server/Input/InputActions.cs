@@ -77,10 +77,23 @@ public static class InputActions
                 return null;
 
             case "mouse_move_abs":
+            {
+                // nx/ny (0..1 fractions of the monitor named by 'mon') take precedence
+                // over pixel x/y — the screen mirror has no reason to know desktop pixels.
+                var nx = GetDouble(msg, "nx");
+                if (nx is not null)
+                {
+                    var ny = GetDouble(msg, "ny")
+                        ?? throw new UnknownMessageException("mouse_move_abs with 'nx' also needs 'ny'");
+                    WinInput.MoveAbsoluteNormalized(nx.Value, ny, GetInt(msg, "mon"));
+                    return null;
+                }
+
                 WinInput.MoveAbsolute(
                     GetInt(msg, "x") ?? throw new UnknownMessageException("mouse_move_abs needs 'x'"),
                     GetInt(msg, "y") ?? throw new UnknownMessageException("mouse_move_abs needs 'y'"));
                 return null;
+            }
 
             case "mouse_click":
             {
@@ -167,6 +180,10 @@ public static class InputActions
     private static int? GetInt(JsonElement msg, string name) =>
         msg.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i)
             ? i : null;
+
+    private static double? GetDouble(JsonElement msg, string name) =>
+        msg.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d)
+            ? d : null;
 
     private static bool? GetBool(JsonElement msg, string name) =>
         msg.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False

@@ -13,6 +13,16 @@ object Protocol {
         put("t", "mouse_move_abs"); put("x", x); put("y", y)
     }
 
+    /** Point at a fraction (0..1) of [monitor]'s area — what the screen mirror sends,
+     *  since the phone knows where the finger landed in the mirrored image but not
+     *  what that is in desktop pixels. Null [monitor] means the primary display. */
+    fun mouseMoveNorm(nx: Float, ny: Float, monitor: Int? = null) = JSONObject().apply {
+        put("t", "mouse_move_abs")
+        put("nx", nx.coerceIn(0f, 1f).toDouble())
+        put("ny", ny.coerceIn(0f, 1f).toDouble())
+        if (monitor != null) put("mon", monitor)
+    }
+
     /** Full press-and-release when [down] is null, otherwise just that half of the click. */
     fun mouseClick(button: String, down: Boolean? = null) = JSONObject().apply {
         put("t", "mouse_click"); put("btn", button)

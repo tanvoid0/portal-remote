@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Drawing;
 using System.Runtime.InteropServices;
 
 namespace PortalRemote.Input;
@@ -124,6 +125,35 @@ public static partial class WinInput
         GetSystemMetrics(SmCyVirtualScreen)
     );
 
+    /// <summary>One attached display. <see cref="Index"/> is what clients pass back
+    /// as <c>mon</c>/<c>monitor</c> to pick this display.</summary>
+    public sealed record DisplayInfo(int Index, string Name, bool Primary, Rectangle Bounds);
+
+    /// <summary>Attached displays, in the order Windows reports them.</summary>
+    public static IReadOnlyList<DisplayInfo> Displays() =>
+        System.Windows.Forms.Screen.AllScreens
+            .Select((s, i) => new DisplayInfo(i, s.DeviceName, s.Primary, s.Bounds))
+            .ToList();
+
+    /// <summary>
+    /// Region a monitor index refers to: <c>null</c> means the primary display (the
+    /// sane default — mirroring a multi-monitor desktop onto a phone produces an
+    /// unreadable strip), a negative index means every monitor at once, and anything
+    /// out of range falls back to the full virtual desktop rather than throwing.
+    /// </summary>
+    public static Rectangle BoundsFor(int? monitor)
+    {
+        var (vx, vy, vw, vh) = VirtualScreen();
+        var all = new Rectangle(vx, vy, vw, vh);
+        if (monitor < 0) return all;
+
+        var displays = Displays();
+        if (monitor is null)
+            return displays.FirstOrDefault(d => d.Primary)?.Bounds ?? all;
+
+        return monitor < displays.Count ? displays[monitor.Value].Bounds : all;
+    }
+
     public static (int X, int Y) CursorPos() =>
         GetCursorPos(out var p) ? (p.X, p.Y) : (0, 0);
 
@@ -169,6 +199,20 @@ public static partial class WinInput
         var nx = Math.Clamp((int)Math.Round((x - vx) * 65535.0 / (vw - 1)), 0, 65535);
         var ny = Math.Clamp((int)Math.Round((y - vy) * 65535.0 / (vh - 1)), 0, 65535);
         Send(Mouse(nx, ny, 0, MouseEventMove | MouseEventAbsolute | MouseEventVirtualDesk));
+    }
+
+    /// <summary>
+    /// Move to a point given as a 0..1 fraction of a monitor (see <see cref="BoundsFor"/>).
+    /// The screen mirror sends taps this way: the phone knows where the finger landed
+    /// within the mirrored image and which monitor it asked for, nothing else, so the
+    /// desktop's pixel geometry stays here.
+    /// </summary>
+    public static void MoveAbsoluteNormalized(double fx, double fy, int? monitor = null)
+    {
+        var bounds = BoundsFor(monitor);
+        MoveAbsolute(
+            bounds.X + (int)Math.Round(Math.Clamp(fx, 0, 1) * (bounds.Width - 1)),
+            bounds.Y + (int)Math.Round(Math.Clamp(fy, 0, 1) * (bounds.Height - 1)));
     }
 
     public static void MouseButton(string button, bool down)

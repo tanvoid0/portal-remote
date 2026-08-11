@@ -15,8 +15,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
-$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+# Only fill these in when the environment hasn't already: the SDK doesn't always
+# live under LOCALAPPDATA (a second drive is a common choice), and overwriting a
+# working ANDROID_HOME with a guess just breaks the build.
+if (-not $env:JAVA_HOME) { $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr' }
+if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk" }
 
 if (-not (Test-Path $env:JAVA_HOME)) {
     throw "Android Studio JBR not found at $env:JAVA_HOME. Install Android Studio, or set JAVA_HOME to any JDK 17+."

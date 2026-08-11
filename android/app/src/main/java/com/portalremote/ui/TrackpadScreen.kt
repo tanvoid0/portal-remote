@@ -182,6 +182,12 @@ private fun TrackpadSurface(
                             GestureMode.TWO_FINGER -> {
                                 val avgDy = pressed.map { it.positionChange().y }.average().toFloat()
                                 event.changes.forEach { it.consume() }
+                                // Counts towards totalMove like one-finger movement does:
+                                // without this a two-finger *scroll* ends with totalMove
+                                // still at 0 and the release below fires a right-click.
+                                totalMove += pressed
+                                    .map { it.positionChange().getDistance() }
+                                    .average().toFloat()
                                 if (avgDy != 0f) {
                                     scrollRemainder += avgDy
                                     val notches = (scrollRemainder / SCROLL_PX_PER_NOTCH)

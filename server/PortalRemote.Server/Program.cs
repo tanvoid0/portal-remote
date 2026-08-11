@@ -5,6 +5,7 @@ using PortalRemote.Config;
 using PortalRemote.Control;
 using PortalRemote.Files;
 using PortalRemote.Input;
+using PortalRemote.Mirror;
 using PortalRemote.Pairing;
 using PortalRemote.Tray;
 
@@ -82,6 +83,7 @@ internal static class Program
 
         app.MapControlEndpoint(config, connectionState);
         app.MapFilesEndpoints(config);
+        app.MapScreenEndpoints(config);
 
         return app;
     }

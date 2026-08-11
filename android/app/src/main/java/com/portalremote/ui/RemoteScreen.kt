@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -32,13 +33,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.SavedHost
@@ -48,8 +50,12 @@ import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
 import org.json.JSONObject
 
-private enum class RemoteTab(val label: String) {
-    TRACKPAD("Trackpad"), KEYBOARD("Keyboard"), MEDIA("Media"), FILES("Files")
+private enum class RemoteTab(val label: String, val icon: ImageVector) {
+    TRACKPAD("Trackpad", Icons.Filled.TouchApp),
+    SCREEN("Screen", Icons.Filled.ScreenShare),
+    KEYBOARD("Keyboard", Icons.Filled.Keyboard),
+    MEDIA("Media", Icons.Filled.MusicNote),
+    FILES("Files", Icons.Filled.Folder),
 }
 
 /**
@@ -67,7 +73,7 @@ fun RemoteScreen(
     send: (JSONObject) -> Unit,
     onDisconnect: () -> Unit,
 ) {
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableStateOf(RemoteTab.TRACKPAD) }
 
     Scaffold(
         topBar = {
@@ -85,30 +91,14 @@ fun RemoteScreen(
         },
         bottomBar = {
             NavigationBar(containerColor = PortalRemoteTheme.extendedColors.surfaceRaised) {
-                NavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    icon = { Icon(Icons.Filled.TouchApp, contentDescription = null) },
-                    label = { Text(RemoteTab.TRACKPAD.label) },
-                )
-                NavigationBarItem(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    icon = { Icon(Icons.Filled.Keyboard, contentDescription = null) },
-                    label = { Text(RemoteTab.KEYBOARD.label) },
-                )
-                NavigationBarItem(
-                    selected = tab == 2,
-                    onClick = { tab = 2 },
-                    icon = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
-                    label = { Text(RemoteTab.MEDIA.label) },
-                )
-                NavigationBarItem(
-                    selected = tab == 3,
-                    onClick = { tab = 3 },
-                    icon = { Icon(Icons.Filled.Folder, contentDescription = null) },
-                    label = { Text(RemoteTab.FILES.label) },
-                )
+                RemoteTab.entries.forEach { entry ->
+                    NavigationBarItem(
+                        selected = tab == entry,
+                        onClick = { tab = entry },
+                        icon = { Icon(entry.icon, contentDescription = null) },
+                        label = { Text(entry.label) },
+                    )
+                }
             }
         },
     ) { padding ->
@@ -122,18 +112,19 @@ fun RemoteScreen(
         ) { selected ->
             Box(modifier = Modifier.fillMaxSize()) {
                 when (selected) {
-                    0 -> TrackpadScreen(
+                    RemoteTab.TRACKPAD -> TrackpadScreen(
                         onMove = { dx, dy -> send(Protocol.mouseMove(dx, dy)) },
                         onScroll = { dy -> send(Protocol.scroll(dy = dy)) },
                         onClick = { button, down -> send(Protocol.mouseClick(button, down)) },
                     )
-                    1 -> KeyboardScreen(
+                    RemoteTab.SCREEN -> ScreenScreen(host = host, send = send)
+                    RemoteTab.KEYBOARD -> KeyboardScreen(
                         onText = { s -> send(Protocol.text(s)) },
                         onTap = { key -> send(Protocol.tap(key)) },
                         onCombo = { keys -> send(Protocol.combo(*keys.toTypedArray())) },
                     )
-                    2 -> MediaScreen(onMedia = { action -> send(Protocol.media(action)) })
-                    else -> FilesScreen(host = host)
+                    RemoteTab.MEDIA -> MediaScreen(onMedia = { action -> send(Protocol.media(action)) })
+                    RemoteTab.FILES -> FilesScreen(host = host)
                 }
             }
         }
