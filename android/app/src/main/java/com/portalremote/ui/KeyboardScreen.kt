@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -36,11 +38,16 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 
 /** Non-empty placeholder so the field always has something for backspace to delete. */
 private const val SENTINEL = " "
+
+/** Length at which the capture buffer is trimmed back to [SENTINEL]. Only about
+ *  keeping the visible field short — nothing depends on the text that came before. */
+private const val MAX_CAPTURE_CHARS = 120
 
 /**
  * Captures soft-keyboard input and special keys, forwarding each as a protocol
@@ -54,46 +61,75 @@ fun KeyboardScreen(
     onTap: (key: String) -> Unit,
     onCombo: (keys: List<String>) -> Unit,
 ) {
-    var field by remember {
-        mutableStateOf(TextFieldValue(SENTINEL, selection = TextRange(SENTINEL.length)))
-    }
-    val focusRequester = remember { FocusRequester() }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        OutlinedTextField(
-            value = field,
-            onValueChange = { new ->
-                when {
-                    new.text.length > SENTINEL.length && new.text.startsWith(SENTINEL) ->
-                        onText(new.text.removePrefix(SENTINEL))
-                    new.text.length > field.text.length ->
-                        // Autocorrect/predictive text replaced rather than appended; best
-                        // effort is to send whatever is new at the end of the buffer.
-                        onText(new.text.takeLast(new.text.length - field.text.length))
-                    new.text.length < field.text.length ->
-                        repeat((field.text.length - new.text.length).coerceAtLeast(1)) {
-                            onTap("backspace")
-                        }
-                }
-                field = TextFieldValue(SENTINEL, selection = TextRange(SENTINEL.length))
-            },
-            label = { Text("Tap to type") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(focusRequester),
-        )
-
-        LaunchedEffect(Unit) { focusRequester.requestFocus() }
-
+        KeyCaptureField(onText = onText, onTap = onTap, modifier = Modifier.fillMaxWidth())
         SpecialKeyRow(onTap = onTap, onCombo = onCombo)
         ArrowPad(onTap = onTap)
     }
+}
+
+/**
+ * The soft-keyboard capture buffer, shared by [KeyboardScreen] and the mirror's
+ * inline keyboard. Not a document: it resets to [SENTINEL] after every keystroke so
+ * the cursor stays put and insert/delete can be inferred from the length change,
+ * which is what makes backspace work without a real text buffer to delete from.
+ */
+@Composable
+fun KeyCaptureField(
+    onText: (String) -> Unit,
+    onTap: (key: String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "Tap to type",
+) {
+    var field by remember {
+        mutableStateOf(TextFieldValue(SENTINEL, selection = TextRange(SENTINEL.length)))
+    }
+    // Deliberately NOT Compose state: onValueChange can fire several times before a
+    // recomposition lands, and diffing against a stale value is what used to drop and
+    // duplicate characters under fast input (measured: "phase3-keyboard-works"
+    // arriving at the PC as "paasase3kyybarrd-ok").
+    val sent = remember { arrayOf(SENTINEL) }
+    val focusRequester = remember { FocusRequester() }
+
+    OutlinedTextField(
+        value = field,
+        onValueChange = { new ->
+            val previous = sent[0]
+            // Diff on the common prefix rather than on length alone, so an autocorrect
+            // that rewrites the middle of a word replays as backspaces + retype
+            // instead of silently sending the wrong tail.
+            val shared = previous.commonPrefixWith(new.text).length
+            repeat(previous.length - shared) { onTap("backspace") }
+            if (new.text.length > shared) onText(new.text.substring(shared))
+
+            // Let the IME keep its own buffer — forcing the value back every keystroke
+            // is what desynchronised it. Only re-arm the sentinel once the field is
+            // empty (so the next backspace still has something to delete) or the
+            // buffer has grown long enough to be worth trimming.
+            if (new.text.isEmpty() || new.text.length > MAX_CAPTURE_CHARS) {
+                field = TextFieldValue(SENTINEL, selection = TextRange(SENTINEL.length))
+                sent[0] = SENTINEL
+            } else {
+                field = new
+                sent[0] = new.text
+            }
+        },
+        label = { Text(label) },
+        singleLine = true,
+        // The IME's own return key sends Enter to the PC. Without this it would be a
+        // "done" button that closes the keyboard and types nothing, which is the one
+        // key people reach for most after typing a line.
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+        keyboardActions = KeyboardActions(onSend = { onTap("enter") }),
+        modifier = modifier.focusRequester(focusRequester),
+    )
+
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
 }
 
 private data class SpecialKey(val label: String, val send: () -> Unit)

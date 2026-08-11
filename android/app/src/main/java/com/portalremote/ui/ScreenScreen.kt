@@ -15,8 +15,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -119,6 +122,7 @@ fun ScreenScreen(host: SavedHost, send: (JSONObject) -> Unit) {
     var frame by remember { mutableStateOf<Bitmap?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
+    var typing by remember { mutableStateOf(false) }
 
     // Held as MutableState rather than `by` delegates: the gesture handler runs
     // outside composition and needs the state objects themselves.
@@ -186,14 +190,30 @@ fun ScreenScreen(host: SavedHost, send: (JSONObject) -> Unit) {
             }
         }
 
+        // Typing while watching the screen you're typing into is the whole point, so
+        // the capture field sits under the frame rather than on its own tab. Same
+        // field as KeyboardScreen's — it is a keystroke buffer, not a document.
+        if (typing) {
+            KeyCaptureField(
+                onText = { send(Protocol.text(it)) },
+                onTap = { send(Protocol.tap(it)) },
+                label = "Typing to the PC",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
+
         MirrorControls(
             monitors = monitors,
             monitor = monitor,
             preset = preset,
             zoom = zoom.value,
+            typing = typing,
             onMonitor = { monitor = it },
             onPreset = { preset = it },
             onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
+            onToggleTyping = { typing = !typing },
         )
     }
 }
@@ -365,9 +385,11 @@ private fun MirrorControls(
     monitor: Int?,
     preset: MirrorPreset,
     zoom: Float,
+    typing: Boolean,
     onMonitor: (Int?) -> Unit,
     onPreset: (MirrorPreset) -> Unit,
     onResetZoom: () -> Unit,
+    onToggleTyping: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -398,6 +420,12 @@ private fun MirrorControls(
                 label = { Text(option.label) },
             )
         }
+        FilterChip(
+            selected = typing,
+            onClick = onToggleTyping,
+            leadingIcon = { Icon(Icons.Filled.Keyboard, contentDescription = null) },
+            label = { Text("Type") },
+        )
         // Pinching back to exactly 1x is fiddly, so offer the way out explicitly —
         // and only while there's something to undo.
         if (zoom > 1f) {

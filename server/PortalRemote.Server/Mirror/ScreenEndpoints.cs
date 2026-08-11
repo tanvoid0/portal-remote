@@ -66,15 +66,23 @@ public static class ScreenEndpoints
             using var ticker = new PeriodicTimer(TimeSpan.FromSeconds(1.0 / rate));
             var frames = 0;
             var reportedCaptureFailure = false;
+            // Capture cost is the mirror's real frame-rate ceiling (BitBlt + JPEG of a
+            // 3440x1440 monitor runs ~55ms), so report it rather than leaving the
+            // requested fps looking like the achieved one.
+            var captureTime = System.Diagnostics.Stopwatch.StartNew();
+            var captureTicks = 0L;
+            var streamTime = System.Diagnostics.Stopwatch.StartNew();
 
             try
             {
                 do
                 {
                     byte[] jpeg;
+                    var startedAt = captureTime.ElapsedTicks;
                     try
                     {
                         jpeg = ScreenCapture.Jpeg(monitor, frameWidth, frameQuality);
+                        captureTicks += captureTime.ElapsedTicks - startedAt;
                         reportedCaptureFailure = false;
                     }
                     catch (Exception ex) when (ex is Win32Exception or ExternalException or InvalidOperationException)
@@ -105,7 +113,12 @@ public static class ScreenEndpoints
             }
             finally
             {
-                log.LogInformation("Mirror ended for {Peer} after {Frames} frames", peer, frames);
+                var seconds = streamTime.Elapsed.TotalSeconds;
+                log.LogInformation(
+                    "Mirror ended for {Peer}: {Frames} frames in {Seconds:F1}s ({Achieved:F1}fps of {Requested} asked), {Capture:F0}ms avg capture",
+                    peer, frames, seconds,
+                    seconds > 0 ? frames / seconds : 0, rate,
+                    frames > 0 ? TimeSpan.FromTicks(captureTicks).TotalMilliseconds / frames : 0);
             }
         });
     }
