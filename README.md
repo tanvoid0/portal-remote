@@ -39,8 +39,17 @@ would be a 5:1 letterbox strip on the phone. `/screen/monitors` lists the
 displays and the app shows a chip per display (plus "All") when there's more
 than one. Two quality presets — Smooth (15fps / 960px / q50) and Sharp
 (8fps / 1600px / q78) — because no single setting suits both "watch a video"
-and "read a line of code". Measured ~10fps and ~200KB/s at 960px/q50 over
-loopback.
+and "read a line of code". Measured over loopback against a 3440×1440
+monitor: Smooth delivers **14.5 of 15fps at 477KB/s**, Sharp **8.1 of 8fps at
+1102KB/s**, with **51–57ms average capture+encode** per frame. That capture
+cost, not the network, is the ceiling — roughly 18fps for this monitor, so
+Smooth is deliberately near the top of what BitBlt can do and will fall short
+on a busy machine. The server logs achieved fps and average capture time when
+a stream ends, so this is observable rather than assumed.
+
+Typing is available on the mirror itself (the "Type" chip) as well as on the
+Keyboard tab — same capture field, so text goes to the PC while you watch the
+window it lands in.
 
 Pinch zooms up to 4× and two fingers pan once zoomed (at 1× the same two-finger
 drag scrolls the remote desktop instead, since there's nothing to pan). A
@@ -51,15 +60,17 @@ nicety.
 ### What's next — pick one
 
 - **Mirror upgrades.** Desktop Duplication API (`dxcam`-style) instead of
-  BitBlt if the frame rate needs to go higher, H.264/WebRTC beyond that. Still
-  unimplemented: keyboard input directly from the mirror screen (today you
-  switch to the Keyboard tab for that).
+  BitBlt — worth it now that capture is the measured bottleneck (~18fps
+  ceiling), not the network. H.264/WebRTC beyond that.
 - **Gamepad emulation.** Explicitly dropped early on because no ViGEmBus
   driver was installed and the server was going to be Python. Neither
   blocker applies anymore — the server is .NET 8, and `Nefarius.ViGEm.Client`
-  is a well-maintained NuGet package. Would need the ViGEmBus driver
-  installed on the PC (one-time, user-side) and a touch dual-stick + button
-  layout on the Android side.
+  is a well-maintained NuGet package. Still blocked on one thing, though:
+  ViGEmBus is a kernel driver and installing it is an admin, user-side
+  decision, so the whole feature would have to be written and shipped without
+  a single working test — no way to confirm a stick deflection actually
+  reaches a game. Install ViGEmBus first, then build it; a dual-stick UI with
+  an untested backend is scaffolding, not a feature.
 - **Polish pass.** A concurrent design-system rollout (see
   `docs/design-system.md`) landed color/type/motion tokens and press-scale
   feedback across most screens during this session, but it was still
@@ -88,6 +99,28 @@ the SDK user-locally rather than machine-wide.
 cd android
 .\run.ps1 -Launch
 ```
+
+**Shipping builds**:
+```powershell
+cd server
+.\publish.ps1
+```
+Produces `server\publish\PortalRemote.exe` — 79MB, self-contained, no .NET
+install and no `DOTNET_ROOT` needed, no console window (verified: served
+`/health` and captured a frame with `DOTNET_ROOT` unset). Trimming isn't
+supported for WinForms, so single-file compression is the only size lever;
+without it the same exe is 180MB.
+
+```powershell
+cd android
+.\gradlew.bat assembleRelease
+```
+Produces `app-release-unsigned.apk` (35MB). **Unsigned** — signing needs a
+keystore and password, which is a decision to make rather than a step to
+automate. Create one with `keytool -genkey -v -keystore portal-remote.jks
+-keyalg RSA -keysize 2048 -validity 10000 -alias portal`, keep it out of the
+repo, and wire a `signingConfigs` block reading from a gitignored
+`keystore.properties`.
 Needs `JAVA_HOME`/`ANDROID_HOME` pointed at a JDK 17+ and the Android SDK —
 `run.ps1` does this for you if you have Android Studio installed (uses its
 bundled JBR and SDK Manager location). On an emulator, the pairing QR won't
@@ -159,6 +192,17 @@ that got root-caused and fixed rather than worked around:
    as a two-finger *tap*. Fixed in both handlers at the cause — two-finger
    movement now counts towards `totalMove` like any other movement — rather
    than by special-casing the release.
+
+5. **The keyboard dropped characters and nobody noticed.** The capture field
+   forced its value back to a sentinel on every keystroke and diffed the next
+   callback against Compose state, which lags when `onValueChange` fires
+   several times before a recomposition. Typing by hand is slow enough to
+   hide it; driving it at machine speed is not — `phase3-keyboard-works`
+   arrived at the PC as `paasase3kyybarrd-ok`. This had been live since
+   Phase 1 and was only found because the mirror's new inline keyboard got
+   tested with `adb input text` rather than by thumb. It now diffs on the
+   common prefix against a value updated synchronously, and leaves the IME's
+   buffer alone.
 
 Two things about the mirror are **not** verified live: pinch/pan and
 two-finger scroll (injecting real multitouch needs `/dev/input` write access,

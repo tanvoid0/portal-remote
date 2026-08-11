@@ -1,6 +1,8 @@
 # --- .NET / server ---
 server/**/bin/
 server/**/obj/
+# publish.ps1 output — a self-contained 79MB exe has no business in git
+server/publish/
 *.user
 *.suo
 
