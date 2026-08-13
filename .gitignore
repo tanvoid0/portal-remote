@@ -17,6 +17,20 @@ android/captures/
 *.ap_
 *.dex
 
+# --- release signing ---
+# sign-setup.ps1 is this machine's, not the project's — see the revert of 1350818.
+# Ignored rather than merely untracked so `git add -A` can't sweep it back in.
+android/sign-setup.ps1
+# The keystore and its passwords live under $HOME and never land here on their own.
+# These are the net for the case where -BackupPath is aimed inside the repo anyway —
+# and the script refuses that unless `git check-ignore` says all three are covered, so
+# without these lines it fails closed rather than writing an untracked private key.
+# The .b64 is just as much the private key as the .jks it is encoded from.
+*.jks
+*.jks.b64
+*.keystore
+release.local.env
+
 # --- docs ---
 # generate.py --png output; the README uses the SVGs, these are a local convenience
 docs/assets/png/
