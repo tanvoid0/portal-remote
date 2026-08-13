@@ -188,16 +188,9 @@ public sealed class DlnaRenderer : IDisposable
         return $"{IPAddress.Loopback}:{config.RunningPort}";
     }
 
-    private static string? HeaderValue(string message, string name)
-    {
-        foreach (var line in message.Split('\n'))
-        {
-            var trimmed = line.Trim();
-            if (trimmed.StartsWith($"{name}:", StringComparison.OrdinalIgnoreCase))
-                return trimmed[(name.Length + 1)..].Trim().Trim('"');
-        }
-        return null;
-    }
+    /// <summary>Shared with the sender half, which parses the same headers off the
+    /// replies to its own searches.</summary>
+    private static string? HeaderValue(string message, string name) => Cast.Ssdp.HeaderValue(message, name);
 
     public void Dispose()
     {

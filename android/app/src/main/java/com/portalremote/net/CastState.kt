@@ -11,8 +11,20 @@ import org.json.JSONObject
  * link to whatever is registered for it and has no way back to it. Showing transport
  * buttons for the second case would offer control that doesn't exist.
  */
-data class CastState(val url: String, val via: String, val title: String? = null) {
-    val controllable: Boolean get() = via == RECEIVER || via == MPV
+data class CastState(
+    val url: String,
+    val via: String,
+    val title: String? = null,
+    /** [CastTarget.id] of where it landed, and that target's name — so "Casting" can say
+     *  *to what*, which matters the moment there is more than one screen in the list. */
+    val target: String? = null,
+    val targetName: String? = null,
+) {
+    /** Everything except a shell launch: the PC handed that link to whatever was
+     *  registered for it and has no way back to it. Written as "not shell" rather than
+     *  a list of the good ones so a protocol added on the PC works here without an
+     *  app update. */
+    val controllable: Boolean get() = via.isNotBlank() && via != SHELL
 
     /** The title if the caster sent one, otherwise the link itself. */
     val label: String get() = title ?: url
@@ -24,10 +36,20 @@ data class CastState(val url: String, val via: String, val title: String? = null
          *  commands as a receiver page, so nothing downstream tells them apart. */
         const val MPV = "mpv"
 
-        /** `{"t":"cast_ok","url":…,"via":"receiver"|"mpv"|"shell"}`, or null if it isn't one. */
+        /** `ShellExecute` on the PC — fire and forget, nothing to drive afterwards. */
+        const val SHELL = "shell"
+
+        /** `{"t":"cast_ok","url":…,"via":"receiver"|"mpv"|"shell"|"roku"|"dlna",
+         *  "target":id,"name":…}`, or null if it isn't one. */
         fun fromAck(json: JSONObject, title: String? = null): CastState? {
             val url = json.optString("url").ifBlank { return null }
-            return CastState(url = url, via = json.optString("via"), title = title)
+            return CastState(
+                url = url,
+                via = json.optString("via"),
+                title = title,
+                target = json.optString("target").ifBlank { null },
+                targetName = json.optString("name").ifBlank { null },
+            )
         }
     }
 }

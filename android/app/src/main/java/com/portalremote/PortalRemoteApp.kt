@@ -34,6 +34,9 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
             val nowPlaying by viewModel.nowPlaying.collectAsState()
             val cast by viewModel.cast.collectAsState()
             val castStatus by viewModel.castStatus.collectAsState()
+            val castTargets by viewModel.castTargets.collectAsState()
+            val castTarget by viewModel.castTarget.collectAsState()
+            val castScanning by viewModel.castScanning.collectAsState()
             val aiState by viewModel.aiState.collectAsState()
             val chat by viewModel.chat.collectAsState()
             val chatStreaming by viewModel.chatStreaming.collectAsState()
@@ -104,6 +107,11 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             nowPlaying = nowPlaying,
                             cast = cast,
                             castStatus = castStatus,
+                            castTargets = castTargets,
+                            castTarget = castTarget,
+                            castScanning = castScanning,
+                            onCastTarget = { viewModel.chooseCastTarget(it) },
+                            onScanCastTargets = { viewModel.refreshCastTargets() },
                             shares = shares,
                             onCastFile = { viewModel.castLocalFile(it) },
                             aiState = aiState,

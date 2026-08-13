@@ -21,6 +21,7 @@ import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
+import com.portalremote.net.CastTarget
 import com.portalremote.net.NowPlaying
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
@@ -59,6 +60,11 @@ fun ControlScreen(
     onSeek: (ms: Long) -> Unit,
     cast: CastState?,
     castStatus: CastStatus?,
+    castTargets: List<CastTarget>,
+    castTarget: String?,
+    castScanning: Boolean,
+    onCastTarget: (String?) -> Unit,
+    onScanCastTargets: () -> Unit,
     onCast: (url: String) -> Unit,
     onCastFile: (Uri) -> String?,
     onPlayer: (JSONObject) -> Unit,
@@ -112,6 +118,11 @@ fun ControlScreen(
                         onSeek = onSeek,
                         cast = cast,
                         castStatus = castStatus,
+                        castTargets = castTargets,
+                        castTarget = castTarget,
+                        castScanning = castScanning,
+                        onCastTarget = onCastTarget,
+                        onScanCastTargets = onScanCastTargets,
                         onCast = onCast,
                         onCastFile = onCastFile,
                         onPlayer = onPlayer,

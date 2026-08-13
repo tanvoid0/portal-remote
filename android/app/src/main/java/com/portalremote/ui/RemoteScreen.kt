@@ -86,6 +86,7 @@ import com.portalremote.data.SavedHost
 import com.portalremote.net.AiState
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
+import com.portalremote.net.CastTarget
 import com.portalremote.net.ChatTurn
 import com.portalremote.net.NowPlaying
 import com.portalremote.net.Protocol
@@ -133,6 +134,11 @@ fun RemoteScreen(
     nowPlaying: NowPlaying?,
     cast: CastState?,
     castStatus: CastStatus?,
+    castTargets: List<CastTarget>,
+    castTarget: String?,
+    castScanning: Boolean,
+    onCastTarget: (String?) -> Unit,
+    onScanCastTargets: () -> Unit,
     shares: List<ShareEntry>,
     onCastFile: (Uri) -> String?,
     aiState: AiState?,
@@ -278,14 +284,21 @@ fun RemoteScreen(
                             onSeek = { ms -> gatedSend(Protocol.seek(ms)) },
                             cast = cast,
                             castStatus = castStatus,
-                            onCast = { url -> gatedSend(Protocol.cast(url)) },
+                            castTargets = castTargets,
+                            castTarget = castTarget,
+                            castScanning = castScanning,
+                            onCastTarget = onCastTarget,
+                            onScanCastTargets = onScanCastTargets,
+                            onCast = { url -> gatedSend(Protocol.cast(url, target = castTarget)) },
                             onCastFile = onCastFile,
                             onPlayer = gatedSend,
                             onPower = { mode -> gatedSend(Protocol.power(mode)) },
                         )
                         RemoteTab.BROWSER -> BrowserScreen(
                             session = browser,
-                            onCast = { url, title -> gatedSend(Protocol.cast(url, title)) },
+                            // The browser's cast button obeys the same chosen screen as
+                            // the Media tab's — one choice, not one per entry point.
+                            onCast = { url, title -> gatedSend(Protocol.cast(url, title, castTarget)) },
                         )
                         RemoteTab.SCREEN -> ScreenScreen(
                             host = host,

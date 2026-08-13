@@ -65,10 +65,24 @@ object Protocol {
     }
 
     /** Ask the PC to open a media URL — phase 4a of `docs/phase4-casting.md`. The
-     *  title is what the receiver shows: a page title beats a CDN filename. */
-    fun cast(url: String, title: String? = null) = JSONObject().apply {
+     *  title is what the receiver shows: a page title beats a CDN filename.
+     *
+     *  [target] is a [CastTarget.id]; left out, the PC picks its own best local route,
+     *  which is what every caller did before there was anything else to pick. A TV is
+     *  never chosen for you — putting a video on a screen across the room is a decision,
+     *  not a fallback. */
+    fun cast(url: String, title: String? = null, target: String? = null) = JSONObject().apply {
         put("t", "cast"); put("url", url)
         if (!title.isNullOrBlank()) put("title", title)
+        if (!target.isNullOrBlank()) put("target", target)
+    }
+
+    /** Ask for the cast targets — step 4k of `docs/phase4-casting.md`. Answered from the
+     *  PC's cache straight away; with [scan] it also starts an SSDP sweep for Rokus and
+     *  DLNA renderers, which takes a few seconds and pushes a second `cast_targets` when
+     *  it finds them. */
+    fun castTargets(scan: Boolean = false) = JSONObject().apply {
+        put("t", "cast_targets"); put("scan", scan)
     }
 
     /**

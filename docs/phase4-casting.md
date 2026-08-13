@@ -114,7 +114,7 @@ console and tablet on the network with no per-vendor work at all.
 | **Anything with a browser** — PC, smart TV, console, tablet | **our own receiver web page** (served by the phone or the PC) | universal | **S** |
 | **Chromecast / Google TV / Android TV / Nest Hub / Chromecast-built-in TVs** | Google Cast **sender**, Default Media Receiver `CC1AD845` | open — needs **no registration** | M |
 | **Roku** (sticks, Roku TVs) | ECP: plain HTTP on :8060, SSDP discovery | fully open + documented | **S** |
-| **DLNA renderers** — Xbox, PS4, many Samsung/Sony/Philips TVs, AV receivers, VLC, Kodi | UPnP `AVTransport` | open standard | M (one impl, many devices) |
+| **DLNA renderers** — Xbox, PS4, many Samsung/Sony/Philips TVs, AV receivers, Kodi | UPnP `AVTransport` | open standard | M (one impl, many devices) |
 | **LG webOS** | SSAP over `wss://tv:3001` | community-documented, TLS mandatory since 2023 | M |
 | **Samsung Tizen** | DLNA + DIAL (proprietary Smart View for the rest) | partial | M |
 | **Kodi** | JSON-RPC `Player.Open` | trivial | S |
@@ -566,7 +566,7 @@ implementation effort, not calendar time.
 | **4g** | **Browser receiver page** — a static page + tiny WS, served by the phone or the PC. Open it on the TV/console/laptop; it plays what the phone sends. | **S** | Every device with a browser. Best reach-per-line in the whole document |
 | **4h** | **Google Cast sender** (SDK, Default Media Receiver `CC1AD845`). | M | Every Chromecast, Google TV, Android TV, Nest Hub, Chromecast-built-in TV |
 | **4i** | **Roku** ECP adapter (HTTP :8060) + SSDP discovery. | **S** | All Roku sticks and Roku TVs. Also gives you SSDP, which 4j reuses |
-| **4j** | **DLNA sender** (`AVTransport`). | M | Xbox, PS4, a lot of Samsung/Sony/Philips TVs, AV receivers, VLC, Kodi |
+| **4j** | **DLNA sender** (`AVTransport`). | M | Xbox, PS4, a lot of Samsung/Sony/Philips TVs, AV receivers, Kodi |
 | **4k** | Discovery aggregator + `androidx.mediarouter` providers → one cast button, one list. | M | Ties 4g–4j into a single UX |
 | **4l** | **DLNA *renderer* on the PC** (the reverse of 4j). | M | Web Video Caster, VLC and gallery apps can target our PC |
 | **4m** | LG webOS (SSAP), Samsung (DIAL), Kodi (JSON-RPC), Apple TV (AirPlay). | M / M / S / **L** | Per-vendor grind. Do them by demand, not by list-completeness |
@@ -1008,7 +1008,106 @@ simply doesn't offer a volume slider, which beats offering one that does nothing
 **Not verified:** a real sender app. What is proven is every byte of our side of SSDP and
 SOAP against a hand-written controller; VLC's or Web Video Caster's own quirks are not.
 
-**Not built yet, in order:** everything in §11 from 4c onward.
+### One player interface, and the first two protocols behind it (4c + 4i + 4j + 4k)
+
+The abstraction §4 asks for, written **before** the second and third backends rather than
+after — which is the only reason there is no `switch (deviceType)` anywhere outside
+`Cast/`.
+
+`Cast/RemotePlayer.cs` is the whole contract: `Id`, `Name`, `Kind`, `Caps`, `Available`,
+`Live`, `Load`, `Command`, `PollAsync`. The three routes that already existed became
+adapters in the same file (`ReceiverPlayer`, `MpvRemotePlayer`, `ShellPlayer`, ten lines
+each), and `CastRouter` turned from a three-branch `if` into a registry that resolves a
+target id and owns the poll loop. **The refactor is what made the two senders small**:
+`RokuPlayer.cs` and `DlnaPlayer.cs` add no protocol knowledge anywhere else — not to
+`InputActions`, not to `CastHub`, not to the phone.
+
+**The status trick is the important bit.** Every adapter reports by publishing into
+`CastHub.OnStatus` *in the receiver page's shape*. So a Roku and a Samsung TV get the
+phone's existing scrub bar, play/pause toggle and "nothing is attached" handling with no
+new wire message and no new parsing on the phone. The only genuinely new message is
+`cast_targets`.
+
+`Caps` exists for one honest reason: **a Roku has no absolute seek in its entire control
+protocol.** ECP's transport surface is the physical remote's buttons — `Play` (which
+toggles), `Fwd`, `Rev`, `Home`. So the phone draws a read-only progress bar for a Roku
+and a real scrubber for DLNA, rather than a slider that swallows the drag. The skip
+buttons map onto `Fwd`/`Rev`, whose jump size the Roku decides, so ±10s means "a skip" —
+noted in the code, because there is nothing better to upgrade to.
+
+Discovery (4k) is `Cast/Ssdp.cs`: `M-SEARCH` for `roku:ecp` and `MediaRenderer:1`, then
+each hit is asked what it is over its own protocol (`/query/device-info`, `device.xml`) —
+neither search reply carries a usable name, and a house with two Rokus needs "Bedroom".
+Three decisions worth keeping:
+
+- **A socket per interface, not one on the default route.** A PC with a VPN, a Hyper-V
+  switch or a second NIC sends multicast out whichever the metric picks, which is
+  regularly not the Wi-Fi the TV is on. The failure looks like "no devices found" with
+  nothing to debug.
+- **On demand, not a background loop.** SSDP is multicast chatter, and a TV that is off
+  will not appear on its own. The phone asks when the picker opens; the PC answers from
+  cache instantly and pushes again when the sweep finishes, so the list is never blank
+  while it waits.
+- **A LAN device is never chosen automatically.** With no `target`, routing is exactly
+  what it was before targets existed: receiver page, then mpv, then the shell. Putting a
+  video on a television nobody asked for is not a fallback.
+
+**Verified** — by pointing the 4j sender at this PC's own 4l renderer, which speaks the
+protocol a TV speaks, so the whole chain runs for real:
+
+| Case | Result |
+|---|---|
+| `M-SEARCH` for `MediaRenderer:1` → `device.xml` → target list | `CRYOSTATION (Portal Remote)` appears as a `dlna` target |
+| `Caps` from the description | `seek: true`; `volume: false`, correctly, since that renderer publishes no `RenderingControl` |
+| `SetAVTransportURI` + `Play` with DIDL-Lite | URL arrived; title `Loopback & <test>` survived **both** rounds of XML escaping |
+| `Pause` | reached the player behind the renderer |
+| `Seek` to 90s | crossed as `0:01:30` and parsed back to exactly `90.0` |
+| Unknown `target` id | an error, not a silent fall back to the PC |
+| No `target` with a receiver page open | still routes to the page — the pre-4c behaviour, unchanged |
+| Transport with nothing attached | still an error rather than a silent no-op |
+
+34 unit tests (`server/PortalRemote.Tests`, `dotnet test`) cover the parsers underneath:
+Roku's `93000 ms` position format and its `close`/`buffer`/`play` states, UPnP `H:MM:SS`
+both ways, `URLBase` overriding the description address, a `MediaRenderer` with no
+`AVTransport` being rejected rather than listed, and DIDL escaping.
+
+**Not verified — needs hardware:**
+
+- **A real Roku.** Everything in `RokuPlayer` is written against the published ECP spec
+  and unit-tested against its documented XML, but no `/launch/2213` has ever reached a
+  device. Assume the first run finds something.
+- **A real third-party renderer** — a Samsung/Sony TV, an Xbox, VLC. Our own renderer is
+  a faithful controller test but shares none of their quirks.
+- **The phone-side picker** on a real handset. It compiles and its parsing is unit-tested.
+
+**Not built:** Google Cast (4h) — the next adapter, and now genuinely just an adapter.
+`androidx.mediarouter` (the rest of 4k) is unnecessary while the PC does the discovering.
+The proxy consequence in §4 still stands and is the real limit: **a Roku and a DLNA
+renderer fetch the URL naked**, so a link lifted from a site that checks `Referer` or
+`Cookie` will 403 on them where it plays on the PC. Files picked on the phone (4d) are
+unaffected — those are served without a session in the first place.
+
+**One bug this found, worth keeping written down.** The PC answers its own `M-SEARCH`,
+so with `EnableDlnaRenderer` on it **discovered itself** and offered "cast to this PC" a
+second time by the long way round. Selecting it is not merely redundant: `DlnaEndpoints`
+hands what it receives straight back to `CastRouter`, so a transport command recurses
+into the loop it just came from and dies on the HTTP timeout — measured at exactly 5.0s,
+surfacing on the phone as *"no cast receiver is attached"* with the whole casting card
+disappearing. `CastRouter.OwnRendererUuid` (set from `Program.cs`) now drops our own USN
+during discovery. A device must never list itself as a target.
+
+Note this also retired the loopback harness: the verification table above was run
+**before** the self-filter existed, and cannot be reproduced now without disabling it.
+Reaching a real renderer is the only way forward from here.
+
+**A correction to §4's target matrix:** it listed **VLC** as a DLNA renderer. It isn't
+one. VLC is a UPnP *client* — it browses DLNA media **servers** and plays their content —
+and its Playback ▸ Renderer menu is Chromecast output, i.e. a sender. It can neither
+receive an `AVTransport` cast nor originate one, so it is no target for 4j and no
+controller for 4l. Corrected in the tables above; not re-checked against an install,
+because there is no VLC on this machine.
+
+**Not built yet, in order:** 4h, 4m, 4n, 4o, 4p from §11.
 
 ## Sources
 

@@ -21,6 +21,7 @@ import com.portalremote.net.ChatEvent
 import com.portalremote.net.ChatTurn
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
+import com.portalremote.net.CastTarget
 import com.portalremote.net.ConnectionState
 import com.portalremote.net.MediaServer
 import com.portalremote.net.NowPlaying
@@ -85,6 +86,9 @@ private const val PLAYER_OK = "player_ok"
 /** What the receiver page reports it is doing, forwarded by the server. */
 private const val CAST_STATUS = "cast_status"
 
+/** The screens this PC can cast to, pushed whenever a scan changes the list. */
+private const val CAST_TARGETS = "cast_targets"
+
 /** Whether the assistant's backend is up, pushed by the PC. */
 private const val AI_STATE = "ai_state"
 
@@ -131,6 +135,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      *  Null when nothing is attached or it hasn't reported yet — which is what tells
      *  the transport to fall back to blind buttons rather than draw an empty bar. */
     val castStatus: StateFlow<CastStatus?> = _castStatus.asStateFlow()
+
+    private val _castTargets = MutableStateFlow<List<CastTarget>>(emptyList())
+
+    /** Every screen the PC can reach — itself, an open receiver page, and whatever the
+     *  last LAN scan found. Empty until the picker is opened, since asking costs a
+     *  round trip and most casts never leave the PC. */
+    val castTargets: StateFlow<List<CastTarget>> = _castTargets.asStateFlow()
+
+    private val _castTarget = MutableStateFlow<String?>(null)
+
+    /** The [CastTarget.id] the next cast goes to, or null for "let the PC choose".
+     *  Sticky, so casting three links in a row to the TV is one choice, not three. */
+    val castTarget: StateFlow<String?> = _castTarget.asStateFlow()
+
+    private val _castScanning = MutableStateFlow(false)
+
+    /** A LAN sweep is running. SSDP takes seconds, so the picker says so rather than
+     *  looking like a list that is simply short. */
+    val castScanning: StateFlow<Boolean> = _castScanning.asStateFlow()
 
     private val _aiState = MutableStateFlow<AiState?>(null)
 
@@ -273,6 +296,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     return@collect
                 }
+                if (json.optString("t") == CAST_TARGETS) {
+                    _castTargets.value = CastTarget.listFromPush(json)
+                    _castScanning.value = CastTarget.scanningFromPush(json)
+                    // The PC is the authority on where the current cast landed — a
+                    // second phone, or the PC's own DLNA renderer, can move it.
+                    CastTarget.activeFromPush(json)?.let { _castTarget.value = it }
+                    // A target that has gone (TV switched off, receiver tab closed) must
+                    // not stay selected, or the next cast fails with "no cast target
+                    // called…" instead of quietly going to the PC.
+                    _castTarget.value = _castTarget.value?.takeIf { chosen ->
+                        _castTargets.value.any { it.id == chosen }
+                    }
+                    return@collect
+                }
                 if (json.optString("t") == AI_STATE) {
                     _aiState.value = AiState.fromPush(json)
                     return@collect
@@ -318,6 +355,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     // every press are worse than no buttons.
                     _cast.value = null
                     _castStatus.value = null
+                    // The target list is the PC's, not ours — a different PC (or the
+                    // same one restarted) has a different set of screens in reach.
+                    _castTargets.value = emptyList()
+                    _castTarget.value = null
+                    _castScanning.value = false
                 }
             }
         }
@@ -697,8 +739,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         val url = server.urlFor(id, local) ?: return "Couldn't open a port on this phone"
-        send(Protocol.cast(url, name))
+        send(Protocol.cast(url, name, _castTarget.value))
         return null
+    }
+
+    /**
+     * Ask the PC what it can cast to, and sweep the LAN for Rokus and DLNA renderers if
+     * [scan] — step 4k of `docs/phase4-casting.md`. The PC answers from its cache
+     * immediately and pushes again a few seconds later with whatever the sweep found, so
+     * the picker is never blank while it waits.
+     */
+    fun refreshCastTargets(scan: Boolean = true) = send(Protocol.castTargets(scan))
+
+    /** Choose where the next cast goes. Null hands the decision back to the PC, which
+     *  prefers a receiver page, then mpv, then the desktop's default player. */
+    fun chooseCastTarget(id: String?) {
+        _castTarget.value = id
     }
 
     /**
@@ -709,7 +765,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val key = "$token@$address"
         if (mediaKey != key) {
             mediaServer?.close()
-            mediaServer = runCatching { MediaServer(token).apply { start(address) } }.getOrNull()
+            mediaServer = runCatching { MediaServer().apply { start(address) } }.getOrNull()
             mediaKey = if (mediaServer != null) key else null
         }
         return mediaServer

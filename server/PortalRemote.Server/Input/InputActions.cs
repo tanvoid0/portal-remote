@@ -150,14 +150,28 @@ public static class InputActions
                 // open rather than earning an endpoint of its own. Where it lands is
                 // CastRouter's decision, shared with the DLNA renderer.
                 var url = GetString(msg, "url") ?? throw new UnknownMessageException("cast needs 'url'");
-                var (checkedUrl, via) = Cast.CastRouter.Cast(url, GetString(msg, "title"));
-                return new { t = "cast_ok", url = checkedUrl, via };
+                // 'target' is optional and names one of the ids from cast_targets. Left
+                // out, the router picks the best local route, exactly as it did before
+                // there was anything else to pick.
+                var (checkedUrl, via, target, name) =
+                    Cast.CastRouter.Cast(url, GetString(msg, "title"), GetString(msg, "target"));
+                return new { t = "cast_ok", url = checkedUrl, via, target, name };
             }
 
             case "cast_status":
                 // Same shape the hub pushes unprompted, so a phone that asks and a
                 // phone that waits are looking at one message type, not two.
                 return Cast.CastHub.Instance.Snapshot();
+
+            case "cast_targets":
+            {
+                // Answer from what is already known so the picker draws immediately, and
+                // kick off the LAN scan behind it — SSDP takes seconds, and a spinner
+                // over an empty list is a worse answer than "this PC, and hold on".
+                // The scan pushes a second cast_targets when it finds anything.
+                if (GetBool(msg, "scan") == true) _ = Cast.CastRouter.ScanAsync(force: true);
+                return Cast.CastRouter.Snapshot();
+            }
 
             case "player":
             {

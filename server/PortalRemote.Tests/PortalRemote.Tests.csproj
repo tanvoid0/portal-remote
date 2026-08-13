@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The first tests on the server side. Scope is deliberately narrow: the pure
+       parsers behind the cast protocols (docs/phase4-casting.md 4c/4i/4j), where a
+       mistake is silent — a scrub bar in the wrong place, or a TV that never appears
+       in the picker. Anything that needs a real Roku, a real renderer or a real
+       desktop is not testable here and is listed as outstanding in the README. -->
+  <PropertyGroup>
+    <!-- Matches the server's TFM: it is a WinForms/WinRT assembly and cannot be
+         referenced from a plain net8.0 project. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PortalRemote.Server\PortalRemote.Server.csproj" />
+  </ItemGroup>
+
+</Project>

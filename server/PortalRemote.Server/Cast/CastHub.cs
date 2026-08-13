@@ -81,11 +81,12 @@ public sealed class CastHub
         lock (gate)
         {
             receivers.RemoveAll(s => s.State != WebSocketState.Open);
-            // A running mpv is a receiver as far as the phone is concerned: it holds a
-            // position, it takes transport commands, and it can go away. The phone
-            // draws its controls from this one boolean and does not need to learn the
-            // difference between a browser tab and a player window.
-            attached = receivers.Count > 0 || MpvPlayer.Instance.Running;
+            // A running mpv, a Roku or a TV across the room is a receiver as far as the
+            // phone is concerned: each holds a position, takes transport commands, and
+            // can go away. The phone draws its controls from this one boolean and does
+            // not need to learn the difference between a browser tab, a player window
+            // and something speaking DLNA.
+            attached = receivers.Count > 0 || CastRouter.LiveElsewhere;
             status = lastStatus;
         }
 

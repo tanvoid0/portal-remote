@@ -12,6 +12,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -37,9 +40,11 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import com.portalremote.data.SavedHost
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
+import com.portalremote.net.CastTarget
 import com.portalremote.net.CastUrl
 import com.portalremote.net.MediaApi
 import com.portalremote.net.NowPlaying
@@ -99,6 +105,11 @@ fun MediaScreen(
     onSeek: (ms: Long) -> Unit,
     cast: CastState?,
     castStatus: CastStatus?,
+    castTargets: List<CastTarget>,
+    castTarget: String?,
+    castScanning: Boolean,
+    onCastTarget: (String?) -> Unit,
+    onScanCastTargets: () -> Unit,
     onCast: (url: String) -> Unit,
     onCastFile: (Uri) -> String?,
     onPlayer: (JSONObject) -> Unit,
@@ -111,11 +122,21 @@ fun MediaScreen(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        CastTargets(castTargets, castTarget, castScanning, onCastTarget, onScanCastTargets)
+
         CastLink(onCast, onCastFile)
 
         cast?.let {
             Spacer(Modifier.height(16.dp))
-            CastTransport(cast = it, status = castStatus, onPlayer = onPlayer)
+            CastTransport(
+                cast = it,
+                status = castStatus,
+                // Unknown target means one of the PC's own routes, which all seek. A
+                // Roku is the case this exists for: its entire control protocol is the
+                // physical remote's buttons, so there is nothing to drag towards.
+                canSeek = castTargets.firstOrNull { t -> t.id == it.target }?.seek ?: true,
+                onPlayer = onPlayer,
+            )
         }
 
         Spacer(Modifier.height(24.dp))
@@ -354,6 +375,76 @@ private fun formatTime(ms: Long): String {
  *  gone before it starts reading as the current state of anything. */
 private const val CAST_ACK_MS = 4_000L
 
+/**
+ * Where the next cast goes — steps 4c/4k of `docs/phase4-casting.md`.
+ *
+ * A chip row rather than a sheet, for the same reason the mirror's monitor picker is
+ * one (`docs/design-system.md` §7): it is a setting you change *while* looking at the
+ * thing it affects, and a dialog would put a modal between the two.
+ *
+ * "This PC" is the unselected state, not a chip of its own — leaving it alone hands the
+ * choice back to the PC, which prefers an open receiver page, then mpv, then whatever
+ * the desktop has registered. The list is asked for on first look rather than kept
+ * fresh: SSDP is multicast chatter, and a TV that is off is not going to appear on its
+ * own anyway.
+ */
+@OptIn(ExperimentalLayoutApi::class) // FlowRow
+@Composable
+private fun CastTargets(
+    targets: List<CastTarget>,
+    chosen: String?,
+    scanning: Boolean,
+    onChoose: (String?) -> Unit,
+    onScan: () -> Unit,
+) {
+    // Once per visit to this screen. A scan costs a few seconds of the PC's time and a
+    // burst of multicast; the PC caches it, so reopening the tab is cheap.
+    LaunchedEffect(Unit) { onScan() }
+
+    // Anything beyond the PC's own three routes. With none found there is nothing to
+    // pick between, so the row stays out of the way entirely.
+    val remote = targets.filter { it.kind !in LOCAL_KINDS }
+    if (remote.isEmpty() && !scanning) return
+
+    Text("Cast to", style = MaterialTheme.typography.titleMedium)
+    FlowRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FilterChip(
+            selected = chosen == null,
+            onClick = { onChoose(null) },
+            leadingIcon = { Icon(Icons.Filled.Computer, contentDescription = null) },
+            label = { Text("This PC") },
+        )
+        remote.forEach { target ->
+            FilterChip(
+                selected = chosen == target.id,
+                onClick = { onChoose(target.id) },
+                leadingIcon = { Icon(Icons.Filled.Tv, contentDescription = null) },
+                label = { Text(target.name) },
+            )
+        }
+        // Not a spinner: the row is already useful, and this is the one line that
+        // distinguishes "nothing on this network" from "still looking".
+        if (scanning) {
+            Text(
+                "Looking for screens…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        } else {
+            TextButton(onClick = onScan) { Text("Scan again") }
+        }
+    }
+}
+
+/** The PC's own three routes, which the "This PC" chip stands for collectively. */
+private val LOCAL_KINDS = setOf(CastState.RECEIVER, CastState.MPV, CastState.SHELL)
+
 @Composable
 private fun CastLink(onCast: (url: String) -> Unit, onCastFile: (Uri) -> String?) {
     var typed by remember { mutableStateOf("") }
@@ -405,7 +496,11 @@ private fun CastLink(onCast: (url: String) -> Unit, onCastFile: (Uri) -> String?
     }
     lastSent?.let {
         Text(
-            "Opening on the PC",
+            // Not "on the PC" any more: since the target picker, this may be heading for
+            // a television. Where it actually landed is named by the Casting card below,
+            // which knows because the server said so — this line only has to not lie in
+            // the moment before that arrives.
+            "Sent",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
@@ -473,8 +568,18 @@ private const val SKIP_FORWARD_SECONDS = 30.0
  * would claim a position we don't have.
  */
 @Composable
-private fun CastTransport(cast: CastState, status: CastStatus?, onPlayer: (JSONObject) -> Unit) {
-    Text("Casting", style = MaterialTheme.typography.titleMedium)
+private fun CastTransport(
+    cast: CastState,
+    status: CastStatus?,
+    canSeek: Boolean,
+    onPlayer: (JSONObject) -> Unit,
+) {
+    // Naming the screen matters the moment there is more than one: "Casting" alone
+    // leaves the user to work out whether the last press went to the TV or the PC.
+    Text(
+        cast.targetName?.let { "Casting to $it" } ?: "Casting",
+        style = MaterialTheme.typography.titleMedium,
+    )
     Text(
         cast.label,
         style = MaterialTheme.typography.bodySmall,
@@ -500,7 +605,7 @@ private fun CastTransport(cast: CastState, status: CastStatus?, onPlayer: (JSONO
         return
     }
 
-    status?.let { CastProgress(it, onPlayer) }
+    status?.let { CastProgress(it, canSeek, onPlayer) }
 
     Row(
         modifier = Modifier.padding(top = 12.dp),
@@ -545,10 +650,12 @@ private fun CastTransport(cast: CastState, status: CastStatus?, onPlayer: (JSONO
  * an incoming position until a settle timer releases it, or the bar fights the drag.
  *
  * A live stream reports no duration and gets the elapsed time only: there is no end to
- * scrub towards, and a full-width bar would imply one.
+ * scrub towards, and a full-width bar would imply one. Same treatment for a receiver
+ * with no absolute seek in its protocol ([canSeek]) — the times still tick, because
+ * knowing where you are is useful even when you cannot change it.
  */
 @Composable
-private fun CastProgress(status: CastStatus, onPlayer: (JSONObject) -> Unit) {
+private fun CastProgress(status: CastStatus, canSeek: Boolean, onPlayer: (JSONObject) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(dragging) {
         if (dragging == null) return@LaunchedEffect
@@ -559,7 +666,7 @@ private fun CastProgress(status: CastStatus, onPlayer: (JSONObject) -> Unit) {
     val position = rememberPlayhead(status)
     val shown = dragging?.toLong() ?: position
 
-    if (status.seekable) {
+    if (status.seekable && canSeek) {
         Slider(
             value = shown.toFloat(),
             onValueChange = { dragging = it },

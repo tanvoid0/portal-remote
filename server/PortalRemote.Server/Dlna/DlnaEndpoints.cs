@@ -97,7 +97,7 @@ public static class DlnaEndpoints
         {
             // Same validation as everything else: only http(s) reaches a player, so a
             // controller cannot turn "cast this" into "run this".
-            CastRouter.Cast(url, title);
+            CastRouter.Cast(url, title, targetId: null);
             return Soap("SetAVTransportURI", AvTransport);
         }
         catch (Input.UnknownMessageException)

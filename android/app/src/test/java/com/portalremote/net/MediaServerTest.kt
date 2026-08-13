@@ -13,9 +13,12 @@ import kotlin.test.assertTrue
  * the auth are the whole point of the class, and a mock of them would only test itself.
  */
 class MediaServerTest {
-    private val token = "s3cret-token"
     private val body = ByteArray(1000) { (it % 251).toByte() }
-    private val server = MediaServer(token).apply { start("127.0.0.1") }
+    private val server = MediaServer().apply { start("127.0.0.1") }
+
+    /** The server's own secret, not the PC pairing token — these URLs get handed to a
+     *  television by the Roku and DLNA senders, which log them. */
+    private val token = server.urlSecret
     private val id = server.offer(
         MediaServer.Item("clip.mp4", "video/mp4", body.size.toLong()) { offset ->
             ByteArrayInputStream(body, offset.toInt(), body.size - offset.toInt())

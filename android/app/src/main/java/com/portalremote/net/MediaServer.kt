@@ -25,8 +25,17 @@ import kotlin.concurrent.thread
  * **Only ids minted by [offer] are servable.** No path from the wire is ever resolved
  * against the filesystem, which is the whole of the traversal defence — the attacker
  * here is on the PC side of a connection this phone opened.
+ *
+ * The URL carries [secret], which is this server's own and **not the pairing token**.
+ * That distinction became load-bearing with the Roku and DLNA senders (4i/4j): those
+ * URLs are handed to a television, which logs them and shows them in its own status —
+ * and the pairing token is the credential for seeing and controlling the PC's desktop.
+ * This one grants exactly "read the files this phone offered", and dies with the process.
  */
-class MediaServer(private val token: String) : Closeable {
+class MediaServer : Closeable {
+
+    /** Minted per instance. Never leaves this phone except in the URLs it hands out. */
+    private val secret = newSecret()
 
     /**
      * A file this phone has agreed to serve. [open] is given a byte offset because a
@@ -76,7 +85,7 @@ class MediaServer(private val token: String) : Closeable {
 
     /** The full URL to hand the PC, or null before [start]. */
     fun urlFor(id: String, address: String): String? =
-        if (port < 0) null else "http://$address:$port/f/$id?token=$token"
+        if (port < 0) null else "http://$address:$port/f/$id?token=$secret"
 
     override fun close() {
         items.clear()
@@ -129,8 +138,12 @@ class MediaServer(private val token: String) : Closeable {
             .firstOrNull { it.startsWith("token=") }
             ?.removePrefix("token=")
             ?: return false
-        return MessageDigest.isEqual(presented.toByteArray(), token.toByteArray())
+        return MessageDigest.isEqual(presented.toByteArray(), secret.toByteArray())
     }
+
+    /** What [urlFor] puts in the URL. Exposed so a test can present it; nothing in the
+     *  app reads it, because nothing in the app needs to. */
+    internal val urlSecret: String get() = secret
 
     private fun send(output: OutputStream, item: Item, rangeHeader: String?, body: Boolean) {
         val range = parseRange(rangeHeader, item.size)
@@ -191,12 +204,10 @@ class MediaServer(private val token: String) : Closeable {
     }
 
     /** Unguessable, because it is the only thing between a file and anyone who can
-     *  reach this port with the token. */
-    private fun newId(): String {
-        val bytes = ByteArray(ID_BYTES)
-        random.nextBytes(bytes)
-        return bytes.joinToString("") { "%02x".format(it) }
-    }
+     *  reach this port with the secret. */
+    private fun newId(): String = randomHex(ID_BYTES)
+
+    private fun newSecret(): String = randomHex(SECRET_BYTES)
 
     companion object {
         private const val BACKLOG = 8
@@ -204,8 +215,15 @@ class MediaServer(private val token: String) : Closeable {
         private const val COPY_BUFFER = 64 * 1024
         private const val MAX_LINE = 8 * 1024
         private const val ID_BYTES = 12
+        private const val SECRET_BYTES = 24
 
         private val random = SecureRandom()
+
+        private fun randomHex(bytes: Int): String {
+            val buffer = ByteArray(bytes)
+            random.nextBytes(buffer)
+            return buffer.joinToString("") { "%02x".format(it) }
+        }
 
         /**
          * `bytes=start-end`, `bytes=start-` or `bytes=-suffix`, clamped to [size].

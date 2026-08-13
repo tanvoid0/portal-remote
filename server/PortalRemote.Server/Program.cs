@@ -58,6 +58,14 @@ internal static class Program
         // mpv reports through the same hub, so the line above covers it too.
         MpvPlayer.Instance.ConfiguredPath = config.MpvPath;
 
+        // A LAN scan takes seconds, so the phone is answered from the cache and told
+        // again when the Rokus and TVs turn up — otherwise the picker is a list that
+        // silently grew after the user stopped looking at it.
+        CastRouter.TargetsChanged += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
         // The assistant's backend is a separate app the user starts independently, so
         // "not running" is the normal case and the phone is told rather than left to
         // find out by failing a request — docs/phase7-assistant.md §4.
@@ -70,6 +78,13 @@ internal static class Program
         // Built before the app so the endpoints can be mapped against it; it doesn't
         // touch the network until Start().
         using var dlna = new DlnaRenderer(config);
+
+        // We answer our own M-SEARCH, so without this the PC discovers itself and offers
+        // "cast to this PC" a second time by the long way round — and a transport command
+        // sent to it recurses straight back into this router. Set unconditionally: the
+        // renderer can be switched on in config between runs, and a stale id here would
+        // filter nothing.
+        CastRouter.OwnRendererUuid = dlna.Uuid;
 
         var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, dlna);
 

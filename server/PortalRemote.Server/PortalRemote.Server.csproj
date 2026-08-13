@@ -33,6 +33,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The cast adapters are internal on purpose — nothing outside Cast/ should know
+         a Roku from a DLNA renderer — but their parsers are exactly what's worth
+         testing. -->
+    <InternalsVisibleTo Include="PortalRemote.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The cast receiver page is embedded, not copied: publish.ps1 produces a
          single-file exe, and a loose .html next to it would not survive that. -->
     <EmbeddedResource Include="Cast\receiver.html" LogicalName="PortalRemote.Cast.receiver.html" />

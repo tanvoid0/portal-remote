@@ -19,7 +19,7 @@ docs/      design-system.md — shared design tokens/motion spec for both UIs
 | 1 | Trackpad, keyboard, media keys | ✅ Done, verified live |
 | 2 | File browser: list / download / upload | ✅ Done, verified live |
 | 3 | Screen mirroring | ✅ Done, verified live |
-| 4 | Casting: link handoff, mpv, in-app browser, browser receiver, local files | 🟡 4a/4b/4d/4e/4f/4g built; Cast/Roku/DLNA senders not |
+| 4 | Casting: link handoff, mpv, in-app browser, browser receiver, local files, Roku + DLNA senders | 🟡 4a–4g, 4i, 4j, 4k, 4l built; DLNA verified live, Roku needs a device |
 | 5 | Quick share: clipboard, links, images, files | ✅ Built; server verified live, phone half not yet |
 | 7 | Assistant: chatbot + actions via agent-platform | 🟡 7a/7b built, not yet driven live; actions (7c) not |
 
@@ -96,6 +96,29 @@ rather than the socket — a real cover is ~190KB, and the state messages are ~2
 This also buys the two things a media key can't express: a **scrubber** (absolute seek,
 where the player allows it) and a play/pause button that knows which one it is.
 
+**Casting past the PC**: the Media tab has a **"Cast to" chip row** — this PC, or a Roku
+or DLNA renderer found on the network. One interface sits behind all of them
+(`IRemotePlayer`: the receiver page, mpv, `ShellExecute`, Roku over ECP, DLNA over
+AVTransport), written *before* the second and third protocols rather than after, which is
+why adding one touches nothing outside `server/PortalRemote.Server/Cast/`. Every adapter
+reports its position in the receiver page's shape, so a television gets the phone's
+existing scrub bar and play/pause toggle **with no phone-side protocol code at all**.
+
+Two consequences worth knowing before you use it. A Roku's entire control protocol is its
+physical remote's buttons, so it has **no absolute seek** — the phone says so by drawing a
+read-only progress bar for one and a real scrubber for a DLNA renderer, rather than a
+slider that ignores the drag. And a Roku or a TV **fetches the URL naked** — no `Referer`,
+no `Cookie` — so a link lifted from a site that checks either will 403 there while playing
+fine on the PC. Files picked on the phone are unaffected; those are served without a
+session in the first place.
+
+Discovery is the PC's job, not the phone's: SSDP is multicast, and the PC is already awake,
+already on the wire, and already speaking the renderer half of the same protocol. It scans
+when the picker opens, answers from cache instantly and pushes again when the sweep lands,
+so the list is never blank while it waits — and it sends the search out **every** interface
+rather than the default route, because a VPN or a Hyper-V switch otherwise sends it
+somewhere the TV isn't. A LAN device is never selected for you.
+
 ### What's next — pick one
 
 - **Phase 4: casting (phone → PC and beyond).** Web-Video-Caster-style: an in-app
@@ -107,8 +130,7 @@ where the player allows it) and a play/pause button that knows which one it is.
   browser can't and reports a real position, files on the phone are served to the PC
   over range requests (4d), and whichever target is playing pushes its position back
   so the phone has a **scrub bar and a play/pause toggle that knows which one it
-  is**. Next: Google Cast / Roku / DLNA senders, which are adapters behind the same
-  interface — extract `RemotePlayer` (4c) before the first of them.
+  is**. Next: a Google Cast sender (4h), which is now genuinely just one more adapter.
 - **Phase 7: assistant.** A chatbot and an action-taking assistant in the app,
   backed by the agent-platform API over loopback from the PC — the phone never talks
   to it directly. Planned in [docs/phase7-assistant.md](docs/phase7-assistant.md).
@@ -164,6 +186,19 @@ the SDK user-locally rather than machine-wide.
 cd android
 .\run.ps1 -Launch
 ```
+
+**Tests** — JVM-only on both sides, no device or PC state required:
+```powershell
+cd server
+dotnet test
+```
+```powershell
+cd android
+.\gradlew.bat testDebugUnitTest
+```
+The server suite covers the cast protocol parsers (Roku ECP, UPnP times, device
+descriptions, DIDL escaping); the Android one covers URL normalising, the ad-block
+rules, range parsing, the mirror's pan/zoom transform and the wire-message shapes.
 
 **Shipping builds**:
 ```powershell
@@ -251,8 +286,22 @@ Three ways in, in the order the app offers them:
   the stream handler treats that as a skipped frame and holds the response
   open rather than dropping the client, so the mirror should resume on unlock
   (coded for, not yet exercised live).
+- **A file cast from the phone to a TV carries its own secret, not the pairing
+  token.** The phone serves picked files at `http://phone:port/f/<id>?token=…`, and
+  that URL is handed to whatever plays it — which, since the Roku and DLNA senders
+  landed, can be a television that logs it and shows it in its own status. So the
+  phone's media server mints its **own** per-process secret rather than reusing the
+  pairing token: the URL grants "read the files this phone offered", never "see and
+  control the PC's desktop". The id in the path is 96 unguessable bits on top of that,
+  and both die when the app's process does.
+- **Casting to a third-party device sends it the URL, naked.** A Roku or a DLNA
+  renderer fetches what you give it with no `Referer` and no `Cookie` — that is a
+  property of their protocols, not a choice here. It means a link behind a login will
+  fail there rather than leak the session, but it also means the URL itself (and
+  anything in its query string) is visible to that device and to anything on the LAN
+  that can read its state. Only the PC's own player is ever handed headers.
 - **The DLNA renderer is unauthenticated, and off by default.** Turning on
-  `EnableDlnaRenderer` in `config.json` lets VLC, Web Video Caster and gallery
+  `EnableDlnaRenderer` in `config.json` lets Web Video Caster, BubbleUPnP and gallery
   apps cast to this PC — and they cannot present the pairing token, which is the
   whole point of speaking their protocol. So while it is on, **anyone on the same
   network can put a video on this screen.** They cannot do anything else: the URL
@@ -314,3 +363,32 @@ which SELinux denies on a production emulator image), and lock-screen
 resume. The pan/zoom coordinate transform is covered by JVM unit tests instead
 (`android/app/src/test/.../MirrorTransformTest.kt`, `gradlew testDebugUnitTest`)
 — that's the part where a mistake silently misplaces every click.
+
+The DLNA *sender* was verified by pointing it at this PC's own DLNA *renderer*, which
+speaks the protocol a television speaks: real SSDP on the multicast group, a real
+`device.xml`, real `SetAVTransportURI`/`Play`/`Pause`/`Seek` over SOAP, with the title
+surviving both rounds of XML escaping and a seek to 90s crossing as `0:01:30` and coming
+back as exactly `90.0`. That covers our half of the protocol, not any vendor's quirks.
+That harness has since been retired by its own findings — the PC no longer lists itself
+(casting to yourself recurses into the router and times out), so reproducing it needs a
+real renderer.
+
+The cast picker, a cast to a discovered LAN target, the moving scrub bar and the
+transport were then driven **on a real handset** over wireless `adb`, and a file cast
+from the phone was fetched back from the PC to confirm the URL carries the media
+server's own secret (`200`, byte-exact, with `Range` honoured) while the pairing token
+is rejected (`401`).
+
+### Still needs hardware — the outstanding to-do list
+
+Everything here is written and unit-tested; none of it has met the device it is for.
+
+| Needs | To verify |
+|---|---|
+| **A Roku** | The whole ECP sender: `/launch/2213`, the `Play` key's toggle semantics, `Fwd`/`Rev` skip sizes, `/query/media-player` against a real firmware |
+| **A DLNA TV, Xbox or Kodi** | A third-party renderer's quirks — the protocol is proven, the vendors aren't. Not VLC: it browses DLNA *servers* and casts to Chromecast, it is not a renderer |
+| **An Android handset** | The phone half of quick share (phase 5); pinch/pan and two-finger scroll on the mirror (SELinux blocks synthetic multitouch on an emulator). The cast picker and phone-served files are now done |
+| **A locked PC** | The mirror resuming after a lock-screen or UAC blackout — coded for, never watched |
+| **A machine with WoL in BIOS** | Wake-on-LAN actually waking something |
+| **A running `agent-platformd`** | Phases 7a and 7b, which have never spoken to a live backend |
+| **ViGEmBus installed** | Gamepad emulation, which isn't written for exactly this reason |
