@@ -251,6 +251,14 @@ Three ways in, in the order the app offers them:
   the stream handler treats that as a skipped frame and holds the response
   open rather than dropping the client, so the mirror should resume on unlock
   (coded for, not yet exercised live).
+- **The DLNA renderer is unauthenticated, and off by default.** Turning on
+  `EnableDlnaRenderer` in `config.json` lets VLC, Web Video Caster and gallery
+  apps cast to this PC — and they cannot present the pairing token, which is the
+  whole point of speaking their protocol. So while it is on, **anyone on the same
+  network can put a video on this screen.** They cannot do anything else: the URL
+  goes through the same validation as the phone's, so only `http`/`https` ever
+  reaches a player, and there is no other action on that surface. The startup
+  banner says when it is on.
 - Anyone holding the pairing token has the practical equivalent of physical
   keyboard/mouse access to the PC — same trust model as RDP or TeamViewer.
   Rotate the token from the app window if it's ever suspected leaked.
