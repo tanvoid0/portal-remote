@@ -18,6 +18,12 @@ Every `v*` tag builds both halves and attaches them to a
 `PortalRemote.exe` (self-contained, no .NET needed) and `PortalRemote-<version>.apk`.
 Run the exe on the PC, install the APK on the phone, scan the QR code.
 
+Both halves update themselves from those releases: the PC's tray menu has **Check
+for updates…** (it downloads the new exe, swaps it in and restarts), and the
+phone's **Settings → Updates** downloads the new APK and hands it to the system
+installer. Nothing is downloaded until you say yes, and neither half phones home
+otherwise — the only request is to GitHub's public release API, when you ask.
+
 ## Status
 
 | Phase | What | Status |

@@ -12,7 +12,10 @@
 #   .\publish.ps1 -Output D:\out
 
 param(
-    [string]$Output = (Join-Path $PSScriptRoot 'publish')
+    [string]$Output = (Join-Path $PSScriptRoot 'publish'),
+    # Stamped into the assembly and reported by ServerInfo.Version, which is what the
+    # tray's update check compares against GitHub. CI passes the tag being built.
+    [string]$Version = '0.1.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +36,7 @@ $Project = Join-Path $PSScriptRoot 'PortalRemote.Server\PortalRemote.Server.cspr
 # it roughly halves the .exe in exchange for a slower first start.
 Write-Host "Publishing to $Output ..." -ForegroundColor Cyan
 & $DotnetExe publish $Project `
+    -p:Version=$Version `
     -c Release `
     -r win-x64 `
     --self-contained true `

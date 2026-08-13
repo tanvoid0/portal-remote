@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Downloaded update APKs, and nothing else — the cache so the system can
+         reclaim them, in their own folder so this grant never widens. -->
+    <cache-path name="updates" path="updates/" />
+</paths>

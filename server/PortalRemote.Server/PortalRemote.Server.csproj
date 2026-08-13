@@ -14,6 +14,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PortalRemote</AssemblyName>
+    <!-- Overridden by the release workflow with the tag being built; ServerInfo reads
+         it back at runtime and the tray's update check compares it to GitHub. -->
+    <Version>0.1.0</Version>
     <RootNamespace>PortalRemote</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Brand mark, generated from Theme/BrandMark.cs's geometry — see

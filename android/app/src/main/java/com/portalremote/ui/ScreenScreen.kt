@@ -100,8 +100,8 @@ enum class MirrorPreset(val label: String, val fps: Int, val width: Int, val qua
     }
 }
 
-/** Total movement (px) below which a touch counts as a tap rather than a drag. */
-private const val TAP_SLOP = 18f
+// Tap slop is shared with the trackpad (see `PadGesture.kt`) — the same finger doing
+// the same thing on either surface has to mean the same thing.
 
 private enum class TouchMode { WAITING, POINT, DRAG, TWO_FINGER, RAIL }
 

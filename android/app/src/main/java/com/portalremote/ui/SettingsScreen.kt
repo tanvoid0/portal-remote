@@ -199,6 +199,11 @@ fun SettingsScreen(
             InfoRow("Server version", hello.version)
             InfoRow("App version", appVersion())
 
+            HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
+            SectionHeader("Updates")
+
+            UpdateSection(currentVersion = appVersion())
+
             TextButton(
                 onClick = { confirmForget = true },
                 modifier = Modifier.padding(horizontal = 8.dp),

@@ -15,7 +15,11 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       - name: Publish single-file exe
-        run: ./publish.ps1 -Output ${{ github.workspace }}/out
+        # The tag without its v is the version the tray reports and compares when it
+        # checks for updates; a dispatch build with no tag keeps the csproj default.
+        run: |
+          $version = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '0.1.0' }
+          ./publish.ps1 -Output ${{ github.workspace }}/out -Version $version
         shell: pwsh
         working-directory: server
       - uses: actions/upload-artifact@v4

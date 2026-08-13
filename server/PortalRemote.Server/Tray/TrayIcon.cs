@@ -9,6 +9,7 @@ using PortalRemote.Files;
 using PortalRemote.Pairing;
 using PortalRemote.Share;
 using PortalRemote.Theme;
+using PortalRemote.Update;
 
 namespace PortalRemote.Tray;
 
@@ -100,6 +101,7 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add("Copy address", null, (_, _) => CopyAddress());
         menu.Items.Add("Open shared folder", null, (_, _) => OpenShareFolder());
         menu.Items.Add("Fix network access…", null, (_, _) => FixNetworkAccess());
+        menu.Items.Add("Check for updates…", null, async (_, _) => await CheckForUpdates());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => _onExit());
 
@@ -271,6 +273,69 @@ public sealed class TrayIcon : IDisposable
                 ? "Portal Remote is now allowed through Windows Firewall. Try connecting from your phone again."
                 : "You can add it yourself in Windows Security under Firewall & network "
                   + "protection → Allow an app through firewall.");
+    }
+
+    /// <summary>
+    /// The whole update story for a downloaded .exe: ask GitHub what the newest release
+    /// is, and — if the user says so — replace this .exe with it and restart into it.
+    /// Nothing is downloaded before they agree, and nothing is swapped without the
+    /// old build being kept until the next start (see <see cref="UpdateCheck"/>).
+    /// </summary>
+    private async Task CheckForUpdates()
+    {
+        ShowWindow();
+
+        ReleaseInfo? release;
+        try
+        {
+            release = await UpdateCheck.LatestAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            TokenDialog.Show(
+                _window,
+                "Could not check for updates",
+                "GitHub could not be reached. Check this PC's internet connection and try again.");
+            return;
+        }
+
+        if (release is null || !UpdateCheck.IsNewer(release.Version, ServerInfo.Version))
+        {
+            TokenDialog.Show(
+                _window,
+                "Up to date",
+                $"{ServerInfo.Name} {ServerInfo.Version} is the newest release.");
+            return;
+        }
+
+        var install = TokenDialog.Show(
+            _window,
+            $"Update to {release.Version}?",
+            $"This PC is running {ServerInfo.Version}. Installing downloads the new version, "
+            + "replaces this one and restarts it.\n\nYour phone will reconnect on its own; "
+            + "pairing is not lost.",
+            confirmText: "Update",
+            cancelText: "Not now");
+        if (!install) return;
+
+        try
+        {
+            var exe = await UpdateCheck.DownloadAndSwapAsync(release);
+            UpdateCheck.Relaunch(exe);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException
+                                       or TaskCanceledException or InvalidOperationException)
+        {
+            TokenDialog.Show(
+                _window,
+                "The update did not install",
+                $"{ex.Message}\n\nYou can download the new version yourself from the project's "
+                + "GitHub releases page.");
+            return;
+        }
+
+        // The replacement cannot bind the port until this process lets go of it.
+        _onExit();
     }
 
     public void Notify(string title, string message) =>

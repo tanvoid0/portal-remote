@@ -13,6 +13,7 @@ using PortalRemote.Mirror;
 using PortalRemote.Pairing;
 using PortalRemote.Share;
 using PortalRemote.Tray;
+using PortalRemote.Update;
 
 namespace PortalRemote;
 
@@ -31,6 +32,10 @@ internal static class Program
             return Reachability.InstallFirewallRule();
 
         ApplicationConfiguration.Initialize();
+
+        // If we are the freshly installed build, the one we replaced is still sitting
+        // next door as .old — nothing holds it open now.
+        UpdateCheck.CleanUp();
 
         var config = ServerConfig.Load();
         var connectionState = new ConnectionState();
