@@ -5,6 +5,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 using PortalRemote.Ai;
 using PortalRemote.Config;
+using PortalRemote.Devices;
 using PortalRemote.Control;
 using PortalRemote.Files;
 using PortalRemote.Pairing;
@@ -30,6 +31,7 @@ public sealed class TrayIcon : IDisposable
     private readonly ShareHub _share;
     private readonly AiAssistant _assistant;
     private readonly AiHealth _ai;
+    private readonly DeviceRegistry _devices;
     private readonly Action _onExit;
     private readonly NotifyIcon _icon;
     private Icon _idleIcon;
@@ -61,6 +63,7 @@ public sealed class TrayIcon : IDisposable
         ShareHub share,
         AiAssistant assistant,
         AiHealth ai,
+        DeviceRegistry devices,
         Action onExit)
     {
         _config = config;
@@ -69,6 +72,7 @@ public sealed class TrayIcon : IDisposable
         _share = share;
         _assistant = assistant;
         _ai = ai;
+        _devices = devices;
         _onExit = onExit;
 
         // The tray owns the only window, so it's the only thing that can put an
@@ -222,7 +226,7 @@ public sealed class TrayIcon : IDisposable
     public void ShowWindow()
     {
         if (_window is null || _window.IsDisposed)
-            _window = new MainForm(_config, _connectionState, _share, _ai) { OpenAssistant = ShowAssistant };
+            _window = new MainForm(_config, _connectionState, _share, _ai, _devices) { OpenAssistant = ShowAssistant };
         else
             _window.Refresh(_config);
 
@@ -355,21 +359,40 @@ public sealed class TrayIcon : IDisposable
             return;
         }
 
-        if (release is null || !UpdateCheck.IsNewer(release.Version, ServerInfo.Version))
+        if (release is null)
         {
             TokenDialog.Show(
                 _window,
-                "Up to date",
-                $"{ServerInfo.Name} {ServerInfo.Version} is the newest release.");
+                "Nothing to compare against",
+                "GitHub has no published release carrying a Windows build yet.");
             return;
+        }
+
+        switch (UpdateCheck.StandingOf(ServerInfo.Version, release.Version))
+        {
+            case UpdateCheck.Standing.Same:
+                TokenDialog.Show(
+                    _window,
+                    "Already up to date",
+                    $"{ServerInfo.Name} {ServerInfo.Version} is the newest release.");
+                return;
+            // A build run from source, or one from CI that was never tagged. Installing
+            // "the update" here would replace it with an older exe.
+            case UpdateCheck.Standing.Unreleased:
+                TokenDialog.Show(
+                    _window,
+                    "Development build",
+                    $"This PC is running {ServerInfo.Version}, which was never published — there is "
+                    + $"nothing to update to. The newest release is {release.Version}.");
+                return;
         }
 
         var install = TokenDialog.Show(
             _window,
             $"Update to {release.Version}?",
-            $"This PC is running {ServerInfo.Version}. Installing downloads the new version, "
-            + "replaces this one and restarts it.\n\nYour phone will reconnect on its own; "
-            + "pairing is not lost.",
+            $"This PC is running {ServerInfo.Version}, which is behind {release.Version}. Installing "
+            + "downloads the new version, replaces this one and restarts it.\n\nYour phone will "
+            + "reconnect on its own; pairing is not lost.",
             confirmText: "Update",
             cancelText: "Not now");
         if (!install) return;

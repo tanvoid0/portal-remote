@@ -947,10 +947,10 @@ Two columns, no scrolling, at a fixed minimum size:
   window), a composer with Send and Attach, and file drop anywhere on the thread.
   "Pair a phone" swaps the whole column for the QR, the address in mono, the
   same-Wi-Fi/firewall hint and "Copy address"; "Messages" swaps back.
-- **Right — this PC.** A status card (dot + label, the same `success` /
-  `text-secondary` pair and the same vocabulary as the Android top bar in §7),
-  then port, shared folder, cast receiver, assistant state, start-with-Windows,
-  and token rotation.
+- **Right — this PC.** A device card (one row per known phone: phone glyph, name,
+  and a dot in the same `success` / `text-secondary` pair and vocabulary as the
+  Android top bar in §7), then port, shared folder, cast receiver, assistant
+  state, start-with-Windows, and token rotation.
 
 Decisions worth keeping if this is rewritten:
 
@@ -995,10 +995,23 @@ Decisions worth keeping if this is rewritten:
   stale one.
 - **Secondary buttons are outlined, not filled** (`TokenButton.Secondary`). Four
   accent-filled buttons on one surface is four primaries, i.e. none.
-- **The status card names the phone, and it is where a refusal is stated.** The
-  caption under "Phone connected" used to be `Environment.MachineName` — the name
-  of *this* PC, under a headline about the phone. It is the peer address now,
-  which is the only thing the control socket actually knows. A rejected token
+- **The card lists phones, not a connection.** It said "Phone connected" over an
+  address, which answers "is something attached" and not "which of my phones".
+  Each known phone now has a row — glyph, its own name, and either
+  `Connected · <address>` or `Last seen <when>` — with the connected ones sorted
+  up. **Phones that are asleep keep their rows**: "which phones are mine" and
+  "which one is awake" are different questions, and the second is not much use
+  without the first. The name arrives in an `X-Portal-Device` header on the
+  control socket (`data/DeviceName.kt` — the user's device name, the model as a
+  fallback) and is persisted in `ServerConfig.Devices`, keyed by name rather than
+  address, since the router hands out a different address often enough that
+  keying on it would fill the list with ghosts of one phone. A client that sends
+  no name is tracked as connected but never listed: a permanent "unknown device"
+  row is worse than no row. Capped at four rows, or an old pairing list would
+  push the settings off the window.
+- **The card is also where a refusal is stated.** The caption under "Phone
+  connected" used to be `Environment.MachineName` — the name of *this* PC, under a
+  headline about the phone. A rejected token
   outranks the connection state for three seconds and turns the card `danger`:
   it is the direct consequence of the rotate button a few rows below it, and
   until then the only thing that reacted was a 16px tray icon nobody is looking

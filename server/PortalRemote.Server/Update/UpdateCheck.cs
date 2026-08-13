@@ -54,23 +54,45 @@ public static class UpdateCheck
     /// A non-numeric segment (an <c>-rc1</c> suffix) counts as 0, so a pre-release never
     /// reads as newer than the release it precedes.
     /// </summary>
-    public static bool IsNewer(string candidate, string current)
+    public static int Compare(string a, string b)
     {
-        var a = Segments(candidate);
-        var b = Segments(current);
-        for (var i = 0; i < Math.Max(a.Length, b.Length); i++)
+        var x = Segments(a);
+        var y = Segments(b);
+        for (var i = 0; i < Math.Max(x.Length, y.Length); i++)
         {
-            var x = i < a.Length ? a[i] : 0;
-            var y = i < b.Length ? b[i] : 0;
-            if (x != y) return x > y;
+            var diff = (i < x.Length ? x[i] : 0) - (i < y.Length ? y[i] : 0);
+            if (diff != 0) return diff > 0 ? 1 : -1;
         }
-        return false;
+        return 0;
 
         static int[] Segments(string version) => version.Trim().TrimStart('v')
             .Split('.', '-')
             .Select(part => int.TryParse(new string(part.TakeWhile(char.IsDigit).ToArray()), out var value) ? value : 0)
             .ToArray();
     }
+
+    public static bool IsNewer(string candidate, string current) => Compare(candidate, current) > 0;
+
+    /// <summary>
+    /// Where the running build sits against the newest release. Three answers, not two:
+    /// a build that was never tagged is not a point on the release line at all, and
+    /// "you are running something that was never released" is a different thing to say
+    /// than "you are up to date".
+    /// </summary>
+    public enum Standing { Behind, Same, Unreleased }
+
+    /// <summary>A build nobody tagged — the csproj's <c>-dev</c> default, or CI off an
+    /// untagged ref. Its digits are whatever was last checked in, so they say nothing
+    /// about where it sits against a release: the answer is always "don't update".</summary>
+    public static bool IsDevBuild(string version) =>
+        version.Trim().EndsWith("-dev", StringComparison.OrdinalIgnoreCase);
+
+    public static Standing StandingOf(string running, string latest) =>
+        IsDevBuild(running) ? Standing.Unreleased
+        : Compare(latest, running) > 0 ? Standing.Behind
+        // Built after a release but before the next tag: still nothing to update to.
+        : Compare(running, latest) > 0 ? Standing.Unreleased
+        : Standing.Same;
 
     public static async Task<ReleaseInfo?> LatestAsync(CancellationToken cancel = default)
     {

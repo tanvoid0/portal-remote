@@ -55,7 +55,7 @@ sealed interface ConnectionState {
  * lock) auto-reconnects to the same host instead of forcing the whole app back
  * to the pairing screen and tearing down whatever the user was doing.
  */
-class WsClient {
+class WsClient(private val device: String = "") {
     private val client = OkHttpClient.Builder()
         // No read timeout: the socket is meant to sit open indefinitely between
         // user gestures, so an idle connection must not be torn down as "stalled".
@@ -93,6 +93,10 @@ class WsClient {
         val request = Request.Builder()
             .url(host.wsUrl)
             .header("Authorization", "Bearer ${host.token}")
+            // What the PC labels this phone in its device list. A header rather than a
+            // query param for the same reason the token is one, and because a name with
+            // an apostrophe in it should not need escaping to reach the other side.
+            .apply { if (device.isNotBlank()) header("X-Portal-Device", device) }
             .build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {

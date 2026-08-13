@@ -18,7 +18,7 @@ jobs:
         # The tag without its v is the version the tray reports and compares when it
         # checks for updates; a dispatch build with no tag keeps the csproj default.
         run: |
-          $version = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '0.1.0' }
+          $version = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '0.1.0-dev' }
           ./publish.ps1 -Output ${{ github.workspace }}/out -Version $version
         shell: pwsh
         working-directory: server
@@ -53,11 +53,17 @@ jobs:
       - name: Build release APK
         working-directory: android
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          # A dispatch build has no tag, only a branch name — stamping that as the
+          # version would have the phone compare "main" against a release. It reports
+          # itself as a dev build instead, same as the server job above.
+          case "$GITHUB_REF" in
+            refs/tags/*) VERSION="${GITHUB_REF_NAME#v}" ;;
+            *) VERSION="0.1.0-dev" ;;
+          esac
           ./gradlew assembleRelease --console=plain \
-            -PversionName="${VERSION:-0.1.0}" -PversionCode="${GITHUB_RUN_NUMBER}"
+            -PversionName="$VERSION" -PversionCode="${GITHUB_RUN_NUMBER}"
           mv app/build/outputs/apk/release/app-release.apk \
-             "$RUNNER_TEMP/PortalRemote-${VERSION:-dev}.apk"
+             "$RUNNER_TEMP/PortalRemote-${VERSION}.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android

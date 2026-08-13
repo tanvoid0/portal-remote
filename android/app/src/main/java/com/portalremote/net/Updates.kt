@@ -40,17 +40,40 @@ object Updates {
      * Anything non-numeric in a segment (a `-rc1` suffix) counts as 0: a pre-release
      * of a version should not read as newer than the release itself.
      */
-    fun isNewer(candidate: String, current: String): Boolean {
+    fun compare(a: String, b: String): Int {
         fun parts(v: String) = v.trim().removePrefix("v").split('.', '-')
             .map { it.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
-        val a = parts(candidate)
-        val b = parts(current)
-        for (i in 0 until maxOf(a.size, b.size)) {
-            val x = a.getOrElse(i) { 0 }
-            val y = b.getOrElse(i) { 0 }
-            if (x != y) return x > y
+        val x = parts(a)
+        val y = parts(b)
+        for (i in 0 until maxOf(x.size, y.size)) {
+            val diff = x.getOrElse(i) { 0 } - y.getOrElse(i) { 0 }
+            if (diff != 0) return if (diff > 0) 1 else -1
         }
-        return false
+        return 0
+    }
+
+    fun isNewer(candidate: String, current: String): Boolean = compare(candidate, current) > 0
+
+    /**
+     * Where the installed build sits against the newest release. Three answers, not two:
+     * a build that was never tagged is not a point on the release line at all, and "you
+     * are on a build that was never released" is a different thing to say than "you are
+     * up to date".
+     */
+    enum class Standing { Behind, Same, Unreleased }
+
+    /** A build nobody tagged — the `-dev` default from `build.gradle`, or CI off an
+     *  untagged ref. Its digits are whatever was last checked in, so they say nothing
+     *  about where it sits against a release: the answer is always "don't update". */
+    fun isDevBuild(version: String): Boolean =
+        version.trim().endsWith("-dev", ignoreCase = true)
+
+    fun standing(installed: String, latest: String): Standing = when {
+        isDevBuild(installed) -> Standing.Unreleased
+        compare(latest, installed) > 0 -> Standing.Behind
+        // Built after a release but before the next tag: still nothing to update to.
+        compare(installed, latest) > 0 -> Standing.Unreleased
+        else -> Standing.Same
     }
 
     suspend fun latest(client: OkHttpClient = OkHttpClient()): Release? = withContext(Dispatchers.IO) {

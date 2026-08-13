@@ -5,6 +5,7 @@ using System.Text.Json;
 using PortalRemote.Ai;
 using PortalRemote.Auth;
 using PortalRemote.Config;
+using PortalRemote.Devices;
 using PortalRemote.Input;
 using PortalRemote.Media;
 using PortalRemote.Share;
@@ -27,7 +28,7 @@ public static class ControlEndpoint
 
     public static void MapControlEndpoint(
         this WebApplication app, ServerConfig config, ConnectionState connectionState, ShareHub shareHub,
-        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant)
+        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DeviceRegistry devices)
     {
         app.Map("/control", async (HttpContext context, ILoggerFactory loggerFactory) =>
         {
@@ -61,9 +62,15 @@ public static class ControlEndpoint
                 config.Save();
             }
 
+            // Sent by the phone since 0.3.2; anything older stays unnamed and simply
+            // isn't listed as a device, which is better than inventing a label for it.
+            var deviceName = context.Request.Headers["X-Portal-Device"].ToString();
+
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
-            log.LogInformation("Client connected: {Peer}", peer);
+            log.LogInformation("Client connected: {Peer} ({Device})", peer,
+                string.IsNullOrWhiteSpace(deviceName) ? "unnamed" : deviceName);
             connectionState.OnConnected(peer);
+            devices.Connected(deviceName, peer);
 
             // Every send on this socket goes through the wrapper — the share hub
             // pushes from an unrelated thread, and two concurrent SendAsync calls
@@ -101,6 +108,7 @@ public static class ControlEndpoint
                 shareHub.Remove(client);
                 log.LogInformation("Client disconnected: {Peer}", peer);
                 connectionState.OnDisconnected();
+                devices.Disconnected(deviceName, peer);
             }
         });
     }

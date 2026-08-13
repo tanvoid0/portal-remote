@@ -15,8 +15,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PortalRemote</AssemblyName>
     <!-- Overridden by the release workflow with the tag being built; ServerInfo reads
-         it back at runtime and the tray's update check compares it to GitHub. -->
-    <Version>0.1.0</Version>
+         it back at runtime and the tray's update check compares it to GitHub. The -dev
+         suffix is what marks a build nobody tagged: its digits are whatever was last
+         checked in, so the update check refuses to read them as a release. -->
+    <Version>0.1.0-dev</Version>
     <RootNamespace>PortalRemote</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Brand mark, generated from Theme/BrandMark.cs's geometry — see

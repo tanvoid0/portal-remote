@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.portalremote.data.AppSettings
 import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
+import com.portalremote.data.deviceName
 import com.portalremote.net.AiCatalog
 import com.portalremote.net.AiModels
 import com.portalremote.net.AiModelsException
@@ -128,7 +129,7 @@ private const val DISCOVERY_TIMEOUT_MS = 5_000L
  */
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = Prefs(application)
-    val ws = WsClient()
+    val ws = WsClient(deviceName(application))
     private val shareApi = ShareApi()
 
     val connectionState get() = ws.state

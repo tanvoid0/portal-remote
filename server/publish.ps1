@@ -14,8 +14,9 @@
 param(
     [string]$Output = (Join-Path $PSScriptRoot 'publish'),
     # Stamped into the assembly and reported by ServerInfo.Version, which is what the
-    # tray's update check compares against GitHub. CI passes the tag being built.
-    [string]$Version = '0.1.0'
+    # tray's update check compares against GitHub. CI passes the tag being built; the
+    # -dev default marks an untagged build, which the check never offers to "update".
+    [string]$Version = '0.1.0-dev'
 )
 
 $ErrorActionPreference = 'Stop'

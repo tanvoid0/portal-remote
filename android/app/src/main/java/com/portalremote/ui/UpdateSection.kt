@@ -67,8 +67,11 @@ fun UpdateSection(currentVersion: String) {
                         onSuccess = { release ->
                             when {
                                 release == null -> UpdateState.Failed("No published release to compare against.")
-                                Updates.isNewer(release.version, currentVersion) -> UpdateState.Available(release)
-                                else -> UpdateState.UpToDate
+                                else -> when (Updates.standing(currentVersion, release.version)) {
+                                    Updates.Standing.Behind -> UpdateState.Available(release)
+                                    Updates.Standing.Same -> UpdateState.UpToDate(release.version)
+                                    Updates.Standing.Unreleased -> UpdateState.Unreleased(release.version)
+                                }
                             }
                         },
                         onFailure = { UpdateState.Failed("Could not reach GitHub. Check the phone's internet connection.") },
@@ -135,15 +138,22 @@ private fun install(context: Context, apk: File) {
 private sealed interface UpdateState {
     data object Idle : UpdateState
     data class Busy(val label: String) : UpdateState
-    data object UpToDate : UpdateState
+    data class UpToDate(val latest: String) : UpdateState
     data class Available(val release: Release, val hint: String? = null) : UpdateState
+
+    /** Installed build was never published — a local or CI build carrying the `-dev`
+     *  default, or one made after a release but before the next tag. Offering to
+     *  "update" it would install an older APK over a newer build. */
+    data class Unreleased(val latest: String) : UpdateState
     data class Failed(val reason: String) : UpdateState
 
     fun describe(currentVersion: String): String = when (this) {
         is Idle -> "Installed $currentVersion. Updates come from the project's GitHub releases"
         is Busy -> label
-        is UpToDate -> "$currentVersion is the newest release"
-        is Available -> hint ?: "Version ${release.version} is available"
+        is UpToDate -> "Already up to date — $currentVersion is the newest release"
+        is Available -> hint ?: "$currentVersion is behind ${release.version}, the newest release"
+        is Unreleased -> "$currentVersion is a development build, not a published one — " +
+            "nothing to update to. The newest release is $latest"
         is Failed -> reason
     }
 }

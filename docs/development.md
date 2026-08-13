@@ -119,3 +119,20 @@ updates…** (it downloads the new exe, swaps it in and restarts), and the phone
 **Settings → Updates** downloads the new APK and hands it to the system installer.
 Nothing is downloaded until you say yes, and neither half phones home otherwise — the
 only request is to GitHub's public release API, when you ask.
+
+Both halves report the check three ways, not two — `Updates.standing` on the phone,
+`UpdateCheck.StandingOf` on the PC:
+
+| Installed vs newest release | What it says |
+|---|---|
+| same | Already up to date |
+| behind | *0.2.0 is behind 0.3.1* — offers the install |
+| unreleased | *a development build* — offers nothing |
+
+The third row is the one that matters while developing. A build run from source carries
+the checked-in default — `0.1.0-dev` in `build.gradle.kts` and the csproj — and the
+`-dev` suffix is the whole point: those digits are whatever was last committed, not a
+position on the release line, so nobody has to bump them at each tag. Without it a build
+of today's source reads as *behind*, and "updating" it installs an older build over a
+newer one. A build made after a release but before the next tag counts as unreleased
+too, on its version alone.

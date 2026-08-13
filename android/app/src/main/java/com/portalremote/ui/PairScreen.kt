@@ -2,8 +2,6 @@ package com.portalremote.ui
 
 import android.Manifest
 import android.content.Context
-import android.os.Build
-import android.provider.Settings
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FiniteAnimationSpec
@@ -96,6 +94,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
 import com.portalremote.R
 import com.portalremote.data.SavedHost
+import com.portalremote.data.deviceName
 import com.portalremote.net.WakeOnLan
 import com.portalremote.net.DiscoveredHost
 import com.portalremote.net.discoverHosts
@@ -160,7 +159,7 @@ fun PairScreen(
         // Stop the background retry loop first, or the old PC could win the race
         // and yank the user into a session they didn't ask for mid-approval.
         onStopReconnecting()
-        runCatching { requestPairing(target.host, target.port, deviceLabel(context)) }
+        runCatching { requestPairing(target.host, target.port, deviceName(context)) }
             .onSuccess { pending = null; onPaired(it) }
             .onFailure { failure ->
                 if (failure is CancellationException) throw failure
@@ -269,14 +268,6 @@ private fun VpnNotice() {
         textAlign = TextAlign.Center,
     )
 }
-
-/** What the PC's approval dialog will call this phone. The user-set device name if
- *  there is one ("Tanveer's Phone"), since that's what makes the prompt worth
- *  reading; the model name otherwise. */
-private fun deviceLabel(context: Context): String =
-    Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
-        ?.takeIf { it.isNotBlank() }
-        ?: Build.MODEL
 
 // ---------------------------------------------------------------- sections ----
 

@@ -5,6 +5,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 using PortalRemote.Ai;
 using PortalRemote.Config;
+using PortalRemote.Devices;
 using PortalRemote.Control;
 using PortalRemote.Files;
 using PortalRemote.Pairing;
@@ -37,9 +38,12 @@ public sealed class MainForm : Form
     private readonly ConnectionState _connectionState;
     private readonly ShareHub _share;
     private readonly AiHealth _ai;
+    private readonly DeviceRegistry _devices;
 
     private readonly Panel _header;
     private readonly Panel _statusCard;
+    private TableLayoutPanel _settingsColumn = null!;
+    private int _statusRow;
 
     // ---- left column, front: the share thread --------------------------------
     private readonly Panel _sharePanel;
@@ -97,12 +101,14 @@ public sealed class MainForm : Form
     /// lifetime — this one only has to know that the button leads somewhere.</summary>
     public Action? OpenAssistant { get; init; }
 
-    public MainForm(ServerConfig config, ConnectionState connectionState, ShareHub share, AiHealth ai)
+    public MainForm(ServerConfig config, ConnectionState connectionState, ShareHub share, AiHealth ai,
+        DeviceRegistry devices)
     {
         _config = config;
         _connectionState = connectionState;
         _share = share;
         _ai = ai;
+        _devices = devices;
 
         Text = ServerInfo.Name;
         StartPosition = FormStartPosition.CenterScreen;
@@ -359,10 +365,12 @@ public sealed class MainForm : Form
             Text = "Locks out every paired phone until it scans the new code.",
         };
 
-        var settingsColumn = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1 };
+        _settingsColumn = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1 };
+        var settingsColumn = _settingsColumn;
         settingsColumn.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         // Heights include AddRow's 6px bottom gap.
-        AddRow(settingsColumn, _statusCard, 72);
+        AddRow(settingsColumn, _statusCard, StatusCardHeight());
+        _statusRow = settingsColumn.RowStyles.Count - 1;
         AddRow(settingsColumn, _settingsHeading, 32);
         AddRow(settingsColumn, portRow, 36);
         AddRow(settingsColumn, _portNote, 44); // two caption lines
@@ -401,6 +409,7 @@ public sealed class MainForm : Form
         };
         _connectionState.Changed += OnConnectionChanged;
         _connectionState.AuthRejected += OnAuthRejected;
+        _devices.Changed += OnDevicesChanged;
         _share.Added += OnShareAdded;
         _ai.Changed += OnAiChanged;
 
@@ -823,6 +832,37 @@ public sealed class MainForm : Form
             bounds.Y + (bounds.Height - nameSize.Height) / 2f + 3);
     }
 
+    /// <summary>Sockets open and close on Kestrel threads; the row height below is a
+    /// control property and has to be touched on the UI one.</summary>
+    private void OnDevicesChanged()
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        BeginInvoke(new Action(RefreshDevices));
+    }
+
+    /// <summary>One phone per row, so the card grows with the list. Capped so a house
+    /// full of old pairings cannot push the settings below it off the window.</summary>
+    private const int DeviceRowHeight = 52;
+
+    private const int MaxDeviceRows = 4;
+
+    /// <summary>Row height for the card, including AddRow's 6px bottom gap.</summary>
+    private int StatusCardHeight() =>
+        Math.Max(1, Math.Min(_devices.Snapshot().Count, MaxDeviceRows)) * DeviceRowHeight + 6;
+
+    /// <summary>A phone appearing or leaving changes how tall this card has to be, and
+    /// a repaint alone would just clip the new row.</summary>
+    private void RefreshDevices()
+    {
+        if (IsDisposed || _settingsColumn.RowStyles.Count <= _statusRow) return;
+        var height = LogicalToDeviceUnits(StatusCardHeight());
+        if (Math.Abs(_settingsColumn.RowStyles[_statusRow].Height - height) > 0.5f)
+        {
+            _settingsColumn.RowStyles[_statusRow].Height = height;
+        }
+        _statusCard.Invalidate();
+    }
+
     /// <summary>Connection state as the same dot + label pairing the Android top bar
     /// uses (docs/design-system.md §3/§7) — one status vocabulary across both apps.</summary>
     private void DrawStatus(Graphics g, Rectangle bounds)
@@ -839,41 +879,84 @@ public sealed class MainForm : Form
             g.DrawPath(pen, path);
         }
 
-        var connected = _connectionState.IsConnected;
-        // A refusal outranks the connection state for a few seconds. It is the direct
+        // A refusal outranks everything else for a few seconds. It is the direct
         // consequence of the button directly below this card, and until now the only
         // thing that reacted was a 16px tray icon the user is not looking at while
         // they're looking at this window.
         var rejected = _rejectedPeer;
-
-        var dotColor = rejected is not null ? _colors.Danger
-            : connected ? _colors.Success
-            : _colors.TextSecondary;
-        using (var dot = new SolidBrush(dotColor))
+        if (rejected is not null)
         {
-            g.FillEllipse(dot, card.X + 16, card.Y + card.Height / 2 - 5, 10, 10);
+            DrawDeviceRow(g, card, DeviceRowHeight, Glyphs.CellPhone, _colors.Danger,
+                "A phone was refused", $"{rejected} — its pairing token is not valid here", _colors.Danger);
+            return;
         }
 
-        // "Waiting for a phone" is only true before anything has ever paired. After
-        // that the phone is a known device that is currently away, and saying so is
-        // the difference between "set this up" and "wake it up".
-        var headline = rejected is not null ? "A phone was refused"
-            : connected ? "Phone connected"
-            : _config.Paired ? "Phone not connected"
-            : "Waiting for a phone";
-        // Named, not guessed: the socket knows the address it accepted, which is the
-        // only thing this PC actually knows about the phone. This line used to be
-        // Environment.MachineName — the name of *this* PC, under a headline about the
-        // phone.
-        var detail = rejected is not null ? $"{rejected} — its pairing token is not valid here"
-            : connected ? _connectionState.Peer ?? "Connected"
-            : _config.Paired ? "Open Portal Remote on your phone to reconnect"
-            : "Scan the code to pair one";
+        var devices = _devices.Snapshot();
+        if (devices.Count == 0)
+        {
+            DrawDeviceRow(g, card, DeviceRowHeight, Glyphs.CellPhone, _colors.TextSecondary,
+                _config.Paired ? "Phone not connected" : "Waiting for a phone",
+                _config.Paired ? "Open Portal Remote on your phone to reconnect" : "Scan the code to pair one",
+                _colors.TextPrimary);
+            return;
+        }
 
-        using var primary = new SolidBrush(rejected is not null ? _colors.Danger : _colors.TextPrimary);
+        // One row per phone this PC knows, connected ones first. A device that is
+        // switched off keeps its row: "which phones are mine" and "which one is awake"
+        // are different questions, and the second is useless without the first.
+        var y = card.Y;
+        foreach (var device in devices)
+        {
+            var row = new Rectangle(card.X, y, card.Width, DeviceRowHeight);
+            DrawDeviceRow(g, row, DeviceRowHeight, Glyphs.CellPhone,
+                device.Connected ? _colors.Success : _colors.TextSecondary,
+                device.Name,
+                device.Connected ? $"Connected · {device.Address}" : $"Last seen {LastSeen(device.LastSeen)}",
+                _colors.TextPrimary);
+            y += DeviceRowHeight;
+        }
+    }
+
+    /// <summary>A phone glyph, a status dot on it, and the two lines of text. Shared by
+    /// the device rows and by the two states that have no device to name.</summary>
+    private void DrawDeviceRow(
+        Graphics g, Rectangle row, int height, string glyph, Color dotColor,
+        string headline, string detail, Color headlineColor)
+    {
+        var iconPx = 20;
+        var iconY = row.Y + (height - iconPx) / 2;
+        using (var phone = Glyphs.Render(glyph, iconPx, _colors.TextSecondary))
+        {
+            if (phone is not null) g.DrawImage(phone, row.X + 14, iconY, iconPx, iconPx);
+        }
+
+        // On the phone's bottom corner rather than out on its own: the dot is a property
+        // of that device, and a column of free-floating dots reads as a list of states
+        // with the devices as their labels, which is backwards.
+        using (var dot = new SolidBrush(dotColor))
+        using (var ring = new SolidBrush(_colors.SurfaceRaised))
+        {
+            g.FillEllipse(ring, row.X + 12 + iconPx - 8, iconY + iconPx - 8, 11, 11);
+            g.FillEllipse(dot, row.X + 12 + iconPx - 6.5f, iconY + iconPx - 6.5f, 8, 8);
+        }
+
+        using var primary = new SolidBrush(headlineColor);
         using var secondary = new SolidBrush(_colors.TextSecondary);
-        g.DrawString(headline, Fonts.Body, primary, card.X + 36, card.Y + 14);
-        g.DrawString(detail, Fonts.Caption, secondary, card.X + 36, card.Y + 34);
+        g.DrawString(headline, Fonts.Body, primary, row.X + 46, row.Y + 12);
+        g.DrawString(detail, Fonts.Caption, secondary, row.X + 46, row.Y + 32);
+    }
+
+    /// <summary>Relative for anything recent, then the clock, then the date. "Last seen
+    /// 13 Aug" is what the user wants from a phone that has been off for a week; the
+    /// exact minute is only interesting for the last hour or so.</summary>
+    private static string LastSeen(DateTimeOffset when)
+    {
+        var ago = DateTimeOffset.Now - when;
+        if (ago < TimeSpan.FromMinutes(1)) return "just now";
+        if (ago < TimeSpan.FromHours(1)) return $"{(int)ago.TotalMinutes} min ago";
+        if (when.Date == DateTimeOffset.Now.Date) return when.ToString("HH:mm");
+        if (when.Date == DateTimeOffset.Now.Date.AddDays(-1)) return $"yesterday {when:HH:mm}";
+        return when.ToString("d MMM");
     }
 
     private void DrawCard(Graphics g, Rectangle bounds)
@@ -1013,6 +1096,7 @@ public sealed class MainForm : Form
         if (disposing)
         {
             _connectionState.Changed -= OnConnectionChanged;
+            _devices.Changed -= OnDevicesChanged;
             _connectionState.AuthRejected -= OnAuthRejected;
             _share.Added -= OnShareAdded;
             _ai.Changed -= OnAiChanged;

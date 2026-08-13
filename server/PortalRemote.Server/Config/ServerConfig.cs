@@ -63,6 +63,13 @@ public sealed class ServerConfig
     /// </summary>
     public bool EnableDlnaRenderer { get; set; }
 
+    /// <summary>
+    /// Phones this PC has seen, newest address wins. Kept so the window can name the
+    /// devices that are paired but switched off — <see cref="Paired"/> only says that
+    /// some phone once connected, which is not enough to draw a list.
+    /// </summary>
+    public List<Devices.KnownDevice> Devices { get; set; } = [];
+
     /// <summary>Root directory exposed to the file browser. Nothing outside it is reachable.</summary>
     public string ShareRoot { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "PortalRemoteShare");
@@ -81,8 +88,11 @@ public sealed class ServerConfig
     [JsonIgnore]
     public bool IsFirstRun { get; private set; }
 
+    /// <summary>Where <see cref="Save"/> writes. Settable so a test can point a config
+    /// at a temp file — every other caller leaves it at the default, and a test that
+    /// wrote to the real one would overwrite the pairing token of whoever ran it.</summary>
     [JsonIgnore]
-    public string ConfigPath => DefaultConfigPath;
+    public string ConfigPath { get; set; } = DefaultConfigPath;
 
     public static string ConfigDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "portal-remote");
@@ -133,8 +143,9 @@ public sealed class ServerConfig
 
     public void Save()
     {
-        Directory.CreateDirectory(ConfigDirectory);
-        File.WriteAllText(DefaultConfigPath, JsonSerializer.Serialize(this, JsonOptions));
+        var directory = Path.GetDirectoryName(ConfigPath);
+        if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, JsonOptions));
     }
 
     public string RotateToken()

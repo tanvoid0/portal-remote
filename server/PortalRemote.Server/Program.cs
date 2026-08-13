@@ -6,6 +6,7 @@ using PortalRemote.Auth;
 using PortalRemote.Cast;
 using PortalRemote.Config;
 using PortalRemote.Control;
+using PortalRemote.Devices;
 using PortalRemote.Dlna;
 using PortalRemote.Files;
 using PortalRemote.Input;
@@ -40,6 +41,7 @@ internal static class Program
 
         var config = ServerConfig.Load();
         var connectionState = new ConnectionState();
+        var devices = new DeviceRegistry(config);
         var share = new ShareHub(config);
         using var approval = new PairApproval(config);
 
@@ -118,7 +120,7 @@ internal static class Program
         // filter nothing.
         CastRouter.OwnRendererUuid = dlna.Uuid;
 
-        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, assistant, dlna);
+        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, assistant, dlna, devices);
 
         try
         {
@@ -158,7 +160,7 @@ internal static class Program
         // should appear whether or not this machine has one.
         _ = nowPlaying.StartAsync();
 
-        using var tray = new TrayIcon(config, connectionState, approval, share, assistant, ai, onExit: Application.ExitThread);
+        using var tray = new TrayIcon(config, connectionState, approval, share, assistant, ai, devices, onExit: Application.ExitThread);
 
         // Nothing has ever paired with this PC, so the QR code is the only useful
         // next step — show it rather than leaving a new user hunting the tray.
@@ -179,7 +181,7 @@ internal static class Program
 
     private static WebApplication BuildApp(
         ServerConfig config, string[] args, ConnectionState connectionState, PairApproval approval, ShareHub share,
-        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DlnaRenderer dlna)
+        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DlnaRenderer dlna, DeviceRegistry devices)
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -216,12 +218,15 @@ internal static class Program
         {
             var remoteIp = http.Connection.RemoteIpAddress?.ToString() ?? "unknown address";
             var token = await approval.RequestTokenAsync(body?.Device, remoteIp);
+            // Approved or not, the name is worth keeping: a phone that pairs and is
+            // then put down should still appear in the window's device list.
+            if (token is not null) devices.Seen(body?.Device, remoteIp);
             return token is null
                 ? Results.StatusCode(StatusCodes.Status403Forbidden)
                 : Results.Ok(new { token, name = Environment.MachineName, port = config.RunningPort });
         });
 
-        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai, assistant);
+        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai, assistant, devices);
         app.MapFilesEndpoints(config);
         app.MapScreenEndpoints(config);
         app.MapAudioEndpoints(config);

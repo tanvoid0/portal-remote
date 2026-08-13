@@ -33,10 +33,17 @@ public static class Glyphs
     public const string Refresh = "\uE72C";
     public const string Sync = "\uE895";
     public const string Lock = "\uE72E";
-    public const string OpenInNew = "\uE897";
+    /// <summary>E8A7 (OpenInNewWindow), not E897 \u2014 E897 is Help, so the cast row's
+    /// "Open" button was drawing a question mark next to the word Open.</summary>
+    public const string OpenInNew = "\uE8A7";
     public const string Assistant = "\uE99A";
     public const string Wrench = "\uE90F";
     public const string Power = "\uE7E8";
+
+    /// <summary>A phone, for the device rows in the window. Segoe MDL2's CellPhone is
+    /// a plain slab at 20px, which is exactly what a row icon should be \u2014 the outline
+    /// phones in the same font lose their bezel below about 24px.</summary>
+    public const string CellPhone = "\uE8EA";
 
     private static readonly string? FamilyName = ResolveFamilyName();
 

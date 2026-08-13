@@ -14,8 +14,10 @@ android {
         targetSdk = 36
         // Overridable so a tagged CI build stamps the tag instead of the checked-in
         // default: ./gradlew assembleRelease -PversionName=1.2.3 -PversionCode=7
+        // The -dev suffix is what marks a build nobody tagged: its digits are whatever
+        // was last checked in, so the update check refuses to read them as a release.
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
-        versionName = findProperty("versionName") as String? ?: "0.1.0"
+        versionName = findProperty("versionName") as String? ?: "0.1.0-dev"
     }
 
     // Release signing comes from the environment (CI secrets) when present. Without
