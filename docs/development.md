@@ -106,8 +106,11 @@ $h = (Get-Process PortalRemote).MainWindowHandle
 
 **Before committing a shot**, check it for anything that shouldn't be public: the pairing
 token in the *Cast to a screen* field, whatever the desktop happens to be showing behind
-the mirror, and the contents of the share thread. Stage the desktop first — minimise
-everything, open something harmless — rather than editing it out afterwards.
+the mirror, the contents of the share thread, the phone's lock screen and notification
+shade (a stray `screencap` while the phone locked mid-shoot will capture both), and
+whatever is actually in the shared folder for the Files tab. Stage first — minimise
+everything, open something harmless, drop a placeholder file into `ShareRoot` and move
+the real ones out for the duration — rather than editing it out afterwards.
 
 **When the UI changes**, re-shoot the screens it touched. A screenshot in the README is a
 claim about what the app looks like today.

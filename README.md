@@ -10,17 +10,26 @@ PC.
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/android-pair.png" width="200" alt="Pairing screen: the PC found by discovery on the LAN as a one-tap card, with QR scan and typed address as fallbacks">
-  <img src="docs/assets/screenshots/android-control.png" width="200" alt="Control tab, trackpad mode: full-surface trackpad with a scroll rail down the right edge, a tap-to-type field above and left/right click buttons below">
-  <img src="docs/assets/screenshots/android-screen.png" width="200" alt="Screen tab: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
-  <img src="docs/assets/screenshots/android-media.png" width="200" alt="Media tab: what the PC is playing with a scrubber, transport and volume, and the speaker card streaming the PC's sound to the phone at 48kHz stereo">
-  <img src="docs/assets/screenshots/android-share.png" width="200" alt="Share tab: a two-device conversation of links and text, with a send-clipboard suggestion above the composer">
+  <img src="docs/assets/screenshots/android-pair.png" width="180" alt="Pairing screen: the PC found by discovery on the LAN as a one-tap card, with QR scan and typed address as fallbacks">
+  <img src="docs/assets/screenshots/android-control.png" width="180" alt="Control tab, trackpad mode: full-surface trackpad with a scroll rail down the right edge, a tap-to-type field above and left/right click buttons below">
+  <img src="docs/assets/screenshots/android-keyboard.png" width="180" alt="Control tab, keyboard mode: Esc, Tab, Enter, Space, Backspace, Win, Alt+Tab and clipboard shortcuts as chips, with a directional pad below">
+  <img src="docs/assets/screenshots/android-remote.png" width="180" alt="Control tab, remote mode: a TV-style D-pad with OK, transport and volume controls, plus a row of function keys for the couch">
+  <img src="docs/assets/screenshots/android-media.png" width="180" alt="Media tab: what the PC is playing with a scrubber, transport and volume, and the speaker card streaming the PC's sound to the phone at 48kHz stereo">
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/android-browser.png" width="180" alt="Browser tab: an in-app browser with adblock playing a video, the cast icon lit with a target found on the LAN">
+  <img src="docs/assets/screenshots/android-screen.png" width="180" alt="Screen tab: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
+  <img src="docs/assets/screenshots/android-share.png" width="180" alt="Share tab: a two-device conversation of links and text, with a send-clipboard suggestion above the composer">
+  <img src="docs/assets/screenshots/android-files.png" width="180" alt="Files tab: a folder and a file from the PC's shared folder, with download and upload">
+  <img src="docs/assets/screenshots/android-assistant.png" width="180" alt="Assistant tab: a question answered in text, followed by a proposed PC action the user must approve before anything runs">
 </p>
 
 <p align="center"><sub>
 Real captures of a running build — a paired phone over <code>adb</code>, and the tray
-window straight off the PC. The pairing token is boxed out of the desktop shot; nothing
-else is retouched. Re-shooting them is in
+window straight off the PC. The pairing token is boxed out of the desktop shot, and a
+placeholder file stands in for what was actually in the shared folder; nothing else is
+retouched. Re-shooting them is in
 <a href="docs/development.md#screenshots">docs/development.md</a>.
 </sub></p>
 
@@ -38,6 +47,10 @@ else is retouched. Re-shooting them is in
   notification lands.
 - **Browse and transfer files** — list, download and upload against a shared folder on
   the PC.
+- **Ask the assistant** — one conversation shared by the phone and the PC, which can also
+  act on the PC (media keys, shortcuts, typing, power) with every action approved
+  separately. Needs [agent-platform](https://github.com/tanvoid0/agent-platform) — see
+  below.
 
 ## Try it
 
@@ -54,6 +67,29 @@ Both halves update themselves from those releases, and neither phones home other
 the only request is to GitHub's public release API, when you ask.
 
 Building from source instead: [docs/development.md](docs/development.md).
+
+## The assistant needs agent-platform
+
+Everything above works on its own. The **assistant** is the one feature with an outside
+dependency: it is backed by [**agent-platform**](https://github.com/tanvoid0/agent-platform)
+— `agent-platformd`, a small Rust server that holds the model provider — and until that is
+running on the PC, the assistant says *Not running* and does nothing else.
+
+Portal Remote installs it for you. In the window, next to **Assistant**, press **Set up**:
+
+1. It fetches the newest Windows server build from agent-platform's GitHub releases.
+2. Unzips it into `%APPDATA%\portal-remote\agent-platform` — no installer, no elevation.
+3. Starts it and waits for it to answer on `http://127.0.0.1:18410`.
+
+That path is remembered, so afterwards the same button just says **Start**. Already
+running your own `agent-platformd`? Point `AgentPlatform.BaseUrl` (and `ExePath`, if you
+want the button to start yours) at it in `%APPDATA%\portal-remote\config.json` and Portal
+Remote leaves it alone.
+
+The phone never talks to agent-platform directly and never sees its token — the PC holds
+it and reaches the daemon over loopback. What the model provider does with a conversation
+is agent-platform's business, not this app's:
+[docs/security.md](docs/security.md).
 
 ## Repo layout
 
