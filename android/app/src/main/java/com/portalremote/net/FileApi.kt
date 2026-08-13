@@ -61,9 +61,12 @@ class FileApi(private val client: OkHttpClient = OkHttpClient()) {
         fileName: String,
         contentType: String?,
         uri: Uri,
+        /** Bytes written so far and the total, or -1 when the provider won't say.
+         *  Called from the IO thread — hop before touching Compose state. */
+        onProgress: ((sent: Long, total: Long) -> Unit)? = null,
     ) = withContext(Dispatchers.IO) {
         val mediaType = (contentType ?: "application/octet-stream").toMediaTypeOrNull()
-        val body = streamRequestBody(context, uri, mediaType)
+        val body = streamRequestBody(context, uri, mediaType, onProgress)
         val multipart = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("file", fileName, body)
@@ -75,22 +78,60 @@ class FileApi(private val client: OkHttpClient = OkHttpClient()) {
         }
     }
 
-    private fun authedRequest(host: SavedHost, url: String) =
-        Request.Builder().url(url).header("Authorization", "Bearer ${host.token}")
-
-    private fun streamRequestBody(context: Context, uri: Uri, mediaType: MediaType?): RequestBody =
-        object : RequestBody() {
-            override fun contentType() = mediaType
-
-            override fun contentLength(): Long =
-                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
-
-            override fun writeTo(sink: BufferedSink) {
-                val input = context.contentResolver.openInputStream(uri)
-                    ?: throw java.io.IOException("could not open $uri")
-                input.use { sink.writeAll(it.source()) }
-            }
-        }
-
     private fun encode(s: String) = URLEncoder.encode(s, "UTF-8")
 }
+
+internal fun authedRequest(host: SavedHost, url: String) =
+    Request.Builder().url(url).header("Authorization", "Bearer ${host.token}")
+
+/** Copy chunk. 64KB is okio's own segment-pool sizing; small enough that a progress
+ *  callback fires often on a slow link, large enough not to be the bottleneck. */
+private const val COPY_CHUNK = 64L * 1024
+
+/**
+ * Streams [uri]'s content straight from the ContentResolver, so multi-hundred-MB
+ * files (photos, videos) don't have to be fully buffered in memory first. Shared
+ * with [ShareApi] — both endpoints take the same multipart form.
+ *
+ * With [onProgress] the copy is chunked rather than a single `writeAll`, so the
+ * caller can show a *determinate* bar — the transfer is a known number of bytes over
+ * a LAN, and an indeterminate spinner would misreport it as unknown-duration (see
+ * docs/design-system.md §7). Without it the fast path is unchanged.
+ */
+internal fun streamRequestBody(
+    context: Context,
+    uri: Uri,
+    mediaType: MediaType?,
+    onProgress: ((sent: Long, total: Long) -> Unit)? = null,
+): RequestBody =
+    object : RequestBody() {
+        override fun contentType() = mediaType
+
+        override fun contentLength(): Long =
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+
+        override fun writeTo(sink: BufferedSink) {
+            val input = context.contentResolver.openInputStream(uri)
+                ?: throw java.io.IOException("could not open $uri")
+            val report = onProgress
+            input.use {
+                if (report == null) {
+                    sink.writeAll(it.source())
+                    return
+                }
+                val total = contentLength()
+                val source = it.source()
+                var sent = 0L
+                report(0, total)
+                while (true) {
+                    val read = source.read(sink.buffer, COPY_CHUNK)
+                    if (read == -1L) break
+                    sent += read
+                    // Hand it to the socket as we go, or `sink.buffer` grows into the
+                    // whole file and the streaming this function exists for is undone.
+                    sink.emitCompleteSegments()
+                    report(sent, total)
+                }
+            }
+        }
+    }

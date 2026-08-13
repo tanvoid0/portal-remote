@@ -52,4 +52,48 @@ object Protocol {
     fun media(action: String) = JSONObject().apply {
         put("t", "media"); put("action", action)
     }
+
+    /** Jump to [ms] from the start of the current track. The one transport command
+     *  with no media key behind it, so it goes to the media session directly. */
+    fun seek(ms: Long) = JSONObject().apply {
+        put("t", "seek"); put("ms", ms)
+    }
+
+    /** The remote's power button: `lock`, `sleep`, `restart` or `shutdown`. */
+    fun power(mode: String) = JSONObject().apply {
+        put("t", "power"); put("mode", mode)
+    }
+
+    /** Ask the PC to open a media URL — phase 4a of `docs/phase4-casting.md`. The
+     *  title is what the receiver shows: a page title beats a CDN filename. */
+    fun cast(url: String, title: String? = null) = JSONObject().apply {
+        put("t", "cast"); put("url", url)
+        if (!title.isNullOrBlank()) put("title", title)
+    }
+
+    /**
+     * Transport for whatever the cast receiver page is playing: `play`, `pause`,
+     * `toggle`, `stop`, `seek` or `volume`.
+     *
+     * Deliberately not [media]: that taps the global media keys, which land on
+     * whichever window Windows currently thinks is playing — pausing Spotify while
+     * the film carries on is the exact failure this avoids.
+     */
+    fun player(action: String) = JSONObject().apply {
+        put("t", "player"); put("action", action)
+    }
+
+    /** Skip [seconds] from wherever the receiver is now; negative rewinds. Still the
+     *  right message for the skip buttons, and the only one available before the
+     *  receiver has reported a position. */
+    fun playerSeekBy(seconds: Double) = player("seek").put("by", seconds)
+
+    /** Jump to [seconds] from the start — what dragging the scrub bar sends, now that
+     *  `cast_status` carries a position to drag against. */
+    fun playerSeekTo(seconds: Double) = player("seek").put("to", seconds)
+
+    /** 0..1, the `<video>` element's own scale. */
+    fun playerVolume(level: Float) = player("volume").put("level", level.toDouble())
+
+    fun playerMuted(muted: Boolean) = player("volume").put("muted", muted)
 }

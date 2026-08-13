@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<!--
+  Portal Remote cast receiver — phase 4g of docs/phase4-casting.md.
+
+  Open this on anything with a browser (this PC, a smart TV, a console) and it
+  becomes a cast target: it holds a WebSocket to the server and plays whatever the
+  phone sends. No libraries, because the whole point is that it runs on a 2018 TV
+  browser as well as it runs on Edge.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal Remote — cast receiver</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0d10; color: #e6e9ef;
+               font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  video { flex: 1; width: 100%; min-height: 0; background: #000; }
+  #idle { flex: 1; display: flex; flex-direction: column; align-items: center;
+          justify-content: center; gap: 12px; text-align: center; padding: 24px; }
+  #idle h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  #idle p { margin: 0; color: #98a2b3; max-width: 32em; }
+  #bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+         background: #14181e; font-size: 13px; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; flex: none; }
+  #dot.on { background: #34d399; }
+  #title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hidden { display: none !important; }
+  /* Shown only when the browser refuses to start playback on its own. A real
+     focusable button, not "tap anywhere": a TV remote has no pointer to tap with,
+     but it does have OK, and OK presses whatever is focused. */
+  #start { position: fixed; inset: 0; width: 100%; height: 100%; border: 0;
+           background: rgba(11, 13, 16, 0.82); color: #e6e9ef; font: inherit;
+           font-size: 22px; cursor: pointer; }
+  #start:focus { outline: 3px solid #60a5fa; outline-offset: -6px; }
+</style>
+</head>
+<body>
+
+<div id="idle">
+  <h1>Ready to cast</h1>
+  <p id="idle-hint">Send a link from your phone and it will play here.</p>
+</div>
+
+<video id="v" class="hidden" controls autoplay playsinline></video>
+
+<button id="start" class="hidden" type="button">▶  Press to start playback</button>
+
+<div id="bar">
+  <span id="dot"></span>
+  <span id="title">Connecting…</span>
+</div>
+
+<script>
+(function () {
+  var video = document.getElementById('v');
+  var idle = document.getElementById('idle');
+  var dot = document.getElementById('dot');
+  var label = document.getElementById('title');
+  // The token is already in this page's URL — a TV browser can't set an
+  // Authorization header, so the query-string fallback is the only way in.
+  var token = new URLSearchParams(location.search).get('token') || '';
+  var socket = null;
+  var retry = null;
+  var pendingTitle = '';
+  var start = document.getElementById('start');
+
+  // Browsers refuse to start playback until the page has been interacted with, and
+  // a cast receiver is by definition driven from another room. Rather than hoping
+  // someone taps the right pixel, put a real button over the video the moment a
+  // play() is refused: it takes focus, so a TV remote's OK button works on it too.
+  function askForGesture() {
+    start.classList.remove('hidden');
+    start.focus();
+    report('gesture-required');
+  }
+
+  start.addEventListener('click', function () {
+    start.classList.add('hidden');
+    label.textContent = pendingTitle || label.textContent;
+    var primed = video.play();
+    if (primed && primed.catch) primed.catch(function () {
+      label.textContent = 'Still could not play that link';
+    });
+  });
+
+  video.addEventListener('playing', function () { start.classList.add('hidden'); });
+
+  // Tell the server what is actually happening here. Without this the server can
+  // only say "I sent a link somewhere" — it cannot see inside a page it merely
+  // serves, so the phone has nothing to show and nobody can tell a blocked
+  // playback from a broken one.
+  function report(reason) {
+    if (!socket || socket.readyState !== 1) return;
+    socket.send(JSON.stringify({
+      t: 'status',
+      reason: reason,
+      url: video.currentSrc || '',
+      title: pendingTitle,
+      paused: video.paused,
+      ended: video.ended,
+      waitingForGesture: !start.classList.contains('hidden'),
+      position: video.currentTime || 0,
+      duration: isFinite(video.duration) ? video.duration : 0,
+      volume: video.volume,
+      muted: video.muted,
+      error: video.error ? video.error.code : 0
+    }));
+  }
+
+  ['playing', 'pause', 'ended', 'seeked', 'volumechange', 'error', 'loadedmetadata']
+    .forEach(function (name) {
+      video.addEventListener(name, function () { report(name); });
+    });
+  // A ticking position needs a heartbeat, but timeupdate fires ~4x a second and
+  // this only has to look continuous on a phone — one a second is plenty.
+  setInterval(function () { if (!video.paused) report('tick'); }, 1000);
+
+  function connect() {
+    var scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    socket = new WebSocket(scheme + '://' + location.host + '/cast/ws?token=' + encodeURIComponent(token));
+
+    socket.onopen = function () {
+      dot.className = 'on';
+      if (video.classList.contains('hidden')) label.textContent = 'Ready — waiting for a link';
+    };
+
+    socket.onmessage = function (event) {
+      var msg;
+      try { msg = JSON.parse(event.data); } catch (e) { return; }
+      handle(msg);
+    };
+
+    socket.onclose = function () {
+      dot.className = '';
+      label.textContent = 'Disconnected — reconnecting…';
+      // The PC sleeping or the server restarting shouldn't mean walking over to
+      // the TV to reload a page.
+      clearTimeout(retry);
+      retry = setTimeout(connect, 2000);
+    };
+  }
+
+  // Extension-based, because the URL is all we have before fetching: the receiver
+  // never sees the response. Safari (and iOS/tvOS browsers, which are all Safari)
+  // play HLS natively; nothing plays DASH without a library.
+  function playableHere(url) {
+    var path = String(url).split('?')[0].toLowerCase();
+    if (/\.mpd$/.test(path)) return false;
+    if (/\.m3u8$/.test(path)) return !!video.canPlayType('application/vnd.apple.mpegurl');
+    return true;
+  }
+
+  function handle(msg) {
+    switch (msg.t) {
+      case 'load':
+        idle.classList.add('hidden');
+        video.classList.remove('hidden');
+        video.src = msg.url;
+        pendingTitle = msg.title || msg.url;
+        label.textContent = pendingTitle;
+        // Adaptive streams need Media Source Extensions and a library to drive them;
+        // a bare <video> plays HLS only on Safari and never plays DASH. Say which
+        // wall this is, because the alternative — the generic media error below —
+        // sends you looking for a broken link that isn't broken.
+        if (!playableHere(msg.url)) {
+          label.textContent = 'This is an adaptive stream (HLS/DASH) and this browser '
+            + 'cannot play one on its own. Cast it with no receiver open to hand it to '
+            + 'the PC\'s own player instead.';
+          return;
+        }
+        video.play().catch(function (err) {
+          // Two very different failures land here and reporting both the same way
+          // sends you hunting the wrong problem — a 404 spent a while looking like
+          // a browser policy during development. NotAllowedError is the autoplay
+          // block; some versions report AbortError for the same thing when a load
+          // is still in flight, and offering the button is harmless either way.
+          // Anything else is a genuinely broken link.
+          var name = (err && err.name) || 'unknown error';
+          if (name === 'NotAllowedError' || name === 'AbortError') askForGesture();
+          else label.textContent = 'Could not play that link (' + name + ')';
+        });
+        break;
+      case 'play': video.play(); break;
+      case 'pause': video.pause(); break;
+      case 'toggle': video.paused ? video.play() : video.pause(); break;
+      case 'stop':
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.classList.add('hidden');
+        idle.classList.remove('hidden');
+        label.textContent = 'Ready — waiting for a link';
+        break;
+      case 'seek':
+        if (typeof msg.to === 'number') video.currentTime = msg.to;
+        else if (typeof msg.by === 'number') video.currentTime += msg.by;
+        break;
+      case 'volume':
+        if (typeof msg.level === 'number') video.volume = Math.min(1, Math.max(0, msg.level));
+        if (typeof msg.muted === 'boolean') video.muted = msg.muted;
+        break;
+    }
+  }
+
+  video.addEventListener('error', function () {
+    // The most common failure by far is a URL that needs the browser session it
+    // came from — see §1 of the phase 4 doc. Name it instead of failing blank.
+    label.textContent = 'Could not play that link (the site may require the page it came from)';
+  });
+
+  connect();
+})();
+</script>
+</body>
+</html>

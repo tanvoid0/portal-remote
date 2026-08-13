@@ -1,12 +1,15 @@
 using System.Net.Sockets;
 using System.Windows.Forms;
 using PortalRemote.Auth;
+using PortalRemote.Cast;
 using PortalRemote.Config;
 using PortalRemote.Control;
 using PortalRemote.Files;
 using PortalRemote.Input;
+using PortalRemote.Media;
 using PortalRemote.Mirror;
 using PortalRemote.Pairing;
+using PortalRemote.Share;
 using PortalRemote.Tray;
 
 namespace PortalRemote;
@@ -20,11 +23,37 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // Before anything else: this is the elevated copy of ourselves, launched
+        // only to write a firewall rule. No tray, no server, no message loop.
+        if (args.Contains(Reachability.InstallFirewallArg, StringComparer.OrdinalIgnoreCase))
+            return Reachability.InstallFirewallRule();
+
         ApplicationConfiguration.Initialize();
 
         var config = ServerConfig.Load();
         var connectionState = new ConnectionState();
-        var app = BuildApp(config, args, connectionState);
+        var share = new ShareHub(config);
+        using var approval = new PairApproval(config);
+
+        // Every state change on the PC's media session goes straight out to whoever
+        // is connected. Nothing is buffered for phones that aren't: what's playing is
+        // only interesting live, and a phone gets the current state on connect anyway.
+        using var nowPlaying = new NowPlaying();
+        nowPlaying.Changed += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
+        // A cast receiver reports its own position at 1 Hz; forwarding that is what
+        // turns the phone's blind transport buttons into a scrub bar. Same
+        // fire-and-forget shape as above — a phone that isn't listening isn't owed
+        // the playhead it missed.
+        CastHub.Instance.Changed += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
+        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying);
 
         try
         {
@@ -41,10 +70,29 @@ internal static class Program
             return 1;
         }
 
-        PrintStartupBanner(config);
+        // Checked once and reused: it shells out to netsh, and the answer can't
+        // change between here and the balloon a few lines below.
+        var warning = Reachability.StartupWarning();
+        PrintStartupBanner(config, warning);
 
-        using var tray = new TrayIcon(config, connectionState, onExit: Application.ExitThread);
-        tray.Notify(ServerInfo.Name, $"Listening on {PairingService.HttpBase(config)}");
+        // Started after Kestrel: if the HTTP port was taken we've already bailed
+        // out above, and there's no point advertising a server that isn't up.
+        using var discovery = new DiscoveryResponder(config);
+        discovery.Start();
+
+        // Not awaited: attaching to the media session is a nice-to-have, and the tray
+        // should appear whether or not this machine has one.
+        _ = nowPlaying.StartAsync();
+
+        using var tray = new TrayIcon(config, connectionState, approval, share, onExit: Application.ExitThread);
+
+        // Nothing has ever paired with this PC, so the QR code is the only useful
+        // next step — show it rather than leaving a new user hunting the tray.
+        // A phone that cannot reach this PC has no way to say why, so the PC says it
+        // instead — at the moment the user is most likely to be about to try.
+        if (config.IsFirstRun) tray.ShowWindow();
+        else if (warning is not null) tray.Notify(ServerInfo.Name, warning);
+        else tray.Notify(ServerInfo.Name, $"Listening on {PairingService.HttpBase(config)}");
 
         Application.Run();
 
@@ -52,7 +100,9 @@ internal static class Program
         return 0;
     }
 
-    private static WebApplication BuildApp(ServerConfig config, string[] args, ConnectionState connectionState)
+    private static WebApplication BuildApp(
+        ServerConfig config, string[] args, ConnectionState connectionState, PairApproval approval, ShareHub share,
+        NowPlaying nowPlaying)
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -81,14 +131,30 @@ internal static class Program
             });
         }).AddEndpointFilter(new TokenAuth.RequireTokenFilter(config));
 
-        app.MapControlEndpoint(config, connectionState);
+        // Unauthenticated by design — it's how a phone that has never seen this PC
+        // *gets* the token. The gate is the Allow dialog PairApproval puts on this
+        // screen, not a header. Left open until the user answers, so the phone can
+        // show "waiting for approval" rather than poll.
+        app.MapPost("/pair/request", async (HttpContext http, PairRequestBody? body) =>
+        {
+            var remoteIp = http.Connection.RemoteIpAddress?.ToString() ?? "unknown address";
+            var token = await approval.RequestTokenAsync(body?.Device, remoteIp);
+            return token is null
+                ? Results.StatusCode(StatusCodes.Status403Forbidden)
+                : Results.Ok(new { token, name = Environment.MachineName, port = config.RunningPort });
+        });
+
+        app.MapControlEndpoint(config, connectionState, share, nowPlaying);
         app.MapFilesEndpoints(config);
         app.MapScreenEndpoints(config);
+        app.MapShareEndpoints(config, share);
+        app.MapCastEndpoints(config);
+        app.MapMediaEndpoints(config, nowPlaying);
 
         return app;
     }
 
-    private static void PrintStartupBanner(ServerConfig config)
+    private static void PrintStartupBanner(ServerConfig config, string? warning)
     {
         var url = PairingService.HttpBase(config);
         Console.WriteLine();
@@ -96,13 +162,19 @@ internal static class Program
         Console.WriteLine($"  Listening on {url}");
         Console.WriteLine($"  Config       {ServerConfig.DefaultConfigPath}");
         Console.WriteLine($"  Shared files {config.ResolvedShareRoot()}");
+        // Open this on any other screen — a TV, a laptop, a console — and it becomes
+        // a cast target. Also in the app window, since the console is only up when
+        // the server was started from one.
+        Console.WriteLine($"  Cast to a screen: {PairingService.ReceiverUrl(config)}");
         Console.WriteLine();
         Console.WriteLine("  Scan this with the Portal Remote app to pair:");
         Console.WriteLine();
         Console.WriteLine(PairingService.QrAscii(PairingService.PairUrl(config)));
         Console.WriteLine();
-        Console.WriteLine("  If the phone cannot connect, allow this app through Windows");
-        Console.WriteLine("  Firewall on Private networks.");
-        Console.WriteLine();
+        if (warning is not null)
+        {
+            Console.WriteLine($"  {warning}");
+            Console.WriteLine();
+        }
     }
 }

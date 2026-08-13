@@ -5,6 +5,8 @@ using System.Text.Json;
 using PortalRemote.Auth;
 using PortalRemote.Config;
 using PortalRemote.Input;
+using PortalRemote.Media;
+using PortalRemote.Share;
 
 namespace PortalRemote.Control;
 
@@ -22,7 +24,9 @@ public static class ControlEndpoint
 
     private const int ReceiveBufferBytes = 8 * 1024;
 
-    public static void MapControlEndpoint(this WebApplication app, ServerConfig config, ConnectionState connectionState)
+    public static void MapControlEndpoint(
+        this WebApplication app, ServerConfig config, ConnectionState connectionState, ShareHub shareHub,
+        NowPlaying nowPlaying)
     {
         app.Map("/control", async (HttpContext context, ILoggerFactory loggerFactory) =>
         {
@@ -41,19 +45,29 @@ public static class ControlEndpoint
             if (!TokenAuth.IsAuthorized(context, config))
             {
                 log.LogWarning("Rejected /control from {Peer}: bad token", peer);
-                connectionState.OnAuthRejected();
+                connectionState.OnAuthRejected(peer);
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
             }
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
             log.LogInformation("Client connected: {Peer}", peer);
-            connectionState.OnConnected();
+            connectionState.OnConnected(peer);
+
+            // Every send on this socket goes through the wrapper — the share hub
+            // pushes from an unrelated thread, and two concurrent SendAsync calls
+            // on one WebSocket is an error, not a race you get away with.
+            using var client = new ClientSocket(socket);
+            shareHub.Add(client);
 
             try
             {
-                await SendHelloAsync(socket, context.RequestAborted);
-                await PumpAsync(socket, log, context.RequestAborted);
+                await SendHelloAsync(client, config, context.RequestAborted);
+                // Whatever is playing was playing before this phone connected, so
+                // send it now rather than leaving the card blank until the next
+                // track change.
+                await client.SendJsonAsync(nowPlaying.Snapshot(), context.RequestAborted);
+                await PumpAsync(socket, client, nowPlaying, log, context.RequestAborted);
             }
             catch (OperationCanceledException)
             {
@@ -65,26 +79,31 @@ public static class ControlEndpoint
             }
             finally
             {
+                shareHub.Remove(client);
                 log.LogInformation("Client disconnected: {Peer}", peer);
                 connectionState.OnDisconnected();
             }
         });
     }
 
-    private static async Task SendHelloAsync(WebSocket socket, CancellationToken ct)
+    private static async Task SendHelloAsync(ClientSocket client, ServerConfig config, CancellationToken ct)
     {
         var (width, height) = WinInput.ScreenSize();
-        await SendJsonAsync(socket, new
+        await client.SendJsonAsync(new
         {
             t = "hello",
             name = Environment.MachineName,
+            // The phone stores this against the pairing so it can recognise this PC
+            // again after its address changes.
+            id = config.Id,
             version = ServerInfo.Version,
             screen = new { width, height }
         }, ct);
     }
 
     /// <summary>Read messages until the client closes the socket.</summary>
-    private static async Task PumpAsync(WebSocket socket, ILogger log, CancellationToken ct)
+    private static async Task PumpAsync(
+        WebSocket socket, ClientSocket client, NowPlaying nowPlaying, ILogger log, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(ReceiveBufferBytes);
         var pending = new MemoryStream();
@@ -114,7 +133,7 @@ public static class ControlEndpoint
 
                 var text = Encoding.UTF8.GetString(pending.GetBuffer(), 0, (int)pending.Length);
                 pending.SetLength(0);
-                await HandleAsync(socket, text, log, ct);
+                await HandleAsync(client, nowPlaying, text, log, ct);
             }
         }
         finally
@@ -124,7 +143,8 @@ public static class ControlEndpoint
         }
     }
 
-    private static async Task HandleAsync(WebSocket socket, string text, ILogger log, CancellationToken ct)
+    private static async Task HandleAsync(
+        ClientSocket client, NowPlaying nowPlaying, string text, ILogger log, CancellationToken ct)
     {
         JsonElement message;
         try
@@ -134,40 +154,49 @@ public static class ControlEndpoint
         }
         catch (JsonException)
         {
-            await SendErrorAsync(socket, "malformed json", ct);
+            await SendErrorAsync(client, "malformed json", ct);
             return;
         }
 
         if (message.ValueKind != JsonValueKind.Object)
         {
-            await SendErrorAsync(socket, "expected a json object", ct);
+            await SendErrorAsync(client, "expected a json object", ct);
+            return;
+        }
+
+        // Handled here rather than in InputActions: seeking is an async call on the
+        // media session, not a synchronous key press, and this is the layer that
+        // already has both the session and a cancellation token.
+        if (message.TryGetProperty("t", out var kind) && kind.ValueKind == JsonValueKind.String &&
+            kind.GetString() == "seek")
+        {
+            if (!message.TryGetProperty("ms", out var ms) || !ms.TryGetInt64(out var positionMs))
+            {
+                await SendErrorAsync(client, "seek needs a numeric 'ms'", ct);
+                return;
+            }
+            await nowPlaying.SeekAsync(positionMs);
             return;
         }
 
         try
         {
             var reply = InputActions.Dispatch(message);
-            if (reply is not null) await SendJsonAsync(socket, reply, ct);
+            if (reply is not null) await client.SendJsonAsync(reply, ct);
         }
         catch (UnknownMessageException ex)
         {
-            await SendErrorAsync(socket, ex.Message, ct);
+            await SendErrorAsync(client, ex.Message, ct);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
                                        or System.ComponentModel.Win32Exception)
         {
             // The input call failed but the session is still usable; report and continue.
             log.LogError(ex, "Input dispatch failed");
-            await SendErrorAsync(socket, $"input failed: {ex.Message}", ct);
+            await SendErrorAsync(client, $"input failed: {ex.Message}", ct);
         }
     }
 
-    private static Task SendErrorAsync(WebSocket socket, string detail, CancellationToken ct) =>
-        SendJsonAsync(socket, new { t = "error", detail }, ct);
-
-    private static Task SendJsonAsync(WebSocket socket, object payload, CancellationToken ct)
-    {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(payload);
-        return socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
-    }
+    private static Task SendErrorAsync(ClientSocket client, string detail, CancellationToken ct) =>
+        client.SendJsonAsync(new { t = "error", detail }, ct);
 }

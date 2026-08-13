@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Android 13+ gates notifications behind a runtime grant; asked for on the
+         Share tab, which is the only place that posts any. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- DownloadManager needs this to write to the public Downloads folder on
          Android 9 (API 28) and below; scoped storage makes it unnecessary from
          Android 10 onward, hence the cap. -->
@@ -24,10 +27,26 @@
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
-            android:theme="@style/Theme.PortalRemote">
+            android:theme="@style/Theme.PortalRemote"
+            android:label="@string/app_name"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- The whole point of quick share: Portal Remote shows up in the system
+                 share sheet of every app, so sending a link or a screenshot to the PC
+                 is two taps from wherever you already are, not a trip into this app.
+                 singleTop above so sharing into an already-open session lands in
+                 onNewIntent instead of building a second copy of the activity. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <!-- Anything, not just text and images: the server side is the same
+                     multipart upload either way, and a share target that refuses the
+                     PDF you were looking at is the one you stop reaching for. -->
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
 

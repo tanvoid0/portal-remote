@@ -1,7 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- The Windows SDK flavour of the TFM, not plain net8.0-windows: it brings in
+         the WinRT projections, which is how Media/NowPlaying.cs reads the system
+         media session. SupportedOSPlatformVersion stays at 1809, the release that
+         introduced that API, so nothing here demands a newer Windows than before. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <!-- Exe (not WinExe) keeps a console attached so server logs are visible while
          developing; the tray icon works either way. Switch to WinExe to ship. -->
     <OutputType>Exe</OutputType>
@@ -11,6 +16,10 @@
     <AssemblyName>PortalRemote</AssemblyName>
     <RootNamespace>PortalRemote</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Brand mark, generated from Theme/BrandMark.cs's geometry — see
+         docs/design-system.md §11. Only affects the exe's Explorer/taskbar icon;
+         the tray and window icons are drawn at runtime so they can be recolored. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- The LibraryImport source generator emits unsafe marshalling code. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -21,6 +30,12 @@
 
   <ItemGroup>
     <PackageReference Include="QRCoder" Version="1.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The cast receiver page is embedded, not copied: publish.ps1 produces a
+         single-file exe, and a loose .html next to it would not survive that. -->
+    <EmbeddedResource Include="Cast\receiver.html" LogicalName="PortalRemote.Cast.receiver.html" />
   </ItemGroup>
 
 </Project>

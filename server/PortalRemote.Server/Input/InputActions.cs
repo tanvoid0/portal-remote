@@ -15,6 +15,10 @@ public static class InputActions
     private static readonly HashSet<string> MediaActions =
         ["play_pause", "next", "prev", "stop", "mute", "vol_up", "vol_down"];
 
+    /// <summary>Transport actions the cast receiver page understands.</summary>
+    private static readonly HashSet<string> PlayerActions =
+        ["play", "pause", "toggle", "stop", "seek", "volume"];
+
     private static Dictionary<string, ushort> BuildVkTable()
     {
         var table = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase)
@@ -139,6 +143,63 @@ public static class InputActions
             case "text":
                 WinInput.TypeText(GetString(msg, "s") ?? string.Empty);
                 return null;
+
+            case "cast":
+            {
+                // Not input, but it rides the same socket the phone already holds
+                // open rather than earning an endpoint of its own.
+                var url = GetString(msg, "url") ?? throw new UnknownMessageException("cast needs 'url'");
+                var checkedUrl = Cast.CastLauncher.Validate(url);
+
+                // A receiver page gives real transport control; ShellExecute just
+                // throws the link at whatever is registered and forgets it. Prefer
+                // the receiver whenever one is attached.
+                if (Cast.CastHub.Instance.HasReceivers)
+                {
+                    Cast.CastHub.Instance.Load(checkedUrl, GetString(msg, "title"));
+                    return new { t = "cast_ok", url = checkedUrl, via = "receiver" };
+                }
+
+                Cast.CastLauncher.Open(checkedUrl);
+                return new { t = "cast_ok", url = checkedUrl, via = "shell" };
+            }
+
+            case "cast_status":
+                // Same shape the hub pushes unprompted, so a phone that asks and a
+                // phone that waits are looking at one message type, not two.
+                return Cast.CastHub.Instance.Snapshot();
+
+            case "player":
+            {
+                // Transport for whatever the receiver page is playing. Deliberately
+                // separate from "media", which taps global media keys and therefore
+                // lands on whatever window Windows thinks is playing.
+                var action = GetString(msg, "action")
+                    ?? throw new UnknownMessageException("player needs 'action'");
+                if (!PlayerActions.Contains(action))
+                    throw new UnknownMessageException($"unknown player action: {action}");
+                if (!Cast.CastHub.Instance.HasReceivers)
+                    throw new UnknownMessageException("no cast receiver is attached");
+
+                Cast.CastHub.Instance.Command(new
+                {
+                    t = action,
+                    to = GetDouble(msg, "to"),
+                    by = GetDouble(msg, "by"),
+                    level = GetDouble(msg, "level"),
+                    muted = GetBool(msg, "muted")
+                });
+                return new { t = "player_ok", action };
+            }
+
+            case "power":
+            {
+                // Not input either, but same reasoning as "cast": it rides the socket
+                // the phone already holds rather than earning an endpoint of its own.
+                var mode = GetString(msg, "mode") ?? throw new UnknownMessageException("power needs 'mode'");
+                Power.Apply(mode);
+                return new { t = "power_ok", mode };
+            }
 
             case "media":
             {

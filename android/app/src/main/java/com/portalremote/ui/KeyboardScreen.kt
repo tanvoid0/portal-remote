@@ -4,6 +4,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
@@ -11,8 +13,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -41,6 +41,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import com.portalremote.ui.theme.HapticPress
 
 /** Non-empty placeholder so the field always has something for backspace to delete. */
 private const val SENTINEL = " "
@@ -64,8 +65,8 @@ fun KeyboardScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         KeyCaptureField(onText = onText, onTap = onTap, modifier = Modifier.fillMaxWidth())
         SpecialKeyRow(onTap = onTap, onCombo = onCombo)
@@ -134,6 +135,7 @@ fun KeyCaptureField(
 
 private data class SpecialKey(val label: String, val send: () -> Unit)
 
+@OptIn(ExperimentalLayoutApi::class) // FlowRow
 @Composable
 private fun SpecialKeyRow(onTap: (String) -> Unit, onCombo: (List<String>) -> Unit) {
     val keys = remember {
@@ -150,8 +152,16 @@ private fun SpecialKeyRow(onTap: (String) -> Unit, onCombo: (List<String>) -> Un
             SpecialKey("Ctrl+Z") { onCombo(listOf("ctrl", "z")) },
         )
     }
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(keys) { key ->
+    // Wraps rather than scrolls. As a LazyRow about half of these were off the right
+    // edge with nothing on screen saying so — no gradient, no guaranteed half-item —
+    // so Ctrl+C/V/Z simply didn't exist for anyone who never dragged the row. Laying
+    // them out on two lines costs vertical space this screen has and removes the
+    // discoverability problem instead of signposting it.
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        keys.forEach { key ->
             KeyButton(onClick = key.send, contentPadding = PaddingValues(horizontal = 16.dp)) {
                 Text(key.label)
             }
@@ -189,13 +199,15 @@ private fun ArrowButton(icon: ImageVector, onClick: () -> Unit) {
  * 4dp content padding around a 24dp icon would otherwise land under that.
  */
 @Composable
-private fun KeyButton(
+internal fun KeyButton(
     onClick: () -> Unit,
-    contentPadding: PaddingValues,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp),
     content: @Composable RowScope.() -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
+    // Same source as the tint above, so the buzz and the highlight land together.
+    HapticPress(interactionSource)
     OutlinedButton(
         onClick = onClick,
         interactionSource = interactionSource,

@@ -37,12 +37,17 @@ fun parsePairUrl(raw: String): SavedHost {
     return SavedHost(host = host, port = port, token = token)
 }
 
-/** Builds a [SavedHost] from a manually typed `host:port` and token. */
-fun hostFromManualEntry(hostPort: String, token: String): SavedHost {
-    val trimmed = hostPort.trim()
-    val colon = trimmed.lastIndexOf(':')
-    val host = if (colon >= 0) trimmed.substring(0, colon) else trimmed
-    val port = if (colon >= 0) trimmed.substring(colon + 1).toIntOrNull() else null
-    if (host.isEmpty()) throw InvalidPairUrl("missing host")
-    return SavedHost(host = host, port = port ?: 8765, token = token.trim())
+/**
+ * Joins the four boxes of the manual-entry field into a dotted-quad, or null if
+ * what's typed isn't an address yet — which is also what disables the Connect
+ * button, so nothing has to explain the rules in prose.
+ */
+fun ipFromOctets(octets: List<String>): String? {
+    if (octets.size != 4) return null
+    val parts = octets.map { it.trim().toIntOrNull() ?: return null }
+    if (parts.any { it !in 0..255 }) return null
+    // 0.x.x.x is "this network" — never a host you can dial, and the likeliest
+    // shape of a half-typed address.
+    if (parts[0] == 0) return null
+    return parts.joinToString(".")
 }

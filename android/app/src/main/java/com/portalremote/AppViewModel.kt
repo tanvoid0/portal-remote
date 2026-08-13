@@ -1,18 +1,86 @@
 package com.portalremote
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.portalremote.data.AppSettings
 import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
+import com.portalremote.net.CastState
+import com.portalremote.net.CastStatus
 import com.portalremote.net.ConnectionState
+import com.portalremote.net.NowPlaying
 import com.portalremote.net.ServerHello
+import com.portalremote.net.ShareApi
+import com.portalremote.net.ShareEntry
+import com.portalremote.net.ShareKind
 import com.portalremote.net.WsClient
+import com.portalremote.net.discoverHosts
+import com.portalremote.ui.copyToClipboard
+import com.portalremote.ui.displayNameOf
+import com.portalremote.ui.notifyShare
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+
+/** How long WsClient gets to fix a drop on the known address before a discovery
+ *  sweep is worth the radio. */
+private const val FOLLOW_DELAY_MS = 6_000L
+
+/** Share history is in-memory and scrollable, not a log — past this the old
+ *  entries are noise you'd scroll past to reach the ones that matter. */
+private const val MAX_SHARES = 50
+
+/** How long a share handed to us by another app waits for the pairing to come
+ *  back up before it gives up and says so. */
+private const val SHARE_HOST_WAIT_MS = 15_000L
+
+private const val SENDING = "Sending…"
+
+/** Shown while a share is queued for the next time the PC is reachable. Deliberately
+ *  not "Failed": nothing was lost, and the app will send it without being asked. */
+private const val WAITING = "Waiting for your PC"
+
+/** Message type the PC pushes a share down the control socket as. */
+private const val SHARE = "share"
+
+/** Message type the server pushes the PC's playback state under. */
+private const val NOW_PLAYING = "now_playing"
+
+/** The server's acknowledgement of a `cast`, carrying where the link ended up. */
+private const val CAST_OK = "cast_ok"
+
+/** The server's acknowledgement of a `player` transport command. */
+private const val PLAYER_OK = "player_ok"
+
+/** What the receiver page reports it is doing, forwarded by the server. */
+private const val CAST_STATUS = "cast_status"
+
+/** Errors come back as `{"t":"error","detail":…}`; this is the one that means the
+ *  receiver page has gone away since we last cast to it. */
+private const val ERROR = "error"
+private const val NO_RECEIVER = "no cast receiver"
+
+/** Discovery re-probes every 800ms; this is several probes' worth of patience
+ *  before concluding the PC is genuinely not on this network. */
+private const val DISCOVERY_TIMEOUT_MS = 5_000L
 
 /**
  * App-scoped state: the single WebSocket connection and the last-paired host.
@@ -22,8 +90,65 @@ import org.json.JSONObject
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = Prefs(application)
     val ws = WsClient()
+    private val shareApi = ShareApi()
 
     val connectionState get() = ws.state
+
+    private val _shares = MutableStateFlow<List<ShareEntry>>(emptyList())
+
+    /** Newest first — what the Share tab shows. */
+    val shares: StateFlow<List<ShareEntry>> = _shares.asStateFlow()
+
+    private val _nowPlaying = MutableStateFlow<NowPlaying?>(null)
+
+    /** What the PC is playing, pushed by the server; null when it's playing nothing. */
+    val nowPlaying: StateFlow<NowPlaying?> = _nowPlaying.asStateFlow()
+
+    private val _cast = MutableStateFlow<CastState?>(null)
+
+    /** The link this phone last cast, and where it landed — null when there is
+     *  nothing of ours playing to control. */
+    val cast: StateFlow<CastState?> = _cast.asStateFlow()
+
+    private val _castStatus = MutableStateFlow<CastStatus?>(null)
+
+    /** Position, duration and paused state of the receiver page, pushed as it plays.
+     *  Null when nothing is attached or it hasn't reported yet — which is what tells
+     *  the transport to fall back to blind buttons rather than draw an empty bar. */
+    val castStatus: StateFlow<CastStatus?> = _castStatus.asStateFlow()
+
+    private var nextShareId = 0L
+
+    /**
+     * Outgoing shares that haven't landed yet, keyed by entry id and holding the
+     * closure that sends them. A share made while the PC is asleep, or interrupted
+     * by a Wi-Fi drop mid-upload, sits here until [retryPending] runs on the next
+     * reconnect — the phone is the device that moves between networks, so "try again
+     * later" has to be the app's job rather than the user's.
+     */
+    private val pending = linkedMapOf<Long, suspend (SavedHost) -> Unit>()
+
+    /** Ids with an attempt already running, so a flapping link can't start a second. */
+    private val inFlight = mutableSetOf<Long>()
+
+    /** This phone, as the PC should name it in its notification. */
+    private val deviceName: String = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
+        .replaceFirstChar { it.uppercase() }
+
+    /** Eagerly started so the first frame of the trackpad already has the user's
+     *  pointer speed, rather than moving at the default for a frame and then jumping. */
+    val settings: StateFlow<AppSettings> =
+        prefs.settings.stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
+
+    fun updateSettings(change: (AppSettings) -> AppSettings) {
+        viewModelScope.launch { prefs.saveSettings(change(settings.value)) }
+    }
+
+    /** The last PC that paired successfully, for the pairing screen to offer back.
+     *  Eagerly started for the same reason as [settings]: it decides what the very
+     *  first frame of that screen looks like. */
+    val savedHost: StateFlow<SavedHost?> =
+        prefs.savedHost.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** The host currently paired/connecting/connected — the files HTTP client needs
      *  this directly since it doesn't go through the WebSocket. */
@@ -43,6 +168,288 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      *  let WsClient's auto-reconnect do its thing). */
     var hasEverConnected by mutableStateOf(false)
         private set
+
+    private var followJob: Job? = null
+
+    // A saved pairing stores an IP address, and DHCP hands out a different one
+    // eventually — after a router reboot, a lease expiry, a move between bands.
+    // Without this the app retries a dead address forever and the only way out the
+    // user can see is pairing again from scratch.
+    init {
+        viewModelScope.launch {
+            ws.state.collect { state ->
+                when (state) {
+                    is ConnectionState.Connected -> {
+                        followJob?.cancel()
+                        followJob = null
+                        // The PC is back — flush anything that couldn't go out while
+                        // it wasn't. Keyed off the control socket rather than off
+                        // Android's network callbacks because reaching *this* PC is
+                        // the condition that matters, and having Wi-Fi is not it.
+                        retryPending()
+                    }
+
+                    ConnectionState.Disconnected -> followToNewAddress()
+                    // Failed means the token was rejected, which a new address
+                    // won't fix, and Connecting/Idle aren't failures yet.
+                    else -> Unit
+                }
+            }
+        }
+
+        // Shares pushed from the PC arrive on the control socket already open, so
+        // there's nothing to poll and nothing to keep alive — see docs/phase5-share.md
+        // for why receiving while the app is closed is deliberately not built.
+        viewModelScope.launch {
+            ws.messages.collect { json ->
+                // The PC pushes what it's playing on the same socket, for the same
+                // reason: it already exists, and this is state nobody needs to poll for.
+                if (json.optString("t") == NOW_PLAYING) {
+                    _nowPlaying.value = NowPlaying.fromPush(json)
+                    return@collect
+                }
+                // Where a cast landed is only knowable from the reply: the same
+                // message reaches a receiver page (controllable) or ShellExecute
+                // (not), and the phone can't tell which until the PC says so.
+                if (json.optString("t") == CAST_OK) {
+                    _cast.value = CastState.fromAck(json)
+                    return@collect
+                }
+                // Stop is the one transport command that ends the session rather
+                // than changing it, so it's also what takes the controls away.
+                if (json.optString("t") == PLAYER_OK) {
+                    if (json.optString("action") == "stop") {
+                        _cast.value = null
+                        _castStatus.value = null
+                    }
+                    return@collect
+                }
+                if (json.optString("t") == CAST_STATUS) {
+                    _castStatus.value = CastStatus.fromPush(json)
+                    // `receiver:false` against a cast we believed was controllable
+                    // means the page was closed at the other end. Previously that only
+                    // surfaced as an error on the next button press; now the controls
+                    // go away when the receiver does.
+                    if (!json.optBoolean("receiver") && _cast.value?.controllable == true) {
+                        _cast.value = null
+                    }
+                    return@collect
+                }
+                // The receiver was closed at the other end. Nothing failed on this
+                // side, but there is no longer anything to drive.
+                if (json.optString("t") == ERROR) {
+                    if (json.optString("detail").startsWith(NO_RECEIVER)) {
+                        _cast.value = null
+                        _castStatus.value = null
+                    }
+                    return@collect
+                }
+                // Id claimed only once the message is known to be a share: pongs and
+                // errors come through here too, and burning an id on each would walk
+                // the notification ids up for no reason.
+                if (json.optString("t") != SHARE) return@collect
+                val entry = ShareEntry.fromPush(json, nextShareId++) ?: return@collect
+                onShareReceived(entry)
+            }
+        }
+
+        // A dropped socket means the card is showing a track that may have ended,
+        // paused or changed while we were away. The server re-sends on connect, so
+        // blank is only what's shown in the gap.
+        viewModelScope.launch {
+            ws.state.collect { state ->
+                if (state !is ConnectionState.Connected) {
+                    _nowPlaying.value = null
+                    // Same reasoning for the cast: the server restarting takes every
+                    // receiver's socket with it, and transport buttons that error on
+                    // every press are worse than no buttons.
+                    _cast.value = null
+                    _castStatus.value = null
+                }
+            }
+        }
+    }
+
+    /**
+     * A share landed from the PC. Text goes onto the clipboard before the
+     * notification fires — the feature is only quick if the thing is already
+     * pasteable by the time you look at the phone.
+     */
+    private fun onShareReceived(entry: ShareEntry) {
+        val context = getApplication<Application>()
+        if (entry.kind == ShareKind.TEXT || entry.kind == ShareKind.LINK) {
+            entry.text?.let { copyToClipboard(context, it) }
+        }
+        record(entry)
+        notifyShare(context, entry)
+    }
+
+    /** Send text (typed, pasted, or arriving from another app's share sheet) to the PC. */
+    fun shareText(text: String) {
+        if (text.isBlank()) return
+        val entry = ShareEntry(
+            id = nextShareId++,
+            incoming = false,
+            kind = ShareKind.forText(text),
+            text = text,
+            from = deviceName,
+            status = SENDING,
+        )
+        record(entry)
+        send(entry) { host -> shareApi.sendText(host, text, deviceName) }
+    }
+
+    /** Send a file or image [uri] to the PC — the system share sheet's payload. */
+    fun shareUri(uri: Uri) {
+        val context = getApplication<Application>()
+        val name = displayNameOf(context, uri) ?: uri.lastPathSegment ?: "shared.bin"
+        val type = context.contentResolver.getType(uri)
+        val entry = ShareEntry(
+            id = nextShareId++,
+            incoming = false,
+            kind = ShareKind.forFile(name),
+            fileName = name,
+            from = deviceName,
+            status = SENDING,
+        )
+        record(entry)
+        send(entry) { host -> shareApi.sendFile(context, host, name, type, uri, deviceName) }
+    }
+
+    /**
+     * Everything an app can hand us through ACTION_SEND. Called from MainActivity
+     * for both the cold start and, thanks to `singleTop`, a share into a session
+     * that's already open.
+     */
+    fun shareFromIntent(intent: Intent) {
+        if (intent.action != Intent.ACTION_SEND) return
+        val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+        }
+
+        // A stream wins over the text extra: apps that share an image often attach a
+        // caption too, and the image is the thing the user pointed at.
+        if (uri != null) {
+            shareUri(uri)
+            return
+        }
+        intent.getStringExtra(Intent.EXTRA_TEXT)?.let { shareText(it) }
+    }
+
+    /**
+     * Queue [transmit] against the paired PC and try it now.
+     *
+     * The payload lives in the closure rather than on [ShareEntry] so a retry needs
+     * nothing from the model — a file share's content uri stays captured here, which
+     * is also why retries only work for the life of the process: the read permission
+     * an ACTION_SEND grant carries dies with it.
+     */
+    private fun send(entry: ShareEntry, transmit: suspend (SavedHost) -> Unit) {
+        pending[entry.id] = transmit
+        deliver(entry.id)
+    }
+
+    /**
+     * One delivery attempt. Waits for a host if the app was cold-started *by* the
+     * share — the share sheet can put us on screen a second or two before the address
+     * is settled — and leaves the item in [pending] on any failure so
+     * [retryPending] can pick it up when the PC comes back.
+     */
+    private fun deliver(id: Long) {
+        val transmit = pending[id] ?: return
+        // A reconnect can fire while an attempt is still running (a flapping Wi-Fi
+        // link produces several), and sending the same file twice is worse than
+        // sending it late.
+        if (!inFlight.add(id)) return
+
+        viewModelScope.launch {
+            update(id) { it.copy(status = SENDING) }
+            try {
+                val host = currentHost ?: withTimeoutOrNull(SHARE_HOST_WAIT_MS) {
+                    snapshotFlow { currentHost }.filterNotNull().first()
+                }
+                if (host == null) {
+                    update(id) { it.copy(status = WAITING) }
+                    return@launch
+                }
+                try {
+                    transmit(host)
+                    pending.remove(id)
+                    update(id) { it.copy(status = null) }
+                } catch (e: Exception) {
+                    // Kept in `pending`: this is "not yet", not "never". The reason is
+                    // still shown, since a 401 won't fix itself on reconnect and the
+                    // user should be able to tell that from a dropped Wi-Fi link.
+                    update(id) { it.copy(status = "$WAITING — ${e.message ?: "send failed"}") }
+                }
+            } finally {
+                inFlight.remove(id)
+            }
+        }
+    }
+
+    /**
+     * Re-send everything that hasn't made it across, oldest first so a burst of
+     * shares arrives on the PC in the order they were made. Called on every
+     * reconnect, so a share made with the PC asleep goes out by itself the moment
+     * it wakes — the user should not have to remember which ones failed.
+     */
+    private fun retryPending() {
+        pending.keys.sorted().forEach { deliver(it) }
+    }
+
+    /** Try a stuck share again now, from a tap on its row. */
+    fun retryShare(id: Long) = deliver(id)
+
+    private fun record(entry: ShareEntry) {
+        val trimmed = (listOf(entry) + _shares.value).take(MAX_SHARES)
+        _shares.value = trimmed
+        // Anything that aged off the list is no longer retryable from the UI, so
+        // holding its payload (and, for a file, its uri) would be a slow leak.
+        val live = trimmed.mapTo(mutableSetOf()) { it.id }
+        pending.keys.retainAll(live)
+    }
+
+    private fun update(id: Long, change: (ShareEntry) -> ShareEntry) {
+        _shares.value = _shares.value.map { if (it.id == id) change(it) else it }
+    }
+
+    /**
+     * Find the saved PC at whatever address it has now, and reconnect there.
+     *
+     * Matching is on the server's stable id, never on name or address: two PCs on
+     * one network can share a name, and the address is the very thing that just
+     * turned out to be wrong.
+     */
+    private fun followToNewAddress() {
+        val host = currentHost ?: return
+        // Nothing to match on — this pairing predates the id, or has never
+        // completed a hello. Leave WsClient retrying the address we were given.
+        val id = host.id ?: return
+        if (followJob?.isActive == true) return
+
+        followJob = viewModelScope.launch {
+            // Let WsClient's own retry go first: most drops are a blip on an
+            // address that is still correct, and a discovery sweep for those is
+            // wasted radio.
+            delay(FOLLOW_DELAY_MS)
+            val found = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS) {
+                discoverHosts()
+                    .map { hosts -> hosts.firstOrNull { it.id == id } }
+                    .filterNotNull()
+                    .first()
+            } ?: return@launch
+
+            if (found.host == host.host && found.port == host.port) return@launch
+            val moved = host.copy(host = found.host, port = found.port, name = found.name)
+            prefs.save(moved)
+            currentHost = moved
+            ws.connect(moved)
+        }
+    }
 
     fun pairAndConnect(host: SavedHost) {
         currentHost = host
@@ -65,6 +472,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun onConnected(hello: ServerHello) {
         hasEverConnected = true
         lastHello = hello
+
+        // Remember what the PC calls itself, and its stable id: the pairing screen
+        // can then offer it back by name next launch instead of as an IP address,
+        // and [followToNewAddress] has something to recognise it by if that IP
+        // stops working.
+        val host = currentHost ?: return
+        val updated = host.copy(name = hello.name, id = hello.id ?: host.id)
+        if (updated == host) return
+        currentHost = updated
+        viewModelScope.launch { prefs.save(updated) }
     }
 
     fun send(json: JSONObject) = ws.send(json)

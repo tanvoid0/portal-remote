@@ -5,6 +5,7 @@ import android.provider.Settings
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -34,6 +35,12 @@ object Motion {
     /** Bottom nav tab switch: cross-fade only, no slide. */
     const val TabSwitchDurationMs = 150
     fun tabSwitchSpec(): FiniteAnimationSpec<Float> = tween(TabSwitchDurationMs, easing = EaseOut)
+
+    /** Bottom-nav selection pill travelling between tabs, and the selected icon's lift.
+     * Slight overshoot: this is the only piece of shell chrome that moves, and a
+     * critically damped slide reads as a redraw rather than as a thing that moved. */
+    fun navIndicatorSpec(): FiniteAnimationSpec<Float> =
+        spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow)
 
     /** Connect/disconnect status change: color + icon morph, never abrupt. */
     const val StatusMorphDurationMs = 200

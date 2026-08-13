@@ -1,19 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The desktop server speaks plain HTTP on the local network, so cleartext has to be
-  permitted. It is scoped to private address ranges instead of enabled globally, so
-  the app still refuses cleartext to anything on the public internet.
+  permitted. It cannot be scoped to the private ranges: <domain> matches host names
+  literally and has no CIDR support, so a "192.168.0.0/16" entry silently matches
+  nothing and every real LAN address is refused. The server's address is whatever
+  the user paired with, so the permission has to be blanket.
 -->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <!-- RFC1918 private ranges plus link-local and loopback. -->
-        <domain includeSubdomains="true">10.0.0.0/8</domain>
-        <domain includeSubdomains="true">172.16.0.0/12</domain>
-        <domain includeSubdomains="true">192.168.0.0/16</domain>
-        <domain includeSubdomains="true">169.254.0.0/16</domain>
-        <domain includeSubdomains="true">127.0.0.1</domain>
-        <!-- The Android emulator reaches the host machine at this address. -->
-        <domain includeSubdomains="true">10.0.2.2</domain>
-        <domain includeSubdomains="true">localhost</domain>
-    </domain-config>
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

@@ -68,6 +68,10 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    // Only for the browser's private tabs: WebView's cookie jar is process-global, so
+    // real isolation needs the Profile API this adds. Feature-detected at runtime —
+    // it needs WebView 114+, and the browser degrades rather than breaks without it.
+    implementation(libs.androidx.webkit)
 
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
@@ -79,4 +83,7 @@ dependencies {
     // JVM-only: the mirror's touch->desktop transform can't be exercised on a
     // device (injecting a pinch needs /dev/input access SELinux won't grant).
     testImplementation(kotlin("test"))
+    // android.jar's org.json is a stub whose every method throws; the real one has
+    // to come first on the test classpath for ShareEntry.fromPush to be testable.
+    testImplementation(libs.json)
 }

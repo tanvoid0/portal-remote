@@ -4,7 +4,7 @@ namespace PortalRemote.Theme;
 
 /// <summary>
 /// Reads the Windows "Apps use light/dark mode" setting so desktop surfaces can
-/// pick the matching §3 palette. No live-notification plumbing here — QrForm is
+/// pick the matching §3 palette. No live-notification plumbing here — MainForm is
 /// short-lived enough to just re-check on every <c>Refresh</c>; TrayIcon, which is
 /// genuinely long-lived for the app's whole session, subscribes to
 /// <see cref="SystemEvents.UserPreferenceChanged"/> itself.

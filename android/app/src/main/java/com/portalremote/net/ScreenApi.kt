@@ -93,17 +93,24 @@ class ScreenApi(
     }.flowOn(Dispatchers.IO)
 
     /** Consume one part's headers; returns its body length, or null at end of stream. */
-    private fun readPartLength(source: BufferedSource): Int? {
+    internal fun readPartLength(source: BufferedSource): Int? {
         var length = -1
+        var inHeaders = false
         while (true) {
             val line = try {
                 source.readUtf8LineStrict()
             } catch (_: EOFException) {
                 return null
             }
-            // A blank line ends the headers; everything before it is the boundary
-            // marker plus this part's own headers.
-            if (line.isEmpty()) return length.takeIf { it >= 0 }
+            // Every part's body is followed by its own CRLF before the next boundary,
+            // so a blank line only ends the headers once a boundary has actually been
+            // seen — treating the body's trailing CRLF as the terminator ends the
+            // stream after exactly one frame, which looks like a frozen mirror.
+            if (line.isEmpty()) {
+                if (!inHeaders) continue
+                return length.takeIf { it >= 0 }
+            }
+            inHeaders = true
             val separator = line.indexOf(':')
             if (separator > 0 && line.take(separator).equals("Content-Length", ignoreCase = true)) {
                 length = line.substring(separator + 1).trim().toIntOrNull() ?: -1

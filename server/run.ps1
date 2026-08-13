@@ -22,11 +22,19 @@ if (Test-Path (Join-Path $LocalDotnet 'shared\Microsoft.AspNetCore.App')) {
 }
 
 $Solution = Join-Path $PSScriptRoot 'PortalRemote.sln'
-$Exe = Join-Path $PSScriptRoot 'PortalRemote.Server\bin\Debug\net8.0-windows\PortalRemote.exe'
 
 Write-Host 'Building...' -ForegroundColor Cyan
 & $DotnetExe build $Solution -v q --nologo
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+
+# Found rather than hardcoded: the output folder is named after the target
+# framework, and that moved once already (to the Windows SDK flavour, for the media
+# session API). Newest wins, so a stale folder from a previous TFM is ignored.
+$Exe = Get-ChildItem (Join-Path $PSScriptRoot 'PortalRemote.Server\bin\Debug') `
+    -Filter PortalRemote.exe -Recurse |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1 -ExpandProperty FullName
+if (-not $Exe) { throw 'Build produced no PortalRemote.exe.' }
 
 Write-Host 'Starting Portal Remote...' -ForegroundColor Cyan
 & $Exe @args

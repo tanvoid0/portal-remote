@@ -37,10 +37,23 @@ public static class PairingService
     public static string PairUrl(string host, int port, string token) =>
         $"{Scheme}://{host}:{port}/{token}";
 
+    // RunningPort, not Port: a port edited in the settings window is only live after
+    // a restart, and handing the phone an address nothing is listening on is worse
+    // than showing the old one.
     public static string PairUrl(ServerConfig config) =>
-        PairUrl(LanIp(), config.Port, config.Token);
+        PairUrl(LanIp(), config.RunningPort, config.Token);
 
-    public static string HttpBase(ServerConfig config) => $"http://{LanIp()}:{config.Port}";
+    public static string HttpBase(ServerConfig config) => $"http://{LanIp()}:{config.RunningPort}";
+
+    /// <summary>
+    /// The cast receiver page, token and all. Opened on any other screen — a TV, a
+    /// laptop, a console — that screen becomes a cast target. The token rides in the
+    /// query string because a browser can't set an Authorization header on its own
+    /// navigation, which also means this URL is as good as the pairing token: it goes
+    /// on screens the user is already trusting with the QR code, and nowhere else.
+    /// </summary>
+    public static string ReceiverUrl(ServerConfig config) =>
+        $"{HttpBase(config)}/cast/receiver?token={Uri.EscapeDataString(config.Token)}";
 
     /// <summary>PNG bytes for the pairing QR code.</summary>
     public static byte[] QrPng(string payload, int pixelsPerModule = 8)

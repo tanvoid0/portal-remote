@@ -11,15 +11,22 @@ namespace PortalRemote.Control;
 public sealed class ConnectionState
 {
     private int _connectedCount;
+    private string? _peer;
 
     public bool IsConnected => Volatile.Read(ref _connectedCount) > 0;
 
-    public event Action? Changed;
-    public event Action? AuthRejected;
+    /// <summary>Address of the most recent phone to connect. The window names it under
+    /// "Phone connected", which used to show <c>Environment.MachineName</c> — this PC's
+    /// own name, under a headline about the phone.</summary>
+    public string? Peer => Volatile.Read(ref _peer);
 
-    public void OnConnected()
+    public event Action? Changed;
+    public event Action<string>? AuthRejected;
+
+    public void OnConnected(string peer)
     {
         Interlocked.Increment(ref _connectedCount);
+        Volatile.Write(ref _peer, peer);
         Changed?.Invoke();
     }
 
@@ -29,5 +36,5 @@ public sealed class ConnectionState
         Changed?.Invoke();
     }
 
-    public void OnAuthRejected() => AuthRejected?.Invoke();
+    public void OnAuthRejected(string peer) => AuthRejected?.Invoke(peer);
 }

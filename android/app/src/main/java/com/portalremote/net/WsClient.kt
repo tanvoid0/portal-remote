@@ -28,6 +28,9 @@ data class ServerHello(
     val version: String,
     val screenWidth: Int,
     val screenHeight: Int,
+    /** Stable per-install id — see [com.portalremote.data.SavedHost.id]. Null from
+     *  servers built before this field existed. */
+    val id: String? = null,
 )
 
 sealed interface ConnectionState {
@@ -104,6 +107,7 @@ class WsClient {
                                 version = json.optString("version", "?"),
                                 screenWidth = screen?.optInt("width") ?: 0,
                                 screenHeight = screen?.optInt("height") ?: 0,
+                                id = json.optString("id").ifBlank { null },
                             )
                         )
                     }

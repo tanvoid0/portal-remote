@@ -19,6 +19,9 @@ docs/      design-system.md — shared design tokens/motion spec for both UIs
 | 1 | Trackpad, keyboard, media keys | ✅ Done, verified live |
 | 2 | File browser: list / download / upload | ✅ Done, verified live |
 | 3 | Screen mirroring | ✅ Done, verified live |
+| 4 | Casting: link handoff, in-app browser, browser receiver | 🟡 4a/4e/4g built and verified; mpv, other targets not |
+| 5 | Quick share: clipboard, links, images, files | ✅ Built; server verified live, phone half not yet |
+| 7 | Assistant: chatbot + actions via agent-platform | 📝 Designed only |
 
 Phases 0–3 have been built **and exercised end-to-end** — real Android build,
 real Windows server, actual mouse movement/clicks measured, actual files
@@ -48,8 +51,16 @@ on a busy machine. The server logs achieved fps and average capture time when
 a stream ends, so this is observable rather than assumed.
 
 Typing is available on the mirror itself (the "Type" chip) as well as on the
-Keyboard tab — same capture field, so text goes to the PC while you watch the
+Keyboard mode of the Control tab — same capture field, so text goes to the PC while you watch the
 window it lands in.
+
+**Control tab**: everything you drive the PC with by hand — trackpad, keyboard,
+media, and a TV-style remote — sits behind one bottom-nav tab and switches with a
+tab row, because they're one activity rather than four screens. The TV remote is
+the couch mode: a D-pad with OK (arrows auto-repeat on hold, 400ms then ~16/sec like
+a real keyboard), Back/Start/menu, transport and volume, chip rows for
+Esc/Alt+Tab/Task view/Close and F1–F12, and a power button that offers screen off,
+lock, sleep, restart and shut down (the last two behind a confirm).
 
 Pinch zooms up to 4× and two fingers pan once zoomed (at 1× the same two-finger
 drag scrolls the remote desktop instead, since there's nothing to pan). A
@@ -57,8 +68,58 @@ finger is roughly 130 desktop pixels wide on a 3440px display shown at phone
 width, so zoom is what makes small targets actually hittable rather than a
 nicety.
 
+**Phase 5 shape**: the pairing and the open control socket are already there, so
+quick share is mostly two entry points and a notification on each side. From the
+phone, Portal Remote is a target in the **system share sheet** of every app — a link
+or a screenshot is two taps from wherever you already are, no trip into this app.
+From the PC, **Ctrl+Alt+V** sends the clipboard the other way from inside whatever
+app you just copied from. Both directions put the payload on the receiving device's
+clipboard *before* the notification fires, so it's pasteable by the time you look at
+it. Files land in `<share root>/Inbox/` on the PC and in Downloads on the phone.
+A share made while the PC is asleep, or cut off by a Wi-Fi drop mid-upload, is
+**queued and re-sent on the next reconnect** rather than failed — the phone is the
+device that moves between networks, so "try again later" is the app's job. Queued
+items say so on the Share tab and can be tapped to retry immediately; the queue is
+in memory, so it does not survive the app's process being killed. See
+[docs/phase5-share.md](docs/phase5-share.md), which also carries the plan for the
+internet relay that would make this work off the LAN (§5, deliberately not built
+yet).
+
+**Now playing**: Control's Media mode mirrors what the PC is actually playing — cover art,
+title, artist/album, the player it's coming from, and a progress bar that moves. The
+source is Windows' own media session (`GlobalSystemMediaTransportControlsSessionManager`,
+the same feed behind the Win11 volume flyout), so any player that registers with it —
+Spotify, browsers, VLC — appears without integration. State is pushed down the control
+socket that's already open; the bar is interpolated on the phone between pushes, so it
+looks continuous at ~2 messages a second. Cover art goes over HTTP (`/media/art`)
+rather than the socket — a real cover is ~190KB, and the state messages are ~200 bytes.
+This also buys the two things a media key can't express: a **scrubber** (absolute seek,
+where the player allows it) and a play/pause button that knows which one it is.
+
 ### What's next — pick one
 
+- **Phase 4: casting (phone → PC and beyond).** Web-Video-Caster-style: an in-app
+  browser with adblock that hands media URLs to a player, plus a TV remote.
+  Planned in [docs/phase4-casting.md](docs/phase4-casting.md). The handoff (4a),
+  the in-app browser (4e) and the browser receiver (4g) are built — a `cast`
+  message opens a link on the PC, and the receiver URL (in the app window, Copy or
+  Open) turns *any* screen with a browser into a cast target. The receiver's own
+  position, duration and paused state are now pushed to the phone as it plays, so
+  that target has a **scrub bar and a play/pause toggle that knows which one it
+  is**, not just blind buttons. Next: mpv on the PC, which plays the HLS a browser
+  can't and survives the page being closed, then Google Cast / Roku / DLNA senders,
+  which are adapters behind the same interface.
+- **Phase 7: assistant.** A chatbot and an action-taking assistant in the app,
+  backed by the agent-platform API over loopback from the PC — the phone never
+  talks to it directly. Designed in
+  [docs/phase7-assistant.md](docs/phase7-assistant.md), not built. The first step
+  is the availability model, because that platform is a separate app the user
+  starts independently and "not running" is the normal case.
+- **Phase 6: internet relay for quick share.** Would make phase 5 work when the
+  phone is off the Wi-Fi. Needs an always-on relay, e2e encryption, and a key
+  agreement folded into pairing — planned in
+  [docs/phase5-share.md §5](docs/phase5-share.md), not built. Worth doing only if
+  living with the LAN version says it's worth doing.
 - **Mirror upgrades.** Desktop Duplication API (`dxcam`-style) instead of
   BitBlt — worth it now that capture is the measured bottleneck (~18fps
   ceiling), not the network. H.264/WebRTC beyond that.
@@ -88,8 +149,9 @@ nicety.
 cd server
 .\run.ps1
 ```
-First run creates `%APPDATA%\portal-remote\config.json` with a random
-pairing token and shows a QR code from the tray icon. Needs the .NET 8 SDK;
+First run creates `%APPDATA%\portal-remote\config.json` with a random pairing
+token and opens the app window with the QR code; after that the window is behind
+the tray icon (double-click, or "Open Portal Remote"). Needs the .NET 8 SDK;
 see the comment at the top of `run.ps1` if you hit a "no frameworks found"
 error — it's a `DOTNET_ROOT` issue, not a missing install, if you installed
 the SDK user-locally rather than machine-wide.
@@ -123,15 +185,39 @@ repo, and wire a `signingConfigs` block reading from a gitignored
 `keystore.properties`.
 Needs `JAVA_HOME`/`ANDROID_HOME` pointed at a JDK 17+ and the Android SDK —
 `run.ps1` does this for you if you have Android Studio installed (uses its
-bundled JBR and SDK Manager location). On an emulator, the pairing QR won't
-work (the emulator sits behind NAT at `10.0.2.2`, not the host's real LAN
-IP) — use the "Enter address manually" fallback with `10.0.2.2:<port>` and
-the token from the server's `config.json`.
+bundled JBR and SDK Manager location). On an emulator, neither the pairing QR
+nor discovery works (the emulator sits behind NAT at `10.0.2.2`, so it never
+sees the host's real LAN IP and its broadcasts never reach the LAN) — use
+"Type address", enter `10.0.2.2` and the port, and click Allow on the PC.
+
+## Pairing
+
+Three ways in, in the order the app offers them:
+
+1. **The remembered PC.** The last successful pairing is stored (address, token
+   and the PC's own name) and reconnected silently on launch; the pairing
+   screen also offers it as a one-tap card if that reconnect hasn't landed yet.
+2. **Discovery.** The phone broadcasts `PORTALREMOTE?` on UDP 8765; every
+   server on the LAN answers with its name, HTTP port and version — no secrets,
+   so the reply is safe to shout. Tapping a discovered PC calls
+   `POST /pair/request`, which puts an "allow this phone?" dialog on that PC;
+   Allow hands back the token. Needs the app allowed through Windows Firewall
+   on Private networks (the same per-program rule covers the UDP probe).
+3. **QR code or typed address.** The QR carries the token, so it pairs without
+   anyone clicking Allow. Typing the address (digit boxes, no `.` or `:` to
+   hunt for) goes through the same approve-on-PC flow as discovery.
 
 ## Security notes
 
 - **LAN-only by design.** No relay, no cloud. Don't port-forward this to the
   internet — there's no TLS and a single shared bearer token.
+- **`POST /pair/request` is unauthenticated on purpose** — it's how a phone
+  that has never seen the PC gets a token in the first place. The gate is the
+  dialog it puts on the PC's screen, which is the same bar the QR code sets:
+  you have to be at the machine. It defaults to No, names the requesting phone
+  and its IP, and only one can be open at a time, so nothing on the LAN can
+  bury the screen in prompts. The discovery reply carries no token — only a
+  machine name, port and version, all of which a port scan would reveal anyway.
 - Every `/files/*` and `/control` request requires the pairing token, sent
   as an `Authorization: Bearer` header from the app. A `?token=` query-string
   fallback exists server-side for requests that can't set headers (image
@@ -147,6 +233,13 @@ the token from the server's `config.json`.
   holding the pairing token can fill the disk. Acceptable for a personal
   LAN tool; would want a cap before this became multi-user or
   internet-facing.
+- **Quick share writes to the clipboard on arrival** on both devices, and a paired
+  phone can drop any file into `<share root>/Inbox/`. So the tray balloon *reveals*
+  a shared file in Explorer (`explorer /select,`) rather than opening it, and only
+  `http`/`https` links are ever handed to `ShellExecute` — one click of a
+  notification must not be able to run something the phone sent. `/share/*` is
+  behind the same token as everything else, with the same path-traversal guard on
+  the upload filename; shared text is capped at 256KB per message.
 - **The mirror streams whatever is on screen** to anyone holding the token,
   including whatever happens to be open — password managers, private chats.
   It's behind the same single token as everything else, so treat the token as
@@ -157,7 +250,7 @@ the token from the server's `config.json`.
   (coded for, not yet exercised live).
 - Anyone holding the pairing token has the practical equivalent of physical
   keyboard/mouse access to the PC — same trust model as RDP or TeamViewer.
-  Rotate the token from the tray menu if it's ever suspected leaked.
+  Rotate the token from the app window if it's ever suspected leaked.
 
 ## A note on process
 
