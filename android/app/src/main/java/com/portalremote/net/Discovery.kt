@@ -89,7 +89,7 @@ private fun parseReply(packet: DatagramPacket): DiscoveredHost? {
         host = address,
         port = port,
         version = json.optString("version"),
-        id = json.optString("id").ifBlank { null },
+        id = json.optStringOrNull("id"),
     )
 }
 

@@ -110,8 +110,8 @@ class WsClient {
                                 version = json.optString("version", "?"),
                                 screenWidth = screen?.optInt("width") ?: 0,
                                 screenHeight = screen?.optInt("height") ?: 0,
-                                id = json.optString("id").ifBlank { null },
-                                mac = json.optString("mac").ifBlank { null },
+                                id = json.optStringOrNull("id"),
+                                mac = json.optStringOrNull("mac"),
                             )
                         )
                     }

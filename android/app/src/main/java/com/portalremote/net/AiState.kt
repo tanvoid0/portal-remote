@@ -40,10 +40,10 @@ data class AiState(
 
         /** `{"t":"ai_state","state":…,"detail":…,"canStart":…}`, or null if it isn't one. */
         fun fromPush(json: JSONObject): AiState? {
-            val state = json.optString("state").ifBlank { return null }
+            val state = json.optStringOrNull("state") ?: return null
             return AiState(
                 state = state,
-                detail = json.optString("detail").ifBlank { null },
+                detail = json.optStringOrNull("detail"),
                 canStart = json.optBoolean("canStart"),
             )
         }

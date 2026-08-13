@@ -42,13 +42,13 @@ data class CastState(
         /** `{"t":"cast_ok","url":…,"via":"receiver"|"mpv"|"shell"|"roku"|"dlna",
          *  "target":id,"name":…}`, or null if it isn't one. */
         fun fromAck(json: JSONObject, title: String? = null): CastState? {
-            val url = json.optString("url").ifBlank { return null }
+            val url = json.optStringOrNull("url") ?: return null
             return CastState(
                 url = url,
                 via = json.optString("via"),
                 title = title,
-                target = json.optString("target").ifBlank { null },
-                targetName = json.optString("name").ifBlank { null },
+                target = json.optStringOrNull("target"),
+                targetName = json.optStringOrNull("name"),
             )
         }
     }

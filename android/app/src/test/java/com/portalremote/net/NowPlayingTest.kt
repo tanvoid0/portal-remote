@@ -51,6 +51,24 @@ class NowPlayingTest {
     }
 
     @Test
+    fun `a track the PC knows nothing about has no subtitle`() {
+        // Windows reports a browser's audio with no artist or album, which arrives as
+        // JSON null. `optString` turns that into the string "null", so the card used to
+        // read "null • null" under the title.
+        val state = parse(
+            "title" to "Mood Booster Playlist",
+            "artist" to JSONObject.NULL,
+            "album" to JSONObject.NULL,
+            "app" to JSONObject.NULL,
+        )!!
+
+        assertNull(state.artist)
+        assertNull(state.album)
+        assertNull(state.app)
+        assertNull(state.subtitle)
+    }
+
+    @Test
     fun `a track with no cover has no revision to fetch`() {
         val state = parse("title" to "Live stream", "art" to JSONObject.NULL)!!
         assertNull(state.art)

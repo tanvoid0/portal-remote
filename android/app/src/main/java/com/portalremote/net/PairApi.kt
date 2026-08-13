@@ -55,13 +55,13 @@ suspend fun requestPairing(host: String, port: Int, deviceName: String): SavedHo
 
             val json = runCatching { JSONObject(it.body?.string().orEmpty()) }.getOrNull()
                 ?: throw PairRejected("The PC sent a reply this app could not read")
-            val token = json.optString("token").ifBlank { throw PairRejected("No pairing token in the reply") }
+            val token = json.optStringOrNull("token") ?: throw PairRejected("No pairing token in the reply")
 
             SavedHost(
                 host = host,
                 port = json.optInt("port").takeIf { p -> p in 1..65535 } ?: port,
                 token = token,
-                name = json.optString("name").ifBlank { null },
+                name = json.optStringOrNull("name"),
             )
         }
     }

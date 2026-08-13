@@ -34,10 +34,10 @@ data class CastTarget(
             val array = json.optJSONArray("targets") ?: return emptyList()
             return (0 until array.length()).mapNotNull { index ->
                 val item = array.optJSONObject(index) ?: return@mapNotNull null
-                val id = item.optString("id").ifBlank { return@mapNotNull null }
+                val id = item.optStringOrNull("id") ?: return@mapNotNull null
                 CastTarget(
                     id = id,
-                    name = item.optString("name").ifBlank { id },
+                    name = item.optStringOrNull("name") ?: id,
                     kind = item.optString("kind"),
                     seek = item.optBoolean("seek"),
                     volume = item.optBoolean("volume"),
@@ -48,7 +48,7 @@ data class CastTarget(
 
         /** Which one is holding the current cast, if any. */
         fun activeFromPush(json: JSONObject): String? =
-            json.optString("active").ifBlank { null }
+            json.optStringOrNull("active")
 
         /** Whether the PC is mid-sweep. Taken from the PC rather than timed on this
          *  side: a short list and an unfinished one look the same here. */

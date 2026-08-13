@@ -50,7 +50,7 @@ data class ChatTurn(
             streaming = json.optBoolean("streaming"),
             incomplete = json.optBoolean("incomplete"),
             deciding = json.optBoolean("deciding"),
-            error = json.optString("error").ifBlank { null },
+            error = json.optStringOrNull("error"),
             plan = json.optJSONObject("plan")?.let { AiPlan.fromJson(it) },
         )
     }

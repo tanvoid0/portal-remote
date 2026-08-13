@@ -35,10 +35,10 @@ data class ShareEntry(
                 id = id,
                 incoming = true,
                 kind = json.optString("kind", ShareKind.TEXT),
-                text = json.optString("text").ifBlank { null },
-                fileName = json.optString("file").ifBlank { null },
-                path = json.optString("path").ifBlank { null },
-                from = json.optString("from").ifBlank { null } ?: "your PC",
+                text = json.optStringOrNull("text"),
+                fileName = json.optStringOrNull("file"),
+                path = json.optStringOrNull("path"),
+                from = json.optStringOrNull("from") ?: "your PC",
             )
         }
     }

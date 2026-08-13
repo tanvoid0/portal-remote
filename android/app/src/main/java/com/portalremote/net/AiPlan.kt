@@ -64,15 +64,15 @@ data class AiPlan(
             val results = json.optJSONArray("results")
             return AiPlan(
                 thought = json.optString("thought"),
-                state = json.optString("state").ifBlank { PENDING },
-                error = json.optString("error").ifBlank { null },
+                state = json.optStringOrNull("state") ?: PENDING,
+                error = json.optStringOrNull("error"),
                 actions = (0 until (actions?.length() ?: 0)).mapNotNull { i ->
                     val action = actions?.optJSONObject(i) ?: return@mapNotNull null
                     PlanAction(
                         index = action.optInt("index", i),
                         actionId = action.optString("actionId"),
-                        summary = action.optString("summary").ifBlank { action.optString("actionId") },
-                        verb = action.optString("verb").ifBlank { "Run" },
+                        summary = action.optStringOrNull("summary") ?: action.optString("actionId"),
+                        verb = action.optStringOrNull("verb") ?: "Run",
                         destructive = action.optBoolean("destructive"),
                     )
                 },

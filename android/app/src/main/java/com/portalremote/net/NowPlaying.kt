@@ -72,10 +72,10 @@ data class NowPlaying(
         fun fromPush(json: JSONObject, receivedAt: Long = SystemClock.elapsedRealtime()): NowPlaying? {
             if (!json.optBoolean("active")) return null
             return NowPlaying(
-                title = json.optString("title").ifBlank { null },
-                artist = json.optString("artist").ifBlank { null },
-                album = json.optString("album").ifBlank { null },
-                app = json.optString("app").ifBlank { null },
+                title = json.optStringOrNull("title"),
+                artist = json.optStringOrNull("artist"),
+                album = json.optStringOrNull("album"),
+                app = json.optStringOrNull("app"),
                 playing = json.optBoolean("playing"),
                 positionMs = json.optLong("positionMs"),
                 durationMs = json.optLong("durationMs"),

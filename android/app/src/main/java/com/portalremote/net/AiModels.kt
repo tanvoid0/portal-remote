@@ -102,8 +102,8 @@ class AiModels(private val client: OkHttpClient = OkHttpClient()) {
         fun describe(code: Int, body: String?): String {
             val json = runCatching { JSONObject(body ?: "") }.getOrNull()
                 ?: return "The PC answered HTTP $code."
-            json.optString("detail").ifBlank { null }?.let { return it }
-            json.optString("error").ifBlank { null }?.let { return it }
+            json.optStringOrNull("detail")?.let { return it }
+            json.optStringOrNull("error")?.let { return it }
             return "The PC answered HTTP $code."
         }
     }
