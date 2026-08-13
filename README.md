@@ -11,6 +11,13 @@ server/    .NET 8 / WinForms tray app + embedded Kestrel web server
 docs/      design-system.md — shared design tokens/motion spec for both UIs
 ```
 
+## Download
+
+Every `v*` tag builds both halves and attaches them to a
+[GitHub release](https://github.com/tanvoid0/portal-remote/releases):
+`PortalRemote.exe` (self-contained, no .NET needed) and `PortalRemote-<version>.apk`.
+Run the exe on the PC, install the APK on the phone, scan the QR code.
+
 ## Status
 
 | Phase | What | Status |

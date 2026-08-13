@@ -12,12 +12,31 @@ android {
         applicationId = "com.portalremote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // Overridable so a tagged CI build stamps the tag instead of the checked-in
+        // default: ./gradlew assembleRelease -PversionName=1.2.3 -PversionCode=7
+        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = findProperty("versionName") as String? ?: "0.1.0"
+    }
+
+    // Release signing comes from the environment (CI secrets) when present. Without
+    // it the release build falls back to the debug key below, so a local or PR build
+    // still produces an installable APK — it just isn't the shipping identity.
+    signingConfigs {
+        val storeFilePath = System.getenv("ANDROID_KEYSTORE_FILE")
+        if (storeFilePath != null) {
+            create("release") {
+                storeFile = file(storeFilePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
