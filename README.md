@@ -6,21 +6,21 @@ transfer. No cloud, no relay — the phone talks directly to a small server runn
 PC.
 
 <p align="center">
-  <img src="docs/assets/desktop-window.svg" width="760" alt="The Windows tray app: QR code to pair a phone on the left, this PC's status, port, shared folder and token on the right, with a share notification in the corner">
+  <img src="docs/assets/screenshots/desktop-window.png" width="760" alt="The Windows tray app: the share thread with the phone on the left, and on the right the connected phone's address, port, shared folder, cast link and assistant status">
 </p>
 
 <p align="center">
-  <img src="docs/assets/android-pair.svg" width="200" alt="Pairing screen: the remembered PC as a one-tap card, PCs discovered on the LAN below, QR scan and typed address as fallbacks">
-  <img src="docs/assets/android-control.svg" width="200" alt="Control tab, trackpad mode: full-surface trackpad with a scroll rail down the right edge, a gesture echo confirming a two-finger back swipe, and left/right click buttons">
-  <img src="docs/assets/android-screen.svg" width="200" alt="Screen tab: the PC's desktop mirrored live on flat black, with monitor and quality chips and a full-screen toggle">
-  <img src="docs/assets/android-media.svg" width="200" alt="Media mode: what the PC is playing with cover art and a scrubber, transport and volume, and a Cast to row offering this PC, a TV and a Roku">
-  <img src="docs/assets/android-share.svg" width="200" alt="Share tab: a two-device conversation of links, images and files, with a clipboard suggestion above the composer">
+  <img src="docs/assets/screenshots/android-pair.png" width="200" alt="Pairing screen: the PC found by discovery on the LAN as a one-tap card, with QR scan and typed address as fallbacks">
+  <img src="docs/assets/screenshots/android-control.png" width="200" alt="Control tab, trackpad mode: full-surface trackpad with a scroll rail down the right edge, a tap-to-type field above and left/right click buttons below">
+  <img src="docs/assets/screenshots/android-screen.png" width="200" alt="Screen tab: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
+  <img src="docs/assets/screenshots/android-media.png" width="200" alt="Media tab: what the PC is playing with a scrubber, transport and volume, and the speaker card streaming the PC's sound to the phone at 48kHz stereo">
+  <img src="docs/assets/screenshots/android-share.png" width="200" alt="Share tab: a two-device conversation of links and text, with a send-clipboard suggestion above the composer">
 </p>
 
 <p align="center"><sub>
-Illustrative mockups of the real screens, drawn to the shared design system in
-<a href="docs/design-system.md">docs/design-system.md</a>. Not captures of a running
-build. Regenerate them with <code>python docs/assets/generate.py</code> — see
+Real captures of a running build — a paired phone over <code>adb</code>, and the tray
+window straight off the PC. The pairing token is boxed out of the desktop shot; nothing
+else is retouched. Re-shooting them is in
 <a href="docs/development.md#screenshots">docs/development.md</a>.
 </sub></p>
 

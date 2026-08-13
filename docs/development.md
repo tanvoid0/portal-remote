@@ -75,39 +75,42 @@ gitignored `keystore.properties`.
 
 ## Screenshots
 
-The README's mockups are generated, not drawn by hand — [`docs/assets/generate.py`](assets/generate.py)
-is their source of truth. Stdlib Python only, no dependencies:
+The README's screenshots in [`docs/assets/screenshots/`](assets/screenshots) are real
+captures of a real build — a phone over `adb`, and the tray window through `PrintWindow`.
+They replaced a set of generated SVG mockups, which drifted from the app the moment a
+screen changed and flattered a UI that no longer existed.
+
+Phone screens, with the device unlocked and the app on the screen you want:
 
 ```bash
-python docs/assets/generate.py                          # rewrite every screen
-python docs/assets/generate.py --only android-media     # just one
-python docs/assets/generate.py --list                   # names it knows
-python docs/assets/generate.py --check                  # exit 1 if any SVG is stale
-python docs/assets/generate.py --png                    # also rasterise to docs/assets/png/
+adb devices                                    # or: adb connect <phone-ip>:<port>
+adb exec-out screencap -p > docs/assets/screenshots/android-media.png
 ```
 
-Unchanged files aren't rewritten, so `git status` only shows what actually moved.
-`--check` writes nothing and exits 1 on drift — it runs as the `docs` job in
-[CI](../.github/workflows/ci.yml), so a hand-edited SVG or a generator change that
-wasn't re-run fails the build.
+`adb shell input tap <x> <y>` drives the app between shots, so a re-shoot is scriptable —
+but note that MIUI and some other skins refuse injected input unless *USB debugging
+(Security settings)* is on, and deny raw `sendevent` under SELinux regardless. On those
+devices the screen has to be driven by hand; `screencap` still works.
 
-`--png` rasterises each SVG through headless Chrome/Edge/Chromium (whichever it finds;
-`BROWSER=/path/to/chrome` overrides) at its natural size, with transparent corners. The
-output is gitignored — the README uses the SVGs, and PNGs are for pasting somewhere that
-can't render SVG. It's also the quickest way to eyeball a change: run `--png` and open
-the folder.
+`uiautomator dump` gives exact node bounds to tap, but it fails with `could not get idle
+state` on any screen that animates — which here means the mirror, and the media card
+whenever its scrubber is moving. Read the coordinates off a screenshot on those.
 
-**Adding a screen**: write a function returning `(body_markup, width, height)`, add it to
-the `SCREENS` dict at the bottom, run the script — it prints `added` — and reference
-`docs/assets/<name>.svg` from the README. The shared chrome (phone frame, title row, the
-nav capsule, chip rows, the brand mark, the QR block) is already there as helpers, so a
-new screen is mostly its own content.
+The tray window is captured by handle rather than by screen region, so it doesn't matter
+what is stacked on top of it:
 
-**When the UI changes**, edit the matching function and re-run. These are mockups of the
-real screens; the labels come from the actual strings in the Compose screens and
-`Tray/MainForm.cs`, and they should keep doing so — a screenshot that flatters a UI that
-no longer exists is worse than none. CI only checks that the SVGs match the script; that
-the script matches the app is on whoever changed the app.
+```powershell
+# PrintWindow with PW_RENDERFULLCONTENT (2); DwmGetWindowAttribute(9) for the true bounds
+$h = (Get-Process PortalRemote).MainWindowHandle
+```
+
+**Before committing a shot**, check it for anything that shouldn't be public: the pairing
+token in the *Cast to a screen* field, whatever the desktop happens to be showing behind
+the mirror, and the contents of the share thread. Stage the desktop first — minimise
+everything, open something harmless — rather than editing it out afterwards.
+
+**When the UI changes**, re-shoot the screens it touched. A screenshot in the README is a
+claim about what the app looks like today.
 
 ## Updates
 
