@@ -224,9 +224,12 @@ public sealed class AssistantForm : Form
     {
         var ready = _health.State == AiHealth.Ready;
         _backend.ForeColor = ready ? _colors.TextSecondary : _colors.Warning;
+        // Not-ready always names the missing app and where to fix it: this window is
+        // often the first place somebody finds out the assistant has a backend at all,
+        // and AiHealth's detail is a diagnostic, not an instruction.
         _backend.Text = ready
             ? "agent-platform is answering."
-            : _health.Detail ?? "The assistant's backend is not running.";
+            : "Needs agent-platform on this PC — press Set up in the Portal Remote window.";
         UpdateComposer();
     }
 

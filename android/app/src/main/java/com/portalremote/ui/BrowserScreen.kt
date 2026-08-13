@@ -21,20 +21,34 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -47,6 +61,7 @@ import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.History
@@ -74,7 +89,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -90,10 +105,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -113,6 +135,8 @@ import com.portalremote.net.FoundMedia
 import com.portalremote.net.Hls
 import com.portalremote.net.MediaSniffer
 import com.portalremote.net.Omnibox
+import com.portalremote.ui.theme.Motion
+import com.portalremote.ui.theme.PortalRemoteTheme
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -143,6 +167,80 @@ private const val FIND_VIDEOS_JS = """
 """
 
 /**
+ * Auto-answers the known cookie-consent banner vendors with reject/decline, so opening
+ * a page doesn't mean reading a dialog before anything underneath it is usable.
+ *
+ * ponytail: a fixed list of the handful of vendors ([OneTrust, Cookiebot, Quantcast/IAB
+ * TCF, Didomi, TrustArc, Osano, Sourcepoint]) that cover most of the consent-banner
+ * market, plus one generic pass over anything that reads as a cookie/consent/GDPR
+ * dialog with a button whose text is exactly "reject"/"decline"/etc. No
+ * bundled third-party list (uBlock's Annoyances, "I don't care about cookies") — pull
+ * one in if the fixed list stops covering enough of what people actually hit.
+ */
+private const val COOKIE_REJECT_JS = """
+    (function () {
+      if (window.__portalCookieBlock) return;
+      window.__portalCookieBlock = true;
+
+      var KNOWN = [
+        '#onetrust-reject-all-handler', '.ot-pc-refuse-all-handler',
+        '#CybotCookiebotDialogBodyButtonDecline',
+        '.qc-cmp2-summary-buttons button[mode="secondary"]',
+        '#didomi-notice-disagree-button',
+        'a#truste-consent-required',
+        '.osano-cm-denyAll', '.osano-cm-button--type_denyAll',
+        'button.sp_choice_type_REJECT_ALL',
+        'button[title="Reject All"]', 'button[aria-label="Reject All"]'
+      ];
+      var TEXT_RE = /^(reject ?all|decline ?all|refuse ?all|reject|decline|disagree|i do not accept)$/i;
+
+      function visible(el) {
+        if (!el) return false;
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      }
+
+      function tryKnown() {
+        for (var i = 0; i < KNOWN.length; i++) {
+          var el = document.querySelector(KNOWN[i]);
+          if (visible(el)) { el.click(); return true; }
+        }
+        return false;
+      }
+
+      function tryGeneric() {
+        var candidates = document.querySelectorAll(
+          '[id*="cookie" i] button, [class*="cookie" i] button, ' +
+          '[id*="consent" i] button, [class*="consent" i] button, ' +
+          '[id*="gdpr" i] button, [class*="gdpr" i] button, ' +
+          '[id*="cookie" i] a, [class*="cookie" i] a'
+        );
+        for (var j = 0; j < candidates.length; j++) {
+          var el = candidates[j];
+          var t = (el.textContent || '').trim();
+          if (TEXT_RE.test(t) && visible(el)) { el.click(); return true; }
+        }
+        return false;
+      }
+
+      function sweep() { try { return tryKnown() || tryGeneric(); } catch (e) { return false; } }
+
+      // Most banners render within a second or two, but not always on the first
+      // paint — an interval covers the slow ones, a MutationObserver covers ones
+      // injected well after load. Both give up after a few seconds either way.
+      if (sweep()) return;
+      var attempts = 0;
+      var timer = setInterval(function () {
+        attempts++;
+        if (sweep() || attempts > 8) clearInterval(timer);
+      }, 400);
+      var mo = new MutationObserver(function () { sweep(); });
+      mo.observe(document.documentElement, { childList: true, subtree: true });
+      setTimeout(function () { mo.disconnect(); }, 6000);
+    })()
+"""
+
+/**
  * The in-app browser — phase 4e of `docs/phase4-casting.md`, and the reason the rest
  * of phase 4 exists. It watches its own traffic for media URLs and hands them to the
  * PC, blocks ads and trackers at the request level, and refuses the popups that make
@@ -158,6 +256,7 @@ fun BrowserScreen(
     castSeekable: Boolean,
     onCast: (url: String, title: String?) -> Unit,
     onPlayer: (JSONObject) -> Unit,
+    onOpenOnDesktop: (url: String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -181,6 +280,13 @@ fun BrowserScreen(
     // A page paints white until its own background lands; on a dark app that's a flash
     // on every load. The WebView starts on the app's background colour instead.
     val pageBackground = MaterialTheme.colorScheme.background.toArgb()
+
+    // The bar spends most of a browsing session as space taken from the page, not as
+    // something being reached for — a scroll down (reading) hides it, a scroll up
+    // (going back for something) or sitting at the top brings it back. Keyed on the
+    // tab so a fresh or switched-to tab always starts with it shown.
+    var barVisible by remember(tab.id) { mutableStateOf(true) }
+    val scrollThreshold = with(LocalDensity.current) { 12.dp.toPx() }
 
     LaunchedEffect(Unit) { adBlock.load(context) }
     LaunchedEffect(settings.adBlockEnabled, settings.allowedHosts) {
@@ -233,45 +339,6 @@ fun BrowserScreen(
     // so padding again would lift the page a second keyboard's worth.
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            BrowserBar(
-                address = address,
-                incognito = tab.incognito,
-                onAddressChange = { address = it },
-                onGo = { go(address) },
-                canGoBack = tab.canGoBack,
-                canGoForward = tab.canGoForward,
-                onBack = { tab.webView?.goBack() },
-                onForward = { tab.webView?.goForward() },
-                onReload = { tab.webView?.reload() },
-                foundCount = tab.found.size,
-                // Casting doesn't end the browsing — the sheet stays reachable so the
-                // thing playing on the PC can be paused from the page that started it,
-                // even after navigating somewhere with nothing castable on it.
-                casting = cast != null,
-                onShowFound = { showFound = true },
-                tabCount = session.tabs.size,
-                onShowTabs = { showTabs = true },
-                bookmarked = bookmarked,
-                onToggleBookmark = {
-                    tab.url?.let { url -> scope.launch { store.toggleBookmark(url, tab.label) } }
-                },
-                shieldOn = settings.adBlockEnabled && !siteAllowed,
-                onOpenMenu = { showSettings = true },
-                onShowBookmarks = { showBookmarks = true },
-                onShowHistory = { showHistory = true },
-                onNewTab = { session.open() },
-                onNewIncognitoTab = { session.open(incognito = true) },
-                onToggleSiteBlocking = {
-                    val host = pageHost ?: return@BrowserBar
-                    scope.launch {
-                        val next = if (siteAllowed) settings.allowedHosts - host
-                        else settings.allowedHosts + host
-                        store.saveSettings(settings.copy(allowedHosts = next))
-                        tab.webView?.reload()
-                    }
-                },
-            )
-
             if (tab.progress in 1..99) {
                 LinearProgressIndicator(
                     progress = { tab.progress / 100f },
@@ -322,6 +389,13 @@ fun BrowserScreen(
                                     onFound = ::found,
                                     onFullscreen = { view -> fullscreenView = view },
                                     openInNewTab = { url -> session.open(url, tab.incognito) },
+                                    onScroll = { dy, scrollY ->
+                                        when {
+                                            scrollY <= 0 -> barVisible = true
+                                            dy > scrollThreshold -> barVisible = false
+                                            dy < -scrollThreshold -> barVisible = true
+                                        }
+                                    },
                                 ).also { created ->
                                     tab.webView = created
                                     tab.url?.let { created.loadUrl(it) }
@@ -330,6 +404,63 @@ fun BrowserScreen(
                         )
                     }
                 }
+            }
+
+            // Anchored to the bottom edge, not the top — this is a control surface
+            // reached for mid-page, not a title bar read once. Sits directly above the
+            // shell's floating nav capsule, which is what already insets this Column
+            // from the true bottom edge. Slides out of the way on scroll, per the
+            // scroll listener above — a transform, not a size change, per §6.
+            val reducedMotion = Motion.reducedMotionEnabled(context)
+            AnimatedVisibility(
+                visible = barVisible,
+                enter = slideInVertically(
+                    animationSpec = if (reducedMotion) snap() else tween(Motion.TabSwitchDurationMs, easing = Motion.EaseOut),
+                ) { it } + fadeIn(if (reducedMotion) snap() else tween(Motion.TabSwitchDurationMs)),
+                exit = slideOutVertically(
+                    animationSpec = if (reducedMotion) snap() else tween(Motion.TabSwitchDurationMs, easing = Motion.EaseOut),
+                ) { it } + fadeOut(if (reducedMotion) snap() else tween(Motion.TabSwitchDurationMs)),
+            ) {
+                BrowserBar(
+                    address = address,
+                    incognito = tab.incognito,
+                    onAddressChange = { address = it },
+                    onGo = { go(address) },
+                    canGoBack = tab.canGoBack,
+                    canGoForward = tab.canGoForward,
+                    onBack = { tab.webView?.goBack() },
+                    onForward = { tab.webView?.goForward() },
+                    onReload = { tab.webView?.reload() },
+                    hasPage = tab.url != null,
+                    foundCount = tab.found.size,
+                    // Casting doesn't end the browsing — the sheet stays reachable so the
+                    // thing playing on the PC can be paused from the page that started it,
+                    // even after navigating somewhere with nothing castable on it.
+                    casting = cast != null,
+                    onShowFound = { showFound = true },
+                    tabCount = session.tabs.size,
+                    onShowTabs = { showTabs = true },
+                    bookmarked = bookmarked,
+                    onToggleBookmark = {
+                        tab.url?.let { url -> scope.launch { store.toggleBookmark(url, tab.label) } }
+                    },
+                    shieldOn = settings.adBlockEnabled && !siteAllowed,
+                    onOpenMenu = { showSettings = true },
+                    onShowBookmarks = { showBookmarks = true },
+                    onShowHistory = { showHistory = true },
+                    onNewTab = { session.open() },
+                    onNewIncognitoTab = { session.open(incognito = true) },
+                    onOpenOnDesktop = { tab.url?.let(onOpenOnDesktop) },
+                    onToggleSiteBlocking = {
+                        val host = pageHost ?: return@BrowserBar
+                        scope.launch {
+                            val next = if (siteAllowed) settings.allowedHosts - host
+                            else settings.allowedHosts + host
+                            store.saveSettings(settings.copy(allowedHosts = next))
+                            tab.webView?.reload()
+                        }
+                    },
+                )
             }
         }
 
@@ -475,11 +606,16 @@ private fun newWebView(
     onFound: (url: String, kind: String, title: String?, height: Int?) -> Unit,
     onFullscreen: (View?) -> Unit,
     openInNewTab: (String) -> Unit,
+    /** Raw per-event scroll delta and the resulting scrollY, so the caller can decide
+     *  when the bottom bar earns its space back — this view only reports, it doesn't
+     *  own the show/hide decision. */
+    onScroll: (dy: Int, scrollY: Int) -> Unit,
 ): WebView = WebView(ctx).apply {
     layoutParams = ViewGroup.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT,
     )
+    setOnScrollChangeListener { _, _, scrollY, _, oldScrollY -> onScroll(scrollY - oldScrollY, scrollY) }
 
     // Before any settings or loading: a profile can only be assigned to a WebView
     // that has not been used yet.
@@ -568,6 +704,9 @@ private fun newWebView(
             tab.canGoBack = view.canGoBack()
             tab.canGoForward = view.canGoForward()
             onTitle(view.title)
+            if (settingsProvider().cookieBlockEnabled) {
+                view.evaluateJavascript(COOKIE_REJECT_JS, null)
+            }
             view.evaluateJavascript(FIND_VIDEOS_JS) { raw ->
                 decodeFoundVideos(raw).forEach { (src, height) ->
                     if (MediaSniffer.isUnfetchable(src)) {
@@ -720,6 +859,9 @@ private fun BrowserBar(
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
+    /** Whether the tab has a page loaded at all — the cast button has nothing to do
+     *  on the start hint, so it doesn't take up space there either. */
+    hasPage: Boolean,
     foundCount: Int,
     casting: Boolean,
     onShowFound: () -> Unit,
@@ -733,68 +875,140 @@ private fun BrowserBar(
     onShowHistory: () -> Unit,
     onNewTab: () -> Unit,
     onNewIncognitoTab: () -> Unit,
+    onOpenOnDesktop: () -> Unit,
     onToggleSiteBlocking: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // The hairline is the only thing separating this bar from the page above it in
+    // light mode, where both would otherwise be white — same trick as RemoteTitleBar,
+    // drawn on the opposite edge since this bar sits at the bottom instead of the top.
+    val borderColor = PortalRemoteTheme.hud.edge
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    // Submitting is "I'm done typing", not "keep the field focused" — Compose's Go
+    // action fires the callback but leaves the field (and the keyboard with it) exactly
+    // as it was, unlike a stock browser's own omnibox.
+    val submit = {
+        onGo()
+        keyboard?.hide()
+        focusManager.clearFocus()
+    }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Surface(
+        color = PortalRemoteTheme.hud.panel,
+        modifier = Modifier.drawWithContent {
+            drawContent()
+            val line = 1.dp.toPx()
+            drawRect(color = borderColor, topLeft = Offset.Zero, size = Size(size.width, line))
+        },
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+                .padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            IconButton(onClick = onBack, enabled = canGoBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            // Shown only when they'd do something — a fresh tab has neither, and two
+            // dead buttons either side of the field is space the field needs more.
+            // §40dp matches RemoteTitleBar's own compact IconButton, not the stock 48dp.
+            if (canGoBack) {
+                IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
             }
-            IconButton(onClick = onForward, enabled = canGoForward) {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
+            if (canGoForward) {
+                IconButton(onClick = onForward, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
+                }
             }
 
-            OutlinedTextField(
+            // BasicTextField, not OutlinedTextField: the stock field's internal
+            // padding assumes ~56dp tall and clips its own text once forced shorter —
+            // same reason PairScreen's DigitBox is hand-rolled. Sunken fill + a
+            // border-strong/live edge on focus is drawn in decorationBox, per §5's
+            // "every component has a face" table.
+            val addressInteraction = remember { MutableInteractionSource() }
+            val addressFocused by addressInteraction.collectIsFocusedAsState()
+            val fieldShape = MaterialTheme.shapes.medium
+            BasicTextField(
                 value = address,
                 onValueChange = onAddressChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).height(40.dp),
+                interactionSource = addressInteraction,
                 singleLine = true,
-                placeholder = {
-                    Text(if (incognito) "Private search or address" else "Search or type a web address")
-                },
-                leadingIcon = if (incognito) {
-                    { Icon(Icons.Filled.VisibilityOff, contentDescription = "Private tab") }
-                } else {
-                    null
-                },
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = PortalRemoteTheme.hud.text),
+                cursorBrush = SolidColor(PortalRemoteTheme.hud.live),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Go,
                 ),
-                keyboardActions = KeyboardActions(onGo = { onGo() }),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+                decorationBox = { innerField ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(PortalRemoteTheme.hud.sunken, fieldShape)
+                            .border(
+                                if (addressFocused) 2.dp else 1.dp,
+                                if (addressFocused) {
+                                    PortalRemoteTheme.hud.live
+                                } else {
+                                    PortalRemoteTheme.extendedColors.borderStrong
+                                },
+                                fieldShape,
+                            )
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (incognito) {
+                            Icon(
+                                Icons.Filled.VisibilityOff,
+                                contentDescription = "Private tab",
+                                modifier = Modifier.size(16.dp),
+                                tint = PortalRemoteTheme.hud.textDim,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (address.isEmpty()) {
+                                Text(
+                                    if (incognito) "Private search or address" else "Search or type a web address",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = PortalRemoteTheme.hud.textDim,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            innerField()
+                        }
+                    }
+                },
             )
 
             // The whole point of the browser is what this button lights up for, so it
             // says so rather than waiting to be noticed: filled icon, counted badge.
+            // But an always-disabled button (no page, or a page with nothing found and
+            // nothing casting) is a dead icon spending space on nothing — shown only
+            // once it could actually do something.
             val lit = foundCount > 0 || casting
-            BadgedBox(badge = { if (foundCount > 0) Badge { Text("$foundCount") } }) {
-                IconButton(onClick = onShowFound, enabled = lit) {
-                    Icon(
-                        if (lit) Icons.Filled.CastConnected else Icons.Filled.Cast,
-                        contentDescription = when {
-                            casting -> "Playing on the PC — open the controls"
-                            foundCount > 0 -> "$foundCount videos ready to cast"
-                            else -> "Cast from this page"
-                        },
-                        tint = if (lit) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            LocalContentColor.current
-                        },
-                    )
+            if (hasPage && lit) {
+                BadgedBox(badge = { if (foundCount > 0) Badge { Text("$foundCount") } }) {
+                    IconButton(onClick = onShowFound, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            Icons.Filled.CastConnected,
+                            contentDescription = when {
+                                casting -> "Playing on the PC — open the controls"
+                                else -> "$foundCount videos ready to cast"
+                            },
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
 
             Box {
-                IconButton(onClick = { menuOpen = true }) {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "Browser menu")
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -840,6 +1054,13 @@ private fun BrowserBar(
                         leadingIcon = { Icon(Icons.Filled.Shield, null) },
                         onClick = { menuOpen = false; onToggleSiteBlocking() },
                     )
+                    if (hasPage) {
+                        DropdownMenuItem(
+                            text = { Text("Open on desktop") },
+                            leadingIcon = { Icon(Icons.Filled.Computer, null) },
+                            onClick = { menuOpen = false; onOpenOnDesktop() },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Reload") },
                         leadingIcon = { Icon(Icons.Filled.Refresh, null) },
@@ -1076,6 +1297,13 @@ private fun BrowserSettingsSheet(
             detail = "The cross-site tracking mechanism. Always off in private tabs.",
             checked = settings.blockThirdPartyCookies,
             onChange = { onChange(settings.copy(blockThirdPartyCookies = it)) },
+        )
+        SettingRow(
+            label = "Auto-decline cookie prompts",
+            detail = "Answers the known consent banners with reject/decline automatically. " +
+                "Turn off here if one ever leaves a page stuck.",
+            checked = settings.cookieBlockEnabled,
+            onChange = { onChange(settings.copy(cookieBlockEnabled = it)) },
         )
         SettingRow(
             label = "Save history",

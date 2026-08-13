@@ -38,10 +38,16 @@ and streams what comes back as raw 16-bit PCM, forever, on one chunked HTTP resp
 The phone plays it into an `AudioTrack`. See `server/PortalRemote.Server/Audio/` and
 `android/.../audio/SpeakerService.kt`.
 
-**Loopback is a copy, not a redirect.** This is the one thing about the feature a user
-has to be told, and the Media tab's card says it: the PC's own speakers keep playing
-unless they are muted there. Making the phone a *selectable output device* in Windows'
-sound settings is §2's problem in the other direction, and carries the same driver bill.
+**Loopback is a copy, not a redirect.** The PC's own speakers would otherwise keep
+playing the same audio out of step with the phone, so the switch mutes them on the way
+in and unmutes on the way out — over `/control`, the same `mute` command the remote's
+own volume button sends. That command is `VK_VOLUME_MUTE`, a hardware *toggle* key, not
+a set-to, which is why it has to fire exactly once per edge of the switch rather than be
+retried: send it twice and it cancels itself. If the user unmutes by hand mid-stream —
+to hear both, say — switching off mutes it right back; asking the PC whether it thinks
+it's muted before deciding would just be a race against whatever they did by hand.
+Making the phone a *selectable output device* in Windows' sound settings is §2's problem
+in the other direction, and carries the same driver bill.
 
 Five decisions worth the space:
 
@@ -65,17 +71,40 @@ Five decisions worth the space:
   locks is not a speaker — and with it, the notification the system is owed, the Stop
   button the user is owed, and a `WifiLock`, because Wi-Fi power save with the screen
   off is heard directly as dropouts on a constant-rate stream.
+- **The phone corrects its own clock.** Two crystals, tens of ppm apart, nothing shared
+  between them: at 100ppm the buffer walks a third of a second an hour and the stream
+  ends in a glitch. Every wireless speaker answers this the same way — measure how much
+  the local buffer is holding, play at a ratio a hair off 1.0, steer. AirPlay and Sonos
+  do it against a PTP clock they share; with one listener there is nothing to stay in
+  sync *with*, so buffer fill on its own is the whole signal. `AudioTrack` supplies both
+  halves — `getPlaybackHeadPosition` to measure, `PlaybackParams.setSpeed` to correct —
+  which makes the entire thing a proportional controller and no resampler at all. It
+  costs one design change: the track is sized well above the target fill and written
+  non-blocking, because the old full-track-and-blocking-write arrangement backpressured
+  the socket and so read the same whether the clocks agreed or not.
 
 **Known ceilings.** ~150ms of buffer means this will never lip-sync with video on the
 PC's own screen — fine for music, wrong for watching a film on the monitor and hearing
 it on the phone. A 5.1 desktop is downmixed by taking front L/R, so a centre-channel
 voice goes quiet; proper fold-down is a matrix per layout, worth writing when somebody
-notices. And the phone's audio clock drifts against the PC's, so over hours the buffer
-walks and eventually glitches once; the reconnect covers it, nothing corrects it.
+notices. Drift is corrected but only slowly: recovering from a long Wi-Fi stall is a
+0.2%-per-second climb, and anything past 250ms of standing latency is dropped outright
+rather than played late. And TCP means one lost packet is a gap rather than a blip —
+fine on a LAN, the reason RTP-over-UDP with loss concealment exists everywhere else.
 
 **Verified:** 48kHz stereo off a real endpoint at 99% of real time, a tone captured at
 the right amplitude, 401 without a token, and the silence padding holding the byte rate
-with nothing playing. Not yet verified on a handset — see status.md.
+with nothing playing. On the phone side, frame alignment and the drift controller are
+unit-tested (`SpeakerStreamTest`) and nothing else is: the playback path has still not
+been heard on a handset — see status.md.
+
+**One bug worth remembering**, because it is invisible in review and unmistakable in a
+speaker. `AudioTrack.write` discards whatever is left past the last *whole frame* of a
+call, and `BufferedSource.read` returns however many bytes the socket happened to
+deliver. A read ending mid-frame therefore does not lose a sample, it shifts every
+sample after it by a byte or two for the rest of the connection — and 16-bit PCM read a
+byte out of step is loud static with the music faintly audible underneath. Reads are
+whole chunks now (`readFrames`), and a partial chunk is never played.
 
 ---
 

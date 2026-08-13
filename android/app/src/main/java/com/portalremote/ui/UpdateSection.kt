@@ -59,7 +59,7 @@ fun UpdateSection(currentVersion: String) {
         }
 
         val available = state as? UpdateState.Available
-        Button(onClick = {
+        Button(shape = MaterialTheme.shapes.medium, onClick = {
             scope.launch {
                 if (available == null) {
                     state = UpdateState.Busy("Checking…")

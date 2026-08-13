@@ -84,6 +84,8 @@ public sealed class MainForm : Form
     private readonly Label _aiDetail;
     private readonly TokenButton _aiOpen;
     private readonly TokenButton _aiCheck;
+    private readonly TokenButton _aiGet;
+    private readonly TableLayoutPanel _aiRow;
     private readonly CheckBox _startWithWindows;
     private readonly TokenButton _rotate;
     private readonly Label _rotateNote;
@@ -333,17 +335,26 @@ public sealed class MainForm : Form
         // is no longer the only place it exists. See Tray/AssistantForm.cs.
         _aiOpen = new TokenButton { Text = "Chat", Glyph = Glyphs.Assistant, Secondary = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
         _aiOpen.Click += (_, _) => OpenAssistant?.Invoke();
+        // The one dependency this app cannot ship: agent-platform is somebody else's
+        // release on GitHub. Telling the user to go and find it is the step that never
+        // happens, so this button is the whole install — download, unzip, start. It is
+        // only on screen while the backend isn't answering. See Ai/AgentPlatformSetup.cs.
+        _aiGet = new TokenButton { Text = "Set up", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
+        _aiGet.Click += (_, _) => _ = SetUpAiAsync();
         _aiDetail = new Label { Font = Fonts.Caption, Dock = DockStyle.Fill, AutoSize = false };
 
-        var aiRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1 };
+        var aiRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1 };
+        _aiRow = aiRow;
         aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(80)));
         aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(80)));
         aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(72)));
         aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(72)));
         aiRow.Controls.Add(_aiLabel, 0, 0);
         aiRow.Controls.Add(_aiState, 1, 0);
-        aiRow.Controls.Add(_aiOpen, 2, 0);
-        aiRow.Controls.Add(_aiCheck, 3, 0);
+        aiRow.Controls.Add(_aiGet, 2, 0);
+        aiRow.Controls.Add(_aiOpen, 3, 0);
+        aiRow.Controls.Add(_aiCheck, 4, 0);
 
         _startWithWindows = new CheckBox
         {
@@ -539,7 +550,7 @@ public sealed class MainForm : Form
         _aiState.BackColor = _colors.Bg;
 
         foreach (var button in new[]
-                 { _copy, _send, _attach, _showPair, _showThread, _changeShare, _openShare, _copyCast, _openCast, _aiOpen, _aiCheck, _rotate })
+                 { _copy, _send, _attach, _showPair, _showThread, _changeShare, _openShare, _copyCast, _openCast, _aiGet, _aiOpen, _aiCheck, _rotate })
             button.ApplyTheme(_colors);
 
         foreach (var bubble in _thread.Controls.OfType<Bubble>()) bubble.ApplyTheme(_colors);
@@ -780,10 +791,82 @@ public sealed class MainForm : Form
 
         _aiState.Text = state;
         _aiState.ForeColor = color;
+
+        var ready = _ai.State == AiHealth.Ready;
+        var installed = AgentPlatformSetup.InstalledExe(_config) is not null;
+        // Nothing to set up once it is answering, and the column collapses with the
+        // button so the row doesn't keep a hole where it was.
+        _aiGet.Visible = !ready;
+        _aiGet.Text = installed ? "Start" : "Set up";
+        _aiRow.ColumnStyles[2].Width = ready ? 0 : LogicalToDeviceUnits(80);
+
         // Ready carries no detail, and the useful thing to say then is which model the
-        // phone's Assistant tab is about to be talking to.
-        _aiDetail.Text = _ai.Detail
-            ?? $"Answering as {_config.AgentPlatform.Model}. One conversation, shared by this PC and the phone.";
+        // phone's Assistant tab is about to be talking to. Not ready means the backend
+        // is missing, and the honest thing to say is what it is and that this window can
+        // fetch it — AiHealth's own detail is a diagnostic, not an instruction.
+        _aiDetail.Text = ready
+            ? $"Answering as {_config.AgentPlatform.Model}. One conversation, shared by this PC and the phone."
+            : installed
+                ? $"{_ai.Detail} Start runs agent-platform from {AgentPlatformSetup.InstallDirectory}."
+                : "The assistant needs agent-platform running on this PC. Set up downloads its "
+                  + "latest release from GitHub and starts it — nothing else to install.";
+    }
+
+    /// <summary>
+    /// Install agent-platform if it isn't here, start it, and wait for it to answer.
+    /// One button for the whole thing: the alternative is a link to a releases page and
+    /// a paragraph about unzipping, which is where this feature used to stop.
+    /// </summary>
+    private async Task SetUpAiAsync()
+    {
+        _aiGet.Enabled = false;
+        try
+        {
+            var exe = AgentPlatformSetup.InstalledExe(_config);
+            if (exe is null)
+            {
+                _aiDetail.Text = "Downloading the latest agent-platform from GitHub…";
+                exe = await AgentPlatformSetup.InstallAsync(_config);
+            }
+
+            _aiDetail.Text = "Starting agent-platform…";
+            AgentPlatformSetup.Start(exe);
+            await WaitForAiAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException
+                                       or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            // Offer the manual path rather than only the failure: the repo page is where
+            // somebody would have had to start anyway.
+            if (TokenDialog.Show(this,
+                    "Could not set up the assistant",
+                    $"{ex.Message}\n\nYou can install agent-platform yourself from its GitHub page, "
+                    + "then press Check.",
+                    confirmText: "Open GitHub",
+                    cancelText: "Close"))
+                OpenPath(AgentPlatformSetup.RepoUrl);
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                _aiGet.Enabled = true;
+                RefreshAi();
+            }
+        }
+    }
+
+    /// <summary>A freshly started daemon binds its port a moment after the process
+    /// exists, so one probe would always report failure. Gives up after 20s and leaves
+    /// the row saying what the last probe found.</summary>
+    private async Task WaitForAiAsync()
+    {
+        for (var attempt = 0; attempt < 20 && !IsDisposed; attempt++)
+        {
+            await _ai.CheckAsync(userAsked: true);
+            if (_ai.State == AiHealth.Ready) return;
+            await Task.Delay(1000);
+        }
     }
 
     private void CheckAi() => _ = ProbeAiAsync(userAsked: true);

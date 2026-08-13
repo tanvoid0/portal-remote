@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.ui.theme.Haptics
+import com.portalremote.ui.theme.HudPanelShape
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
@@ -395,20 +397,43 @@ private fun TrackpadSurface(
         echo = null
     }
 
+    // The pad is the app's one full-bleed control, so it gets the panel treatment at
+    // full size: the chamfer, the edge, and reticle marks at the corners. The marks are
+    // doing a job here that they only decorate elsewhere — this surface has no content
+    // of its own to show where it begins and ends.
+    val hud = PortalRemoteTheme.hud
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(HudPanelShape)
             .graphicsLayer { scaleX = tapScale.value; scaleY = tapScale.value }
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            // The pad is the largest control in the app and had no edge at all: in light
-            // mode its fill and the screen behind it were both white, so the surface a
-            // finger is supposed to aim at was defined by nothing. `borderStrong` is the
-            // 3:1 control boundary WCAG 1.4.11 asks for (§3).
-            .border(
-                1.dp,
-                PortalRemoteTheme.extendedColors.borderStrong,
-                RoundedCornerShape(20.dp),
-            )
+            .background(hud.sunken)
+            // The pad had no edge at all: in light mode its fill and the screen behind it
+            // were both white, so the surface a finger is supposed to aim at was defined
+            // by nothing. `borderStrong` is the 3:1 control boundary WCAG 1.4.11 asks
+            // for (§3).
+            .border(1.dp, PortalRemoteTheme.extendedColors.borderStrong, HudPanelShape)
+            .drawBehind {
+                val arm = 22.dp.toPx()
+                val inset = 10.dp.toPx()
+                val weight = 1.5.dp.toPx()
+                val mark = hud.live.copy(alpha = 0.45f)
+                // Top-left and bottom-right only, matching the two corners the chamfer
+                // leaves square — the same asymmetry every panel in the app has.
+                drawLine(mark, Offset(inset, inset), Offset(inset + arm, inset), weight)
+                drawLine(mark, Offset(inset, inset), Offset(inset, inset + arm), weight)
+                drawLine(
+                    mark,
+                    Offset(size.width - inset, size.height - inset),
+                    Offset(size.width - inset - arm, size.height - inset),
+                    weight,
+                )
+                drawLine(
+                    mark,
+                    Offset(size.width - inset, size.height - inset),
+                    Offset(size.width - inset, size.height - inset - arm),
+                    weight,
+                )
+            }
             // Above the surface, below the rail and the echo. Radius and alpha only —
             // no layout, nothing to invalidate but this one draw.
             .drawWithContent {
@@ -665,8 +690,9 @@ private fun ClickButton(
                 }
             },
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        shape = MaterialTheme.shapes.medium,
         contentPadding = PaddingValues(0.dp),
     ) {
-        Text(label, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        Text(label.uppercase(), color = MaterialTheme.colorScheme.onSecondaryContainer)
     }
 }

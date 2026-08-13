@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FitScreen
@@ -84,6 +83,8 @@ import com.portalremote.net.ScreenApi
 import com.portalremote.ui.theme.Haptics
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.RotationSuggestionChip
+import com.portalremote.ui.theme.rememberRotationSuggestion
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.withTimeoutOrNull
@@ -129,6 +130,10 @@ private enum class TouchMode { WAITING, POINT, DRAG, TWO_FINGER, RAIL }
  *  at 1x the same touch has to be free to click whatever's actually drawn at that
  *  edge, and two fingers already scroll there without a rail. Zoomed in, 2-finger
  *  is spent on panning, so scrolling needs a way in that isn't a finger count. */
+/** The letterbox around the mirrored frame. Not quite #000: a true black next to an
+ *  OLED-off pixel makes the frame's edge disappear on the phones that have one. */
+private val MIRROR_MOUNT = Color(0xFF07090C)
+
 private val MIRROR_RAIL_WIDTH = 44.dp
 
 /** What a two-finger gesture turned out to mean, decided once and then held. */
@@ -242,6 +247,14 @@ fun ScreenScreen(
     val zoom = remember { mutableStateOf(1f) }
     val pan = remember { mutableStateOf(Offset.Zero) }
 
+    // The app is locked portrait (see AndroidManifest) everywhere except here: this is
+    // the one screen whose content is itself a wide picture, so a physical rotation
+    // gets offered a real landscape layout instead of being ignored outright. Enabled
+    // unconditionally — this composable is only in the tree while Monitor's Screen tab
+    // is the visible one (see MonitorScreen's Crossfade), which is exactly the lifetime
+    // the sensor listener should run for.
+    val rotationSuggestion = rememberRotationSuggestion(enabled = true)
+
     // Touch mode forwards fingers 1:1 — a leftover pinch-zoom from before the switch
     // would offset every contact from where the finger actually is.
     LaunchedEffect(touchMode) {
@@ -283,7 +296,13 @@ fun ScreenScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .background(Color.Black),
+                    // Flat black in both themes, and the one surface in the app that
+                    // ignores the palette: this is the letterbox around a picture, not a
+                    // panel the picture sits on, and a pale mount in light mode both
+                    // changes the apparent colour of the desktop inside it and stops the
+                    // frame having an edge at all. Same rule as a cinema screen — see
+                    // §7's ScreenScreen entry.
+                    .background(MIRROR_MOUNT),
                 contentAlignment = Alignment.Center,
             ) {
                 val bitmap = frame
@@ -382,6 +401,14 @@ fun ScreenScreen(
                 onExitFullscreen = { onFullscreen(false) },
             )
         }
+
+        RotationSuggestionChip(
+            state = rotationSuggestion,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .safeDrawingPadding()
+                .padding(top = 12.dp),
+        )
     }
 }
 
@@ -434,7 +461,7 @@ private fun FloatingMirrorControls(
         if (open) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.extraLarge,
                 // Near-opaque, unlike the button: chips have to stay readable against
                 // whatever happens to be on the desktop behind them.
                 color = PortalRemoteTheme.extendedColors.surfaceRaised.copy(alpha = 0.94f),
@@ -470,7 +497,7 @@ private fun MirrorGestureHint() {
         color = Color.White.copy(alpha = 0.7f),
         textAlign = TextAlign.Center,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(Color.Black.copy(alpha = 0.45f))
             .padding(horizontal = 12.dp, vertical = 6.dp),
     )

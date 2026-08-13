@@ -35,7 +35,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -274,13 +274,16 @@ private fun ShareBubble(entry: ShareEntry, onClick: () -> Unit) {
         horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            // The squared-off corner points at its own side of the thread: the classic
-            // chat tail, minus the tail.
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomEnd = if (mine) 4.dp else 16.dp,
-                bottomStart = if (mine) 16.dp else 4.dp,
+            // The square corner points at its own side of the thread: the classic chat
+            // tail, minus the tail. Cut rather than rounded, like every other surface in
+            // the app (§5) — which makes the idea read *better* here, because a 45°
+            // chamfer on three corners and a hard right angle on the fourth is a more
+            // obvious pointer than a radius change was.
+            shape = CutCornerShape(
+                topStart = 12.dp,
+                topEnd = 12.dp,
+                bottomEnd = if (mine) 0.dp else 12.dp,
+                bottomStart = if (mine) 12.dp else 0.dp,
             ),
             color = if (mine) {
                 MaterialTheme.colorScheme.primaryContainer
@@ -435,7 +438,7 @@ private fun Composer(onShareText: (String) -> Unit, onShareUri: (Uri) -> Unit, b
                     // Grows to a few lines, then scrolls: a note is usually one line,
                     // and a pasted paragraph shouldn't eat the thread above it.
                     maxLines = 4,
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.medium,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Send,
@@ -479,7 +482,7 @@ private fun ClipboardSuggestion(clip: Clip, onSend: () -> Unit) {
                 bitmap = thumb,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)),
+                modifier = Modifier.size(36.dp).clip(MaterialTheme.shapes.small),
             )
         } else {
             Icon(
@@ -564,7 +567,7 @@ private fun ShareLibrary(
                 }
             },
             singleLine = true,
-            shape = RoundedCornerShape(20.dp),
+            shape = MaterialTheme.shapes.medium,
         )
 
         Row(

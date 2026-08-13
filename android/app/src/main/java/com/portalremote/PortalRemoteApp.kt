@@ -19,14 +19,28 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.portalremote.net.ConnectionState
 import com.portalremote.ui.PairScreen
 import com.portalremote.ui.RemoteScreen
+import com.portalremote.ui.theme.HudAccent
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.hudCanvas
 import com.portalremote.ui.theme.rememberHaptics
 
 @Composable
 fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
-    PortalRemoteTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
+    // Read before the theme rather than inside it: the accent is a stored preference, and
+    // the theme has to be built from it before anything under it composes, or the app
+    // repaints itself a frame after launch.
+    val accentName by viewModel.settings.collectAsState()
+    PortalRemoteTheme(accent = HudAccent.from(accentName.accent)) {
+        // The ruled ground, once, for the whole app — see docs/design-system.md §3. Every
+        // panel in every screen rests on this one surface rather than carrying its own
+        // texture, which is what makes a tab switch read as moving across one machine
+        // instead of between separate documents. Screens with their own opaque content
+        // (the trackpad, the mirror) simply cover it.
+        Surface(
+            color = PortalRemoteTheme.hud.background,
+            modifier = Modifier.fillMaxSize().hudCanvas(),
+        ) {
             val state by viewModel.connectionState.collectAsState()
             val settings by viewModel.settings.collectAsState()
             val savedHost by viewModel.savedHost.collectAsState()
@@ -37,12 +51,18 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
             val castTargets by viewModel.castTargets.collectAsState()
             val castTarget by viewModel.castTarget.collectAsState()
             val castScanning by viewModel.castScanning.collectAsState()
+            val powerTimer by viewModel.powerTimer.collectAsState()
+            val volume by viewModel.volume.collectAsState()
             val aiState by viewModel.aiState.collectAsState()
             val chat by viewModel.chat.collectAsState()
             val chatStreaming by viewModel.chatStreaming.collectAsState()
             val aiCatalog by viewModel.aiCatalog.collectAsState()
             val aiCatalogLoading by viewModel.aiCatalogLoading.collectAsState()
             val aiCatalogError by viewModel.aiCatalogError.collectAsState()
+            val stats by viewModel.stats.collectAsState()
+            val statsHistory by viewModel.statsHistory.collectAsState()
+            val deckItems by viewModel.deckItems.collectAsState()
+            val activeWindow by viewModel.activeWindow.collectAsState()
             var triedSavedHost by remember { mutableStateOf(false) }
             val haptics = rememberHaptics(settings.haptics)
 
@@ -114,8 +134,17 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             castScanning = castScanning,
                             onCastTarget = { viewModel.chooseCastTarget(it) },
                             onScanCastTargets = { viewModel.refreshCastTargets() },
+                            powerTimer = powerTimer,
+                            volume = volume,
                             shares = shares,
                             onCastFile = { viewModel.castLocalFile(it) },
+                            stats = stats,
+                            statsHistory = statsHistory,
+                            onWatchStats = { viewModel.watchStats(it) },
+                            deckItems = deckItems,
+                            onDeckItemsChange = { viewModel.updateDeckItems(it) },
+                            activeWindow = activeWindow,
+                            onWatchActiveWindow = { viewModel.watchActiveWindow(it) },
                             aiState = aiState,
                             chat = chat,
                             chatStreaming = chatStreaming,

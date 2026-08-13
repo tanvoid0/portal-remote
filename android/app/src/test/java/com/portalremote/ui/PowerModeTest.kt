@@ -37,4 +37,18 @@ class PowerModeTest {
         assertEquals("power", message.getString("t"))
         assertEquals("shutdown", message.getString("mode"))
     }
+
+    @Test
+    fun `power timer set message carries the mode and delay`() {
+        val message = Protocol.powerTimerSet(PowerMode.LOCK.wire, 300)
+        assertEquals("power_timer_set", message.getString("t"))
+        assertEquals("lock", message.getString("mode"))
+        assertEquals(300, message.getInt("seconds"))
+    }
+
+    @Test
+    fun `power timer cancel message carries nothing else`() {
+        val message = Protocol.powerTimerCancel()
+        assertEquals("power_timer_cancel", message.getString("t"))
+    }
 }

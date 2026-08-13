@@ -11,18 +11,24 @@ PC.
 
 <p align="center">
   <img src="docs/assets/screenshots/android-pair.png" width="180" alt="Pairing screen: the PC found by discovery on the LAN as a one-tap card, with QR scan and typed address as fallbacks">
-  <img src="docs/assets/screenshots/android-control.png" width="180" alt="Control tab, trackpad mode: full-surface trackpad with a scroll rail down the right edge, a tap-to-type field above and left/right click buttons below">
-  <img src="docs/assets/screenshots/android-keyboard.png" width="180" alt="Control tab, keyboard mode: Esc, Tab, Enter, Space, Backspace, Win, Alt+Tab and clipboard shortcuts as chips, with a directional pad below">
-  <img src="docs/assets/screenshots/android-remote.png" width="180" alt="Control tab, remote mode: a TV-style D-pad with OK, transport and volume controls, plus a row of function keys for the couch">
-  <img src="docs/assets/screenshots/android-media.png" width="180" alt="Media tab: what the PC is playing with a scrubber, transport and volume, and the speaker card streaming the PC's sound to the phone at 48kHz stereo">
+  <img src="docs/assets/screenshots/android-control.png" width="180" alt="Control tab, trackpad mode: a full-surface trackpad with reticle marks at its corners and a scroll rail down the right edge, a tap-to-type field above and left/right click buttons below">
+  <img src="docs/assets/screenshots/android-keyboard.png" width="180" alt="Control tab, keyboard mode: Esc, Tab, Enter, Space, Backspace, Win, Alt+Tab and clipboard shortcuts as chamfered key caps, with a directional pad below">
+  <img src="docs/assets/screenshots/android-remote.png" width="180" alt="Control tab, remote mode: a TV-style round D-pad with OK, transport and volume controls, plus rows of function keys for the couch">
+  <img src="docs/assets/screenshots/android-media.png" width="180" alt="Control tab, media mode: what the PC is playing with a scrubber, transport and volume, and the speaker card streaming the PC's sound to the phone at 48kHz stereo">
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/android-browser.png" width="180" alt="Browser tab: an in-app browser with adblock playing a video, the cast icon lit with a target found on the LAN">
-  <img src="docs/assets/screenshots/android-screen.png" width="180" alt="Screen tab: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
-  <img src="docs/assets/screenshots/android-share.png" width="180" alt="Share tab: a two-device conversation of links and text, with a send-clipboard suggestion above the composer">
-  <img src="docs/assets/screenshots/android-files.png" width="180" alt="Files tab: a folder and a file from the PC's shared folder, with download and upload">
+  <img src="docs/assets/screenshots/android-stats.png" width="180" alt="Monitor tab, stats mode in dark: lit CPU and memory dials, a glowing minute-long load trace, and a lit cell per logical core">
+  <img src="docs/assets/screenshots/android-stats-light.png" width="180" alt="The same dashboard in light mode: identical panels, dials and meters redrawn as ink on paper rather than light on black">
+  <img src="docs/assets/screenshots/android-stats-detail.png" width="180" alt="Monitor tab, stats mode scrolled down: the mirrored network trace, a segmented meter per fixed drive, and the processes using the most CPU">
+  <img src="docs/assets/screenshots/android-browser.png" width="180" alt="Browser tab: an in-app browser with adblock, showing this project's own repository, with the cast button beside the address bar">
+  <img src="docs/assets/screenshots/android-screen.png" width="180" alt="Monitor tab, screen mode: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
   <img src="docs/assets/screenshots/android-assistant.png" width="180" alt="Assistant tab: a question answered in text, followed by a proposed PC action the user must approve before anything runs">
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/android-share.png" width="180" alt="Transfer tab, share mode: a thread of links and notes sent to the PC, each bubble squared off on the sending device's side, with the composer below">
+  <img src="docs/assets/screenshots/android-files.png" width="180" alt="Transfer tab, files mode: the PC's shared folder as a list of files and folders with sizes, a download button per row and an upload action">
 </p>
 
 <p align="center"><sub>
@@ -40,13 +46,22 @@ retouched. Re-shooting them is in
   couch.
 - **See the screen** — live MJPEG mirroring at ~14.5fps, per-monitor, pinch to zoom to
   4×, tap to click where you looked.
+- **Watch the machine** — a live resource dashboard drawn as an instrument panel: CPU
+  per core, memory, a minute of history, network throughput, every drive, and what's
+  using the most CPU right now. The PC only samples itself while that screen is open.
 - **Play and cast** — what the PC is playing shows up with cover art and a real scrubber;
   send a link or a local file to the PC, a Roku or a DLNA television.
+- **Browse the web** — an in-app browser that blocks ads, trackers and popups as you go,
+  auto-declines cookie prompts from the major consent-banner vendors, and hands any video
+  it finds straight to the cast button.
 - **Move things across** — the phone's system share sheet and the PC's `Ctrl+Alt+V` push
   links, images and files either way, onto the receiving device's clipboard before the
   notification lands.
 - **Browse and transfer files** — list, download and upload against a shared folder on
   the PC.
+- **Make it yours** — light and dark are the same instrument under different lighting, and
+  Settings → Colour swaps the accent between four pairs. Every one of them is checked
+  against WCAG on both themes, so the picker can't produce a screen you can't read.
 - **Ask the assistant** — one conversation shared by the phone and the PC, which can also
   act on the PC (media keys, shortcuts, typing, power) with every action approved
   separately. Needs [agent-platform](https://github.com/tanvoid0/agent-platform) — see

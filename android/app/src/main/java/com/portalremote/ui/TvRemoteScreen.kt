@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -41,17 +42,25 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,8 +71,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.portalremote.net.NowPlaying
+import com.portalremote.net.PowerTimerState
 import com.portalremote.ui.theme.HapticPress
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
@@ -131,17 +142,25 @@ fun TvRemoteScreen(
     onCombo: (keys: List<String>) -> Unit,
     onMedia: (action: String) -> Unit,
     onPower: (mode: String) -> Unit,
+    /** What's scheduled on the PC right now, or null — pushed by the server, so a
+     *  reconnect (or a second phone) always agrees with what's actually counting down. */
+    powerTimer: PowerTimerState?,
+    onPowerTimerSet: (mode: String, seconds: Int) -> Unit,
+    onPowerTimerCancel: () -> Unit,
 ) {
     var powerOpen by remember { mutableStateOf(false) }
     var confirming by remember { mutableStateOf<PowerMode?>(null) }
+    // The mode being scheduled, while its quick-suggestion/custom-minutes sheet is up.
+    var timerPicker by remember { mutableStateOf<PowerMode?>(null) }
+    var customMinutes by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // Power sits apart from the navigation cluster, in the error colour, at the
         // top-left corner your thumb doesn't rest on — the one button here you must
@@ -161,6 +180,25 @@ fun TvRemoteScreen(
             ) {
                 Icon(Icons.Filled.PowerSettingsNew, contentDescription = "Power")
             }
+            // Visible without opening the picker: what's scheduled fires whether or not
+            // anyone is looking at this tab, so the countdown has to be readable at a
+            // glance, not buried a tap away. Tapping it opens the same picker, which is
+            // where it can be edited or called off.
+            powerTimer?.let { timer ->
+                val mode = PowerMode.entries.firstOrNull { it.wire == timer.mode }
+                AssistChip(
+                    onClick = { powerOpen = true },
+                    label = { Text("${mode?.label ?: timer.mode} · ${rememberCountdownText(timer.endsAtMs)}") },
+                    leadingIcon = {
+                        Icon(Icons.Filled.Timer, contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize))
+                    },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        labelColor = MaterialTheme.colorScheme.onErrorContainer,
+                        leadingIconContentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ),
+                )
+            }
             Box(modifier = Modifier.weight(1f))
             TransportButton(Icons.AutoMirrored.Filled.ArrowBack, "Back") { onTap("browser_back") }
             TransportButton(Icons.Filled.Home, "Start menu") { onTap("win") }
@@ -169,7 +207,7 @@ fun TvRemoteScreen(
 
         DirectionPad(onTap = onTap)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             TransportButton(Icons.Filled.SkipPrevious, "Previous") { onMedia("prev") }
             TransportButton(
                 icon = if (nowPlaying?.playing == true) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -181,7 +219,7 @@ fun TvRemoteScreen(
             TransportButton(Icons.Filled.SkipNext, "Next") { onMedia("next") }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             TransportButton(Icons.AutoMirrored.Filled.VolumeDown, "Volume down") { onMedia("vol_down") }
             TransportButton(Icons.AutoMirrored.Filled.VolumeOff, "Mute") { onMedia("mute") }
             TransportButton(Icons.AutoMirrored.Filled.VolumeUp, "Volume up") { onMedia("vol_up") }
@@ -221,32 +259,70 @@ fun TvRemoteScreen(
             title = { Text("Power") },
             text = {
                 Column {
-                    PowerMode.entries.forEach { mode ->
-                        TextButton(
-                            onClick = {
-                                powerOpen = false
-                                // The reversible two go straight out; the two that lose
-                                // work get asked about, because a mis-tap here costs
-                                // whatever was open on a PC in another room.
-                                if (mode.destructive) confirming = mode else onPower(mode.wire)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            val tint = if (mode.destructive) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.primary
-                            Icon(
-                                mode.icon,
-                                contentDescription = null,
-                                tint = tint,
-                                modifier = Modifier.size(ButtonDefaults.IconSize),
-                            )
+                    powerTimer?.let { timer ->
+                        val mode = PowerMode.entries.firstOrNull { it.wire == timer.mode }
+                        Column(modifier = Modifier.padding(bottom = 8.dp)) {
                             Text(
-                                mode.label,
-                                modifier = Modifier
-                                    .padding(start = ButtonDefaults.IconSpacing)
-                                    .fillMaxWidth(),
-                                color = tint,
+                                "${mode?.label ?: timer.mode} in ${rememberCountdownText(timer.endsAtMs)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
                             )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    powerOpen = false
+                                    customMinutes = ""
+                                    timerPicker = mode
+                                }) { Text("Edit") }
+                                TextButton(onClick = onPowerTimerCancel) { Text("Cancel timer") }
+                            }
+                        }
+                        HorizontalDivider(modifier = Modifier.padding(bottom = 8.dp))
+                    }
+                    PowerMode.entries.forEach { mode ->
+                        val tint = if (mode.destructive) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    powerOpen = false
+                                    // The reversible two go straight out; the two that lose
+                                    // work get asked about, because a mis-tap here costs
+                                    // whatever was open on a PC in another room.
+                                    if (mode.destructive) confirming = mode else onPower(mode.wire)
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(
+                                    mode.icon,
+                                    contentDescription = null,
+                                    tint = tint,
+                                    modifier = Modifier.size(ButtonDefaults.IconSize),
+                                )
+                                Text(
+                                    mode.label,
+                                    modifier = Modifier
+                                        .padding(start = ButtonDefaults.IconSpacing)
+                                        .fillMaxWidth(),
+                                    color = tint,
+                                )
+                            }
+                            // Same action, later: schedules this mode instead of firing
+                            // it now. A separate control rather than a long-press, since
+                            // nothing else in this picker is press-and-hold.
+                            IconButton(onClick = {
+                                powerOpen = false
+                                customMinutes = ""
+                                timerPicker = mode
+                            }) {
+                                Icon(
+                                    Icons.Filled.Timer,
+                                    contentDescription = "Schedule ${mode.label.lowercase()}",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -279,6 +355,85 @@ fun TvRemoteScreen(
             },
         )
     }
+
+    timerPicker?.let { mode ->
+        val tint = if (mode.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+        val minutes = customMinutes.toIntOrNull()
+        AlertDialog(
+            onDismissRequest = { timerPicker = null },
+            icon = { Icon(mode.icon, contentDescription = null, tint = tint) },
+            title = { Text("Schedule “${mode.label}”") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // The countdown itself is the undo window a same-instant action
+                    // doesn't have, so this warns rather than gates behind a second
+                    // confirm the way the immediate button does.
+                    if (mode.destructive) {
+                        Text(
+                            "Anything unsaved on the PC will be lost when this fires.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(QUICK_TIMER_MINUTES) { quick ->
+                            AssistChip(
+                                onClick = {
+                                    onPowerTimerSet(mode.wire, quick * 60)
+                                    timerPicker = null
+                                },
+                                label = { Text(quickTimerLabel(quick)) },
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = customMinutes,
+                        onValueChange = { text -> customMinutes = text.filter(Char::isDigit).take(4) },
+                        label = { Text("Custom, in minutes") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { onPowerTimerSet(mode.wire, minutes!! * 60); timerPicker = null },
+                    enabled = minutes != null && minutes > 0,
+                ) { Text("Set", color = tint) }
+            },
+            dismissButton = {
+                TextButton(onClick = { timerPicker = null }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+/** Quick picks offered alongside the custom-minutes field — round numbers a couch
+ *  actually reaches for, not every value the field itself would accept. */
+private val QUICK_TIMER_MINUTES = listOf(5, 15, 30, 60)
+
+private fun quickTimerLabel(minutes: Int) = if (minutes % 60 == 0) "${minutes / 60} hr" else "$minutes min"
+
+/**
+ * A live "4:32" that keeps counting down while its dialog or chip is on screen. Ticks
+ * once a second rather than animating: a countdown is a reading, not a transition, and
+ * §6's motion budget has nothing to say about a number that changes on its own clock.
+ */
+@Composable
+private fun rememberCountdownText(endsAtMs: Long): String {
+    var remainingMs by remember(endsAtMs) { mutableLongStateOf(endsAtMs - System.currentTimeMillis()) }
+    LaunchedEffect(endsAtMs) {
+        while (remainingMs > 0) {
+            delay(1_000)
+            remainingMs = endsAtMs - System.currentTimeMillis()
+        }
+    }
+    val totalSeconds = (remainingMs / 1000).coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds) else "%d:%02d".format(minutes, seconds)
 }
 
 /**

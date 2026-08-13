@@ -35,14 +35,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TouchApp
@@ -86,7 +85,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
+import com.portalremote.data.DeckItem
 import com.portalremote.data.SavedHost
+import com.portalremote.net.ActiveWindow
 import com.portalremote.net.AiCatalog
 import com.portalremote.net.AiState
 import com.portalremote.net.CastState
@@ -94,12 +95,17 @@ import com.portalremote.net.CastStatus
 import com.portalremote.net.CastTarget
 import com.portalremote.net.ChatTurn
 import com.portalremote.net.NowPlaying
+import com.portalremote.net.PcStats
+import com.portalremote.net.PowerTimerState
 import com.portalremote.net.Protocol
 import com.portalremote.net.ServerHello
 import com.portalremote.net.ShareEntry
+import com.portalremote.net.Volume
+import com.portalremote.ui.theme.HudPulse
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.SystemBars
 import com.portalremote.ui.theme.accentGlow
 import com.portalremote.ui.theme.rememberPressScale
 import kotlin.math.absoluteValue
@@ -113,18 +119,23 @@ private const val REJECT_INTERVAL_MS = 1_000L
 private enum class RemoteTab(val label: String, val icon: ImageVector) {
     CONTROL("Control", Icons.Filled.TouchApp),
     BROWSER("Browser", Icons.Filled.Public),
-    SCREEN("Screen", Icons.Filled.ScreenShare),
-    SHARE("Share", Icons.Filled.SwapVert),
-    FILES("Files", Icons.Filled.Folder),
+    MONITOR("Monitor", Icons.Filled.Monitor),
+    TRANSFER("Transfer", Icons.Filled.SwapVert),
+    DECK("Deck", Icons.Filled.Apps),
     ASSISTANT("Assistant", Icons.Filled.AutoAwesome),
 }
 
 /**
- * Post-pairing shell: bottom nav between the control page, the mirror, share and
- * files. Everything you drive the PC with by hand — trackpad, keyboard, media, TV
- * remote — lives behind the one Control tab and sends through the same [send]
- * callback into the live socket; files and share talk to the server's HTTP endpoints
- * directly using [host].
+ * Post-pairing shell: bottom nav between the six things this app does. Everything you
+ * drive the PC with by hand — trackpad, keyboard, media, TV remote — lives behind the
+ * one Control tab and sends through the same [send] callback into the live socket;
+ * files and share talk to the server's HTTP endpoints directly using [host].
+ *
+ * Six slots, not eight: Monitor holds the mirror and the stats dashboard, Transfer holds
+ * share and files, each behind a 48dp sub-tab row (see [PortalSubTabRow]). That's what
+ * left room for Deck (quick search, launched apps, shortcuts) at the six-icon limit
+ * docs/design-system.md §13 sets — a capsule with more in it is a strip of targets too
+ * narrow to hit rather than a way of navigating.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -146,8 +157,21 @@ fun RemoteScreen(
     castScanning: Boolean,
     onCastTarget: (String?) -> Unit,
     onScanCastTargets: () -> Unit,
+    powerTimer: PowerTimerState?,
+    volume: Volume?,
     shares: List<ShareEntry>,
     onCastFile: (Uri) -> String?,
+    stats: PcStats?,
+    statsHistory: List<PcStats>,
+    /** Starts and stops the PC sampling itself. Called by the Stats screen as it is
+     *  composed and disposed, so the PC only does the work while it is being watched. */
+    onWatchStats: (Boolean) -> Unit,
+    deckItems: List<DeckItem>,
+    onDeckItemsChange: (List<DeckItem>) -> Unit,
+    /** The PC's foreground app, for Deck's context row — null until watched, same
+     *  subscribe-on-open shape as [stats]/[onWatchStats]. */
+    activeWindow: ActiveWindow?,
+    onWatchActiveWindow: (Boolean) -> Unit,
     aiState: AiState?,
     chat: List<ChatTurn>,
     chatStreaming: Boolean,
@@ -186,6 +210,9 @@ fun RemoteScreen(
     // bar around it is a picture of another screen in a frame.
     var fullscreen by remember { mutableStateOf(false) }
     if (fullscreen) BackHandler { fullscreen = false }
+    // Status bar stays up everywhere except here — the one screen whose content is
+    // itself a screen, per docs/design-system.md §13.
+    SystemBars(immersive = fullscreen)
 
     // While the socket is down `WsClient.send` drops every message on the floor — by
     // design, a stale pointer delta is worse than a skipped one — but the surfaces
@@ -206,11 +233,14 @@ fun RemoteScreen(
         }
     }
 
-    // The two list tabs run their content *under* the nav bar so it can be glass over
+    // Transfer's two lists run their content *under* the nav bar so it can be glass over
     // something (§2 rule 4). The control surfaces deliberately don't: a trackpad whose
     // bottom 56dp belongs to the chrome is a trackpad with a dead strip, and the mirror
-    // is a picture — sliding it under a blur crops it for decoration.
-    val underGlass = tab == RemoteTab.FILES || tab == RemoteTab.SHARE
+    // is a picture — sliding it under a blur crops it for decoration. The stats
+    // dashboard sits out too: it is a column of cards, and frosting the bottom card is
+    // an unreadable number rather than depth.
+    val underGlass = tab == RemoteTab.TRANSFER
+
     // Recorded only while a tab actually passes under the bar, so the trackpad and the
     // mirror — the two surfaces that redraw constantly — never pay for a backdrop
     // nothing can see.
@@ -235,12 +265,18 @@ fun RemoteScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            // System bars are hidden (see MainActivity), so the bars below pad for the
-            // display cutout only; the content itself just needs the horizontal side of
-            // it, for a landscape notch — plus the bottom, which is what keeps a
-            // composer above the keyboard once the nav bar has stepped out of the way.
+            // The top inset is claimed by RemoteTitleBar itself (its own background runs
+            // up under the status bar, per §13); the content here only needs the
+            // horizontal side of it, for a landscape notch — plus the bottom, which is
+            // what keeps a composer above the keyboard once the nav bar has stepped out
+            // of the way.
             contentWindowInsets = WindowInsets.safeDrawing
                 .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
+            // The strip the floating capsule sits in belongs to the Scaffold rather than
+            // to the screen above it, so it has to be the canvas colour — otherwise
+            // every screen keeps a band of a slightly different grey across its bottom
+            // edge, under and around the bar.
+            containerColor = PortalRemoteTheme.hud.background,
             topBar = {
                 if (!fullscreen) {
                     RemoteTitleBar(
@@ -316,6 +352,13 @@ fun RemoteScreen(
                             onCastFile = onCastFile,
                             onPlayer = gatedSend,
                             onPower = { mode -> gatedSend(Protocol.power(mode)) },
+                            powerTimer = powerTimer,
+                            onPowerTimerSet = { mode, seconds ->
+                                gatedSend(Protocol.powerTimerSet(mode, seconds))
+                            },
+                            onPowerTimerCancel = { gatedSend(Protocol.powerTimerCancel()) },
+                            volume = volume,
+                            onSetVolume = { level -> gatedSend(Protocol.volumeSet(level)) },
                         )
                         RemoteTab.BROWSER -> BrowserScreen(
                             session = browser,
@@ -329,8 +372,9 @@ fun RemoteScreen(
                             // the Media tab's — one choice, not one per entry point.
                             onCast = { url, title -> gatedSend(Protocol.cast(url, title, castTarget)) },
                             onPlayer = gatedSend,
+                            onOpenOnDesktop = { url -> gatedSend(Protocol.openUrl(url)) },
                         )
-                        RemoteTab.SCREEN -> ScreenScreen(
+                        RemoteTab.MONITOR -> MonitorScreen(
                             host = host,
                             settings = settings,
                             fullscreen = fullscreen,
@@ -339,18 +383,24 @@ fun RemoteScreen(
                                 onSettingsChange { it.copy(mirrorPreset = preset.name) }
                             },
                             send = gatedSend,
+                            stats = stats,
+                            statsHistory = statsHistory,
+                            onWatchStats = onWatchStats,
                         )
-                        RemoteTab.SHARE -> ShareScreen(
+                        RemoteTab.TRANSFER -> TransferScreen(
                             host = host,
                             shares = shares,
                             onShareText = onShareText,
                             onShareUri = onShareUri,
-                            onRetry = onRetryShare,
+                            onRetryShare = onRetryShare,
                             bottomInset = padding.calculateBottomPadding(),
                         )
-                        RemoteTab.FILES -> FilesScreen(
-                            host = host,
-                            bottomInset = padding.calculateBottomPadding(),
+                        RemoteTab.DECK -> DeckScreen(
+                            items = deckItems,
+                            onItemsChange = onDeckItemsChange,
+                            send = gatedSend,
+                            activeWindow = activeWindow,
+                            onWatchActiveWindow = onWatchActiveWindow,
                         )
                         RemoteTab.ASSISTANT -> AssistantScreen(
                             state = aiState,
@@ -476,8 +526,7 @@ private fun RemoteNavBar(
     val idle = MaterialTheme.colorScheme.onSurfaceVariant
     // Over glass the bar's own colour is a tint on top of the frosted content, not the
     // surface itself — opaque here would make the blur invisible.
-    val fill = PortalRemoteTheme.extendedColors.surfaceRaised
-        .copy(alpha = if (backdrop != null) 0.78f else 1f)
+    val fill = PortalRemoteTheme.hud.panel.copy(alpha = if (backdrop != null) 0.78f else 1f)
     val capsule = RoundedCornerShape(percent = 50)
     // How far the capsule's bottom edge sits above the window's — its own margin plus
     // whatever the cutout asked for. The frost has to reach past it to sample the
@@ -501,9 +550,10 @@ private fun RemoteNavBar(
             // rather than sitting in it.
             .accentGlow(accent.copy(alpha = 0.55f), capsule, 14.dp)
             .clip(capsule)
-            // A white capsule on a white list has no edge of its own; the hairline is
-            // what keeps the shape from dissolving in light mode.
-            .border(1.dp, PortalRemoteTheme.extendedColors.border, capsule),
+            // A pale capsule on a pale list has no edge of its own; the hairline is what
+            // keeps the shape from dissolving in light mode, and on dark it does the
+            // opposite job — a lit edge, which is what every panel under it carries.
+            .border(1.dp, PortalRemoteTheme.hud.edge, capsule),
     ) {
         if (backdrop != null) {
             // The frost is its own node so the blur lands on the copied content and
@@ -630,12 +680,12 @@ private fun RemoteTitleBar(
         animationSpec = spec,
         label = "status-dot",
     )
-    val borderColor = PortalRemoteTheme.extendedColors.border
+    val borderColor = PortalRemoteTheme.hud.edge
 
     // The hairline is the only thing separating this row from the screen under it in
     // light mode, where both are white.
     Surface(
-        color = PortalRemoteTheme.extendedColors.surfaceRaised,
+        color = PortalRemoteTheme.hud.panel,
         // drawWithContent, not drawBehind: a modifier passed to Surface wraps its own
         // background, so anything drawn behind here would be painted straight over.
         modifier = Modifier.drawWithContent {
@@ -651,20 +701,17 @@ private fun RemoteTitleBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // Only the cutout: the status bar is hidden, so this collapses to 0 on
-                // a phone without one and the row really does start at the top edge.
+                // The status bar draws over this padding, not above it — same colour,
+                // same row, so the clock/battery read as part of the app's own chrome
+                // rather than a system strip sitting on top of it (§13).
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
                 .height(44.dp)
                 .padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(dotColor),
-            )
-            Box(modifier = Modifier.width(8.dp))
+            // Bloomed rather than a flat fill — the one reading this row exists to give,
+            // drawn with the same live-dot instrument the stats dashboard uses.
+            HudPulse(color = dotColor, dot = 8.dp)
             Text(
                 deviceName,
                 style = MaterialTheme.typography.titleSmall,

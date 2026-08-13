@@ -8,6 +8,7 @@ using PortalRemote.Config;
 using PortalRemote.Devices;
 using PortalRemote.Input;
 using PortalRemote.Media;
+using PortalRemote.Metrics;
 using PortalRemote.Share;
 
 namespace PortalRemote.Control;
@@ -28,7 +29,8 @@ public static class ControlEndpoint
 
     public static void MapControlEndpoint(
         this WebApplication app, ServerConfig config, ConnectionState connectionState, ShareHub shareHub,
-        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DeviceRegistry devices)
+        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DeviceRegistry devices, SystemStats stats,
+        ActiveWindow activeWindow)
     {
         app.Map("/control", async (HttpContext context, ILoggerFactory loggerFactory) =>
         {
@@ -78,6 +80,11 @@ public static class ControlEndpoint
             using var client = new ClientSocket(socket);
             shareHub.Add(client);
 
+            // Held by the socket, not by the phone's word: the sampler stops when this
+            // connection ends, however it ends.
+            using var statsWatch = new StatsSubscription(stats);
+            using var activeWinWatch = new ActiveWindowSubscription(activeWindow);
+
             try
             {
                 await SendHelloAsync(client, config, context.RequestAborted);
@@ -93,7 +100,16 @@ public static class ControlEndpoint
                 // it — a reinstalled phone, the desktop window on its first open — is
                 // handed the whole thing rather than starting an empty second chat.
                 await client.SendJsonAsync(assistant.Conversation.Snapshot(), context.RequestAborted);
-                await PumpAsync(socket, client, nowPlaying, ai, assistant, log, context.RequestAborted);
+                // A pending power timer is the PC's, not this phone's — a reconnect (or
+                // a second phone) has to see it exactly as it left it, not "nothing
+                // scheduled" until the next edit happens to touch it.
+                await client.SendJsonAsync(PowerTimer.Instance.Snapshot(), context.RequestAborted);
+                // Same reasoning for the volume slider: it should show where the level
+                // actually is the instant the Media tab opens, not wherever a default
+                // sits until the first change.
+                await client.SendJsonAsync(Audio.SystemVolume.Instance.Snapshot(), context.RequestAborted);
+                await PumpAsync(socket, client, nowPlaying, ai, assistant, stats, statsWatch, activeWindow,
+                    activeWinWatch, log, context.RequestAborted);
             }
             catch (OperationCanceledException)
             {
@@ -134,7 +150,8 @@ public static class ControlEndpoint
     /// <summary>Read messages until the client closes the socket.</summary>
     private static async Task PumpAsync(
         WebSocket socket, ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant,
-        ILogger log, CancellationToken ct)
+        SystemStats stats, StatsSubscription statsWatch, ActiveWindow activeWindow,
+        ActiveWindowSubscription activeWinWatch, ILogger log, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(ReceiveBufferBytes);
         var pending = new MemoryStream();
@@ -164,7 +181,8 @@ public static class ControlEndpoint
 
                 var text = Encoding.UTF8.GetString(pending.GetBuffer(), 0, (int)pending.Length);
                 pending.SetLength(0);
-                await HandleAsync(client, nowPlaying, ai, assistant, text, log, ct);
+                await HandleAsync(
+                    client, nowPlaying, ai, assistant, stats, statsWatch, activeWindow, activeWinWatch, text, log, ct);
             }
         }
         finally
@@ -175,8 +193,9 @@ public static class ControlEndpoint
     }
 
     private static async Task HandleAsync(
-        ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, string text, ILogger log,
-        CancellationToken ct)
+        ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, SystemStats stats,
+        StatsSubscription statsWatch, ActiveWindow activeWindow, ActiveWindowSubscription activeWinWatch,
+        string text, ILogger log, CancellationToken ct)
     {
         JsonElement message;
         try
@@ -208,6 +227,31 @@ public static class ControlEndpoint
                 return;
             }
             await nowPlaying.SeekAsync(positionMs);
+            return;
+        }
+
+        // The Stats screen asking to be fed, and telling us when it has stopped
+        // looking. Sampling a machine's processors, processes and adapters once a
+        // second is not free, and this app has no business doing it for a screen that
+        // isn't open — so the subscription is explicit rather than implied by being
+        // connected. The last sample goes out immediately, so the graph has a point on
+        // it before the first tick lands.
+        if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "sys")
+        {
+            var on = !message.TryGetProperty("on", out var watch) || watch.ValueKind != JsonValueKind.False;
+            statsWatch.Set(on);
+            if (on && stats.Latest is { } latest) await client.SendJsonAsync(latest, ct);
+            return;
+        }
+
+        // The Deck's context row asking to follow the PC's foreground app — same
+        // subscribe-while-watched shape as "sys" above, for the same reason: a phone
+        // that never opens Deck should never cost this PC a foreground-window poll.
+        if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "win_watch")
+        {
+            var on = !message.TryGetProperty("on", out var watch) || watch.ValueKind != JsonValueKind.False;
+            activeWinWatch.Set(on);
+            if (on && activeWindow.Latest is { } latest) await client.SendJsonAsync(latest, ct);
             return;
         }
 

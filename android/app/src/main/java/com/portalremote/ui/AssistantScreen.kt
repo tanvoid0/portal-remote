@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -71,6 +71,7 @@ import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.ChatTurn
 import com.portalremote.net.PlanAction
+import com.portalremote.ui.theme.accentGlow
 
 /**
  * The assistant — `docs/phase7-assistant.md` §7b/§7c, rebuilt around one input.
@@ -211,6 +212,7 @@ private fun ChatPane(
     Column(modifier = Modifier.fillMaxSize()) {
         ModelBar(
             currentModel = catalog?.currentModel,
+            streaming = streaming,
             onClick = {
                 showModelPicker = true
                 // A catalogue read can hit live provider APIs on the PC's side, so it
@@ -444,9 +446,9 @@ private fun PlanCard(plan: AiPlan, onRun: (List<Int>) -> Unit, onCancel: () -> U
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(MaterialTheme.shapes.extraLarge)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .border(1.dp, accent, RoundedCornerShape(16.dp))
+            .border(1.dp, accent, MaterialTheme.shapes.extraLarge)
             .padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -510,7 +512,11 @@ private fun PlanCard(plan: AiPlan, onRun: (List<Int>) -> Unit, onCancel: () -> U
                 // a sentence that already said it — and the word comes from the PC, which
                 // is the side that knows what the action presses.
                 val only = approved.singleOrNull()?.let { index -> plan.actions.firstOrNull { it.index == index } }
-                Button(onClick = { onRun(approved.toList()) }, enabled = approved.isNotEmpty()) {
+                Button(
+                    onClick = { onRun(approved.toList()) },
+                    enabled = approved.isNotEmpty(),
+                    shape = MaterialTheme.shapes.medium,
+                ) {
                     Text(only?.verb ?: "Run")
                 }
                 TextButton(onClick = onCancel) { Text("Not now") }
@@ -536,7 +542,7 @@ private fun ActionRow(action: PlanAction, ticked: Boolean, onToggle: () -> Unit)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .clickable(onClick = onToggle)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -611,7 +617,7 @@ private fun iconForAction(actionId: String): ImageVector = when (actionId) {
  *  conversation, so a sheet (below) rather than an inline chip row is the right size for
  *  "browse every provider and model", not just "flip between two or three presets". */
 @Composable
-private fun ModelBar(currentModel: String?, onClick: () -> Unit) {
+private fun ModelBar(currentModel: String?, streaming: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -619,7 +625,19 @@ private fun ModelBar(currentModel: String?, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.Start,
     ) {
         TextButton(onClick = onClick) {
-            Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+            // The only place this screen says "generating" without a sentence: a reply
+            // in flight lights the model glyph the same way a live HUD reading does,
+            // and it's dark again the instant the stream ends.
+            val glow = if (streaming) {
+                Modifier.accentGlow(MaterialTheme.colorScheme.primary, CircleShape, 6.dp)
+            } else {
+                Modifier
+            }
+            Icon(
+                Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp).then(glow),
+            )
             Spacer(Modifier.size(6.dp))
             Text(
                 currentModel ?: "Model",
@@ -761,7 +779,7 @@ private fun ProviderGroup(
  *  neutral and left-shifted. */
 @Composable
 private fun Bubble(turn: ChatTurn) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = MaterialTheme.shapes.extraLarge
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (turn.fromUser) Arrangement.End else Arrangement.Start,

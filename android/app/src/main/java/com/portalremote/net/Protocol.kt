@@ -64,6 +64,25 @@ object Protocol {
         put("t", "power"); put("mode", mode)
     }
 
+    /** Schedule [mode] to run after [seconds] — also how the power menu "edits" a
+     *  pending timer, since setting a new one just replaces it on the PC. */
+    fun powerTimerSet(mode: String, seconds: Int) = JSONObject().apply {
+        put("t", "power_timer_set"); put("mode", mode); put("seconds", seconds)
+    }
+
+    /** Call off whatever's pending. A no-op on the PC if nothing is. */
+    fun powerTimerCancel() = JSONObject().apply {
+        put("t", "power_timer_cancel")
+    }
+
+    /** Set the PC's system volume to exactly [level] (0..1) — what dragging the Media
+     *  screen's slider sends on release. The nudge buttons still go through [media]'s
+     *  `vol_up`/`vol_down`/`mute`, which is a real keypress the PC re-reads afterward
+     *  rather than a level this phone can compute on its own. */
+    fun volumeSet(level: Float) = JSONObject().apply {
+        put("t", "volume_set"); put("level", level.toDouble())
+    }
+
     /** Ask the PC to open a media URL — phase 4a of `docs/phase4-casting.md`. The
      *  title is what the receiver shows: a page title beats a CDN filename.
      *
@@ -75,6 +94,12 @@ object Protocol {
         put("t", "cast"); put("url", url)
         if (!title.isNullOrBlank()) put("title", title)
         if (!target.isNullOrBlank()) put("target", target)
+    }
+
+    /** Open [url] in the desktop's default browser — unlike [cast], never routed
+     *  through a media receiver/mpv, so a plain page doesn't try to play as video. */
+    fun openUrl(url: String) = JSONObject().apply {
+        put("t", "open_url"); put("url", url)
     }
 
     /** Ask for the cast targets — step 4k of `docs/phase4-casting.md`. Answered from the

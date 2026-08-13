@@ -10,6 +10,8 @@
 | 5 | Quick share: clipboard, links, images, files | ✅ Built; server verified live, phone half not yet |
 | 7 | Assistant: chatbot + actions via agent-platform | 🟡 7a/7b built, not yet driven live; actions (7c) not |
 | 8 | Phone as the PC's speaker (WASAPI loopback → `AudioTrack`) | ✅ Built; server verified live, phone half not yet. Mic and webcam deliberately not — [phase8-audio.md](phase8-audio.md) |
+| 9 | Resource dashboard: CPU per core, memory, network, disks, top processes | ✅ Done, verified live against a 32-thread machine under real load |
+| 10 | Instrument UI kit: one palette in light + dark, cut-corner shapes, swappable accent | ✅ Done, verified live in both themes on a real handset |
 
 Phases 0–3 have been built **and exercised end-to-end** — real Android build, real
 Windows server, actual mouse movement/clicks measured, actual files uploaded and
@@ -59,10 +61,15 @@ in [features.md](features.md); how it was verified is in [process.md](process.md
   without a single working test — no way to confirm a stick deflection actually reaches a
   game. Install ViGEmBus first, then build it; a dual-stick UI with an untested backend
   is scaffolding, not a feature.
-- **Polish pass.** A concurrent design-system rollout (see
-  [design-system.md](design-system.md)) landed color/type/motion tokens and press-scale
-  feedback across most screens during this session, but it was still finishing up when
-  Phase 2 wrapped — worth a pass to confirm every screen picked it up consistently.
+- **Polish pass — done, and then done again.** A concurrent design-system rollout landed
+  color/type/motion tokens and press-scale feedback during the Phase 2 session. Phase 10
+  went further and replaced the tokens themselves: one instrument palette (§3) in both
+  themes, with the Material scheme *derived* from it rather than written beside it, cut
+  corners on the shape scale, and monospace instrument type. The rollout is complete —
+  every screen draws from the kit, and `ContrastTest` covers every accent on both faces.
+  What is **not** done is the screenshot set: `android-screen.png` and `android-pair.png`
+  still show the pre-kit build, because re-shooting them needs a staged desktop and a
+  re-pairing respectively (see [development.md](development.md#screenshots)).
 
 ## Still needs hardware — the outstanding to-do list
 

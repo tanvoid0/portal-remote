@@ -261,6 +261,14 @@ internal fun KeyButton(
         onClick = {},
         interactionSource = interactionSource,
         contentPadding = contentPadding,
+        // A key is a key *cap*, not a pill: Material's default full rounding made Esc,
+        // Tab and Ctrl+C read as chips you filter a list with rather than keys you
+        // strike. The chamfer is §5's, so a key face is cut from the same 45° as every
+        // panel. The arrow cluster below draws through here too and is chamfered with
+        // the rest, which is right — arrow keys are square caps on a real keyboard. The
+        // round buttons in this app are the TV remote's D-pad, which imitates hardware
+        // that genuinely is round.
+        shape = MaterialTheme.shapes.small,
         modifier = Modifier
             .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
             .pointerInput(Unit) {

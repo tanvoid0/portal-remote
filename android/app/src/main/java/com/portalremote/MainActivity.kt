@@ -6,8 +6,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : ComponentActivity() {
     // The same instance Compose resolves with viewModel(), since both are scoped to
@@ -18,16 +16,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // A session is one long stretch on a single surface, and the status/nav bars
-        // are ~90dp of chrome nobody reads while driving a PC. Hidden, not removed:
-        // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE brings them back with an edge swipe
-        // without shoving the layout around, so the clock and back gesture stay
-        // reachable. Display cutouts are still padded around — see RemoteScreen.
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
+        // Bar visibility itself is reactive (fullscreen changes per session, theme
+        // can change under the app) — see ui/theme/SystemBars.kt's `SystemBars()`,
+        // called from RemoteScreen and PairScreen.
         setContent { PortalRemoteApp(viewModel) }
 
         // Cold start *from* the share sheet. The pairing usually isn't up yet at this

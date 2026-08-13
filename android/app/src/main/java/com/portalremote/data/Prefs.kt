@@ -68,6 +68,10 @@ data class AppSettings(
      *  tick is the only confirmation that a tap became a click on the PC. Still
      *  subject to the system's own touch-feedback setting. */
     val haptics: Boolean = true,
+    /** [com.portalremote.ui.theme.HudAccent] name — which pair of accent hues the whole
+     *  app is drawn in. Only the accents are the user's to pick: the neutrals, and what
+     *  amber and red mean, are legibility decisions the app has already made. */
+    val accent: String = "ICE",
 )
 
 /** Persists the last-paired server so the app can reconnect without rescanning. */
@@ -87,6 +91,8 @@ class Prefs(private val context: Context) {
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         val MIRROR_PRESET = stringPreferencesKey("mirror_preset")
         val HAPTICS = booleanPreferencesKey("haptics")
+        val ACCENT = stringPreferencesKey("accent")
+        val DECK_ITEMS = stringPreferencesKey("deck_items")
     }
 
     val savedHost: Flow<SavedHost?> = context.dataStore.data.map { prefs ->
@@ -123,6 +129,7 @@ class Prefs(private val context: Context) {
             keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: defaults.keepScreenOn,
             mirrorPreset = prefs[Keys.MIRROR_PRESET] ?: defaults.mirrorPreset,
             haptics = prefs[Keys.HAPTICS] ?: defaults.haptics,
+            accent = prefs[Keys.ACCENT] ?: defaults.accent,
         )
     }
 
@@ -135,7 +142,18 @@ class Prefs(private val context: Context) {
             prefs[Keys.KEEP_SCREEN_ON] = settings.keepScreenOn
             prefs[Keys.MIRROR_PRESET] = settings.mirrorPreset
             prefs[Keys.HAPTICS] = settings.haptics
+            prefs[Keys.ACCENT] = settings.accent
         }
+    }
+
+    /** The Deck's tiles — search, launched apps, shortcuts, power and media. Defaults to
+     *  [defaultDeckItems] until the user's first edit writes something back. */
+    val deckItems: Flow<List<DeckItem>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.DECK_ITEMS]?.let { decodeDeckItems(it) } ?: defaultDeckItems()
+    }
+
+    suspend fun saveDeckItems(items: List<DeckItem>) {
+        context.dataStore.edit { prefs -> prefs[Keys.DECK_ITEMS] = encodeDeckItems(items) }
     }
 
     /** Forgets the paired PC only — pointer speed and the rest are the user's

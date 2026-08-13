@@ -93,8 +93,19 @@ but note that MIUI and some other skins refuse injected input unless *USB debugg
 devices the screen has to be driven by hand; `screencap` still works.
 
 `uiautomator dump` gives exact node bounds to tap, but it fails with `could not get idle
-state` on any screen that animates — which here means the mirror, and the media card
-whenever its scrubber is moving. Read the coordinates off a screenshot on those.
+state` on any screen that animates — which here means the mirror, the media card whenever
+its scrubber is moving, and the stats dashboard, which is animating something every
+second it is open. Read the coordinates off a screenshot on those.
+
+The stats screen needs staging of its own: its charts are a rolling minute, so a shot
+taken straight after opening the tab is a nearly empty box. Leave it open **at least 60
+seconds** before capturing, and put the PC under some real load first or the result is a
+flatline that shows nothing the feature does — a few busy-loop background jobs plus a
+large download is enough:
+
+```powershell
+1..8 | ForEach-Object { Start-Job { $end=(Get-Date).AddSeconds(110); while((Get-Date) -lt $end){ [math]::Sqrt([math]::PI) | Out-Null } } }
+```
 
 The tray window is captured by handle rather than by screen region, so it doesn't matter
 what is stacked on top of it:
@@ -108,9 +119,17 @@ $h = (Get-Process PortalRemote).MainWindowHandle
 token in the *Cast to a screen* field, whatever the desktop happens to be showing behind
 the mirror, the contents of the share thread, the phone's lock screen and notification
 shade (a stray `screencap` while the phone locked mid-shoot will capture both), and
-whatever is actually in the shared folder for the Files tab. Stage first — minimise
+whatever is actually in the shared folder for Transfer's files half. Stage first — minimise
 everything, open something harmless, drop a placeholder file into `ShareRoot` and move
 the real ones out for the duration — rather than editing it out afterwards.
+
+**Which screens need staging, and which don't.** Trackpad, Keyboard, TV remote and Stats
+show no user content at all and can be re-shot unattended in one pass. Pair, Browser,
+Screen, Share, Files and Assistant all put something of the user's on screen — a
+discovered PC list, browsing history, the desktop itself, the share thread, the shared
+folder, a conversation — so they are the ones that need the staging above, and the reason
+a "re-shoot everything" pass is not a thing that can be run without a person deciding what
+is in frame.
 
 **When the UI changes**, re-shoot the screens it touched. A screenshot in the README is a
 claim about what the app looks like today.

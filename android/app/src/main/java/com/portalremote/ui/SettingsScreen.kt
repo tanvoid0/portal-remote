@@ -1,6 +1,11 @@
 package com.portalremote.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -20,6 +25,7 @@ import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Mouse
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.AlertDialog
@@ -43,13 +49,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
 import com.portalremote.net.ServerHello
+import com.portalremote.ui.theme.HudAccent
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.hudColors
 import com.portalremote.ui.theme.rememberHaptics
 
 /**
@@ -72,8 +88,8 @@ fun SettingsScreen(
     var confirmForget by remember { mutableStateOf(false) }
 
     Scaffold(
-        // System bars are hidden app-wide (see MainActivity), so `safeDrawing` here is
-        // just the display cutout — without it this bar would draw under a notch.
+        // Settings overlays RemoteScreen in the same window, so its SystemBars() call
+        // still applies — this is just the top-row padding that sits under it.
         contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
         topBar = {
             TopAppBar(
@@ -153,6 +169,20 @@ fun SettingsScreen(
 
             TrackpadGestures.forEach { (gesture, effect) ->
                 GestureRow(gesture, effect)
+            }
+
+            HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
+            SectionHeader(Icons.Filled.Palette, "Colour")
+
+            SettingRow(
+                title = "Accent",
+                subtitle = "The two hues the whole app is drawn in. The neutrals, and " +
+                    "what amber and red mean, stay put — those are legibility, not taste",
+            ) {
+                AccentPicker(
+                    selected = HudAccent.from(settings.accent),
+                    onSelect = { choice -> onSettingsChange { it.copy(accent = choice.name) } },
+                )
             }
 
             HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
@@ -276,6 +306,72 @@ private fun SectionHeader(icon: ImageVector, title: String) {
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(start = 8.dp),
         )
+    }
+}
+
+/**
+ * The accent chooser: each option is a swatch of the two hues it actually applies, drawn
+ * in the theme that is on right now.
+ *
+ * Swatches rather than named chips because the name of a colour is not the colour — and
+ * because every option here means something different on the two faces (a cyan that works
+ * on black is not the cyan that works on white), so the only honest preview is the pair
+ * you would get if you tapped it.
+ */
+@Composable
+private fun AccentPicker(selected: HudAccent, onSelect: (HudAccent) -> Unit) {
+    val dark = isSystemInDarkTheme()
+    val hud = PortalRemoteTheme.hud
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        HudAccent.entries.forEach { option ->
+            val colors = hudColors(option, dark)
+            val chosen = option == selected
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(hud.sunken)
+                        .border(
+                            width = if (chosen) 2.dp else 1.dp,
+                            color = if (chosen) colors.live else hud.edge,
+                            shape = MaterialTheme.shapes.small,
+                        )
+                        .clickable { onSelect(option) }
+                        .semantics {
+                            role = Role.RadioButton
+                            this.selected = chosen
+                            contentDescription = option.label
+                        }
+                        .drawBehind {
+                            // Split diagonally, which is the same 45° the panels are cut
+                            // on — the swatch is a chip of the machine, not a paint dot.
+                            val inset = 7.dp.toPx()
+                            val box = size.width - inset * 2
+                            val path = Path().apply {
+                                moveTo(inset, inset)
+                                lineTo(inset + box, inset)
+                                lineTo(inset, inset + box)
+                                close()
+                            }
+                            drawPath(path, colors.live)
+                            val other = Path().apply {
+                                moveTo(inset + box, inset)
+                                lineTo(inset + box, inset + box)
+                                lineTo(inset, inset + box)
+                                close()
+                            }
+                            drawPath(other, colors.second)
+                        },
+                )
+                Text(
+                    option.label.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (chosen) hud.live else hud.textDim,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
     }
 }
 

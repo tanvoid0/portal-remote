@@ -11,6 +11,7 @@ using PortalRemote.Dlna;
 using PortalRemote.Files;
 using PortalRemote.Input;
 using PortalRemote.Media;
+using PortalRemote.Metrics;
 using PortalRemote.Mirror;
 using PortalRemote.Pairing;
 using PortalRemote.Share;
@@ -66,6 +67,20 @@ internal static class Program
         // mpv reports through the same hub, so the line above covers it too.
         MpvPlayer.Instance.ConfiguredPath = config.MpvPath;
 
+        // A power timer set on one phone has to show up as pending on every other one,
+        // and as cancelled/fired the same way — same fire-and-forget shape as CastHub.
+        PowerTimer.Instance.Changed += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
+        // A volume set on one phone (or nudged with the media keys) has to move every
+        // other phone's slider too, same fire-and-forget shape as PowerTimer.
+        SystemVolume.Instance.Changed += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
         // A LAN scan takes seconds, so the phone is answered from the cache and told
         // again when the Rokus and TVs turn up — otherwise the picker is a list that
         // silently grew after the user stopped looking at it.
@@ -109,6 +124,23 @@ internal static class Program
             if (share.HasClients) _ = share.BroadcastAsync(assistant.Conversation.Snapshot());
         };
 
+        // What this machine is doing with itself, for the phone's Stats screen. Nothing
+        // is sampled until a phone opens that tab — see SystemStats — so this costs
+        // nothing on a PC whose owner never looks at it.
+        using var stats = new SystemStats();
+        stats.Changed += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
+        // The foreground app, for Deck's touch-bar-style context row. Same "nothing
+        // until watched" shape as stats above.
+        using var activeWindow = new ActiveWindow();
+        activeWindow.Changed += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
         // Built before the app so the endpoints can be mapped against it; it doesn't
         // touch the network until Start().
         using var dlna = new DlnaRenderer(config);
@@ -120,7 +152,9 @@ internal static class Program
         // filter nothing.
         CastRouter.OwnRendererUuid = dlna.Uuid;
 
-        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, assistant, dlna, devices);
+        var app = BuildApp(
+            config, args, connectionState, approval, share, nowPlaying, ai, assistant, dlna, devices, stats,
+            activeWindow);
 
         try
         {
@@ -181,7 +215,8 @@ internal static class Program
 
     private static WebApplication BuildApp(
         ServerConfig config, string[] args, ConnectionState connectionState, PairApproval approval, ShareHub share,
-        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DlnaRenderer dlna, DeviceRegistry devices)
+        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DlnaRenderer dlna, DeviceRegistry devices,
+        SystemStats stats, ActiveWindow activeWindow)
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -226,7 +261,7 @@ internal static class Program
                 : Results.Ok(new { token, name = Environment.MachineName, port = config.RunningPort });
         });
 
-        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai, assistant, devices);
+        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai, assistant, devices, stats, activeWindow);
         app.MapFilesEndpoints(config);
         app.MapScreenEndpoints(config);
         app.MapAudioEndpoints(config);

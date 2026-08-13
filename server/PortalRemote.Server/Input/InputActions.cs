@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PortalRemote.Audio;
 
 namespace PortalRemote.Input;
 
@@ -158,6 +159,16 @@ public static class InputActions
                 return new { t = "cast_ok", url = checkedUrl, via, target, name };
             }
 
+            case "open_url":
+            {
+                // Deliberately not "cast": that routes through CastRouter's media
+                // targets (receiver page, mpv), which is wrong for an ordinary page —
+                // this always lands in the desktop's default browser.
+                var url = GetString(msg, "url") ?? throw new UnknownMessageException("open_url needs 'url'");
+                Cast.CastLauncher.Open(url);
+                return null;
+            }
+
             case "cast_status":
                 // Same shape the hub pushes unprompted, so a phone that asks and a
                 // phone that waits are looking at one message type, not two.
@@ -200,12 +211,39 @@ public static class InputActions
                 return new { t = "power_ok", mode };
             }
 
+            case "power_timer_set":
+            {
+                var mode = GetString(msg, "mode") ?? throw new UnknownMessageException("power_timer_set needs 'mode'");
+                var seconds = GetInt(msg, "seconds")
+                    ?? throw new UnknownMessageException("power_timer_set needs 'seconds'");
+                PowerTimer.Instance.Set(mode, seconds);
+                // No direct reply: the state change goes out on PowerTimer.Changed to
+                // every connected phone, this one included, same as a cast load.
+                return null;
+            }
+
+            case "power_timer_cancel":
+                PowerTimer.Instance.Cancel();
+                return null;
+
             case "media":
             {
                 var action = GetString(msg, "action");
                 if (action is null || !MediaActions.Contains(action))
                     throw new UnknownMessageException($"unknown media action: {action ?? "<missing>"}");
                 WinInput.Tap(Vk[action]);
+                // These three are the one media action with a level worth reporting back
+                // — vol_up/vol_down/mute change it through a synthetic keypress rather
+                // than through SystemVolume, so it has to be told to go re-read it.
+                if (action is "vol_up" or "vol_down" or "mute") SystemVolume.Instance.Refresh();
+                return null;
+            }
+
+            case "volume_set":
+            {
+                var level = GetDouble(msg, "level")
+                    ?? throw new UnknownMessageException("volume_set needs a numeric 'level'");
+                SystemVolume.Instance.Set((float)level);
                 return null;
             }
 

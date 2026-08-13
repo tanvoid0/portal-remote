@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -104,6 +103,7 @@ import com.portalremote.net.parsePairUrl
 import com.portalremote.net.requestPairing
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.SystemBars
 import com.portalremote.ui.theme.portalCardBorder
 import com.portalremote.ui.theme.portalCardColors
 import kotlinx.coroutines.launch
@@ -168,8 +168,9 @@ fun PairScreen(
             }
     }
 
-    // System bars are hidden app-wide (see MainActivity), so `safeDrawing` here is just
-    // the display cutout — without it the lockup would draw under a notch.
+    // Never fullscreen, so the status bar just stays up (see SystemBars) — this
+    // `safeDrawing` is the same top-row padding every screen uses to sit under it.
+    SystemBars()
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
         topBar = {
@@ -324,7 +325,7 @@ private fun ScanSection(scanLocked: Boolean, scanError: String?, onScan: (String
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
-                    .clip(RoundedCornerShape(16.dp)),
+                    .clip(MaterialTheme.shapes.extraLarge),
             ) {
                 QrScannerView(modifier = Modifier.fillMaxSize()) { raw ->
                     if (!scanLocked) onScan(raw)
@@ -336,7 +337,10 @@ private fun ScanSection(scanLocked: Boolean, scanError: String?, onScan: (String
 
         cameraPermission.status.shouldShowRationale -> {
             Text("Camera access is needed to scan the pairing code.", textAlign = TextAlign.Center)
-            Button(onClick = { cameraPermission.launchPermissionRequest() }) {
+            Button(
+                onClick = { cameraPermission.launchPermissionRequest() },
+                shape = MaterialTheme.shapes.medium,
+            ) {
                 Icon(
                     Icons.Filled.QrCodeScanner,
                     contentDescription = null,
@@ -429,7 +433,7 @@ private fun LastDeviceCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(onClick = onReconnect, enabled = !reconnecting) {
+                Button(onClick = onReconnect, enabled = !reconnecting, shape = MaterialTheme.shapes.medium) {
                     Icon(
                         Icons.Filled.Link,
                         contentDescription = null,
@@ -634,6 +638,7 @@ private fun IpEntry(onConnect: (String, Int) -> Unit) {
         Button(
             onClick = { if (ip != null && portNumber != null) onConnect(ip, portNumber) },
             enabled = ip != null && portNumber != null,
+            shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Connect")
@@ -690,12 +695,12 @@ private fun DigitBox(
                     .fillMaxSize()
                     .background(
                         PortalRemoteTheme.extendedColors.surfaceMuted,
-                        RoundedCornerShape(8.dp),
+                        MaterialTheme.shapes.small,
                     )
                     .border(
                         if (focused) 2.dp else 1.dp,
                         if (focused) colors.primary else PortalRemoteTheme.extendedColors.borderStrong,
-                        RoundedCornerShape(8.dp),
+                        MaterialTheme.shapes.small,
                     ),
                 contentAlignment = Alignment.Center,
             ) { inner() }

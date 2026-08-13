@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -12,9 +13,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.portalremote.data.AppSettings
+import com.portalremote.data.DeckItem
 import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
+import com.portalremote.data.defaultDeckItems
 import com.portalremote.data.deviceName
+import com.portalremote.net.ActiveWindow
 import com.portalremote.net.AiCatalog
 import com.portalremote.net.AiModels
 import com.portalremote.net.AiModelsException
@@ -27,11 +31,14 @@ import com.portalremote.net.CastTarget
 import com.portalremote.net.ConnectionState
 import com.portalremote.net.MediaServer
 import com.portalremote.net.NowPlaying
+import com.portalremote.net.PcStats
+import com.portalremote.net.PowerTimerState
 import com.portalremote.net.Protocol
 import com.portalremote.net.ServerHello
 import com.portalremote.net.ShareApi
 import com.portalremote.net.ShareEntry
 import com.portalremote.net.ShareKind
+import com.portalremote.net.Volume
 import com.portalremote.net.WsClient
 import com.portalremote.net.discoverHosts
 import com.portalremote.net.localIpv4Addresses
@@ -80,8 +87,37 @@ private const val SHARE = "share"
 /** Message type the server pushes the PC's playback state under. */
 private const val NOW_PLAYING = "now_playing"
 
+/** The PC's own resource usage, once a second. The same word asks for it: `{"t":"sys",
+ *  "on":true}` starts the sampling and `on:false` stops it, because a PC sampling its
+ *  processors for a screen nobody has open is the one thing a monitor must not do. */
+private const val SYS = "sys"
+
+/** How many samples the graphs keep. At one a second that is the last minute, which is
+ *  as far back as a live meter is worth reading — anything older is a log, and this app
+ *  is not one. */
+private const val STATS_HISTORY = 60
+
+/** A gap longer than this and the graph starts again rather than joining two minutes
+ *  that weren't next to each other. A few samples' worth — long enough to survive a
+ *  glance at another tab, short enough that nothing false is ever drawn. */
+private const val STATS_GAP_MS = 5_000L
+
+/** The PC's foreground app, for Deck's context row. Same subscribe-while-watched shape
+ *  as [SYS]/`sys`, just keyed by process rather than by second. */
+private const val WIN_WATCH = "win_watch"
+private const val ACTIVE_WIN = "active_win"
+
 /** The server's acknowledgement of a `cast`, carrying where the link ended up. */
 private const val CAST_OK = "cast_ok"
+
+/** A pending power action, pushed on connect and whenever it's set, edited, cancelled
+ *  or fired — the PC's state, not this phone's, so it's never cleared just because
+ *  this socket dropped. */
+private const val POWER_TIMER = "power_timer"
+
+/** The PC's master volume, pushed on connect and whenever it changes — from this phone's
+ *  slider, the media keys, or another paired phone doing either. */
+private const val VOLUME = "volume"
 
 /** The server's acknowledgement of a `player` transport command. */
 private const val PLAYER_OK = "player_ok"
@@ -144,6 +180,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** What the PC is playing, pushed by the server; null when it's playing nothing. */
     val nowPlaying: StateFlow<NowPlaying?> = _nowPlaying.asStateFlow()
 
+    private val _stats = MutableStateFlow<PcStats?>(null)
+
+    /** The PC's resource usage as of the last second, or null when nothing is watching
+     *  (or the PC has gone away). */
+    val stats: StateFlow<PcStats?> = _stats.asStateFlow()
+
+    private val _statsHistory = MutableStateFlow<List<PcStats>>(emptyList())
+
+    /** The last [STATS_HISTORY] samples, oldest first — what the graphs are drawn from.
+     *  Held here rather than in the screen so switching to the trackpad and back doesn't
+     *  wipe the minute of history the graph had built up. */
+    val statsHistory: StateFlow<List<PcStats>> = _statsHistory.asStateFlow()
+
+    private val _activeWindow = MutableStateFlow<ActiveWindow?>(null)
+
+    /** The PC's foreground app, pushed while Deck's context row is watching; null when
+     *  nothing is watching (or the PC has gone away). */
+    val activeWindow: StateFlow<ActiveWindow?> = _activeWindow.asStateFlow()
+
     private val _cast = MutableStateFlow<CastState?>(null)
 
     /** The link this phone last cast, and where it landed — null when there is
@@ -169,6 +224,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** The [CastTarget.id] the next cast goes to, or null for "let the PC choose".
      *  Sticky, so casting three links in a row to the TV is one choice, not three. */
     val castTarget: StateFlow<String?> = _castTarget.asStateFlow()
+
+    private val _powerTimer = MutableStateFlow<PowerTimerState?>(null)
+
+    /** The power action currently scheduled on the PC, or null when nothing is —
+     *  pushed on connect, so a reconnect (or a second phone) always agrees with
+     *  whatever is actually counting down over there. */
+    val powerTimer: StateFlow<PowerTimerState?> = _powerTimer.asStateFlow()
+
+    private val _volume = MutableStateFlow<Volume?>(null)
+
+    /** The PC's own volume slider — null until the first push on connect, same as
+     *  [powerTimer]. */
+    val volume: StateFlow<Volume?> = _volume.asStateFlow()
 
     private val _castScanning = MutableStateFlow(false)
 
@@ -256,6 +324,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { prefs.saveSettings(change(settings.value)) }
     }
 
+    /** Deck's tiles. Eagerly started for the same reason as [settings]: the grid should
+     *  never open on an empty flash while the DataStore read is still in flight. */
+    val deckItems: StateFlow<List<DeckItem>> =
+        prefs.deckItems.stateIn(viewModelScope, SharingStarted.Eagerly, defaultDeckItems())
+
+    fun updateDeckItems(items: List<DeckItem>) {
+        viewModelScope.launch { prefs.saveDeckItems(items) }
+    }
+
     /** The last PC that paired successfully, for the pairing screen to offer back.
      *  Eagerly started for the same reason as [settings]: it decides what the very
      *  first frame of that screen looks like. */
@@ -320,6 +397,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     _nowPlaying.value = NowPlaying.fromPush(json)
                     return@collect
                 }
+                if (json.optString("t") == SYS) {
+                    val sample = PcStats.fromPush(json)
+                    _stats.value = sample
+                    _statsHistory.value = (_statsHistory.value + sample).takeLast(STATS_HISTORY)
+                    return@collect
+                }
+                if (json.optString("t") == ACTIVE_WIN) {
+                    _activeWindow.value = ActiveWindow.fromPush(json)
+                    return@collect
+                }
                 // Where a cast landed is only knowable from the reply: the same
                 // message reaches a receiver page (controllable) or ShellExecute
                 // (not), and the phone can't tell which until the PC says so.
@@ -334,6 +421,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         _cast.value = null
                         _castStatus.value = null
                     }
+                    return@collect
+                }
+                if (json.optString("t") == POWER_TIMER) {
+                    _powerTimer.value = PowerTimerState.fromPush(json)
+                    return@collect
+                }
+                if (json.optString("t") == VOLUME) {
+                    _volume.value = Volume.fromPush(json)
                     return@collect
                 }
                 if (json.optString("t") == CAST_TARGETS) {
@@ -419,6 +514,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     _castTargets.value = emptyList()
                     _castTarget.value = null
                     _castScanning.value = false
+                    // Both, not just the live sample: a graph that resumes after a gap
+                    // draws the two ends as one continuous minute, which is a claim
+                    // about a stretch of time nobody was watching.
+                    _stats.value = null
+                    _statsHistory.value = emptyList()
+                    _activeWindow.value = null
                 }
             }
         }
@@ -645,6 +746,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun send(json: JSONObject) = ws.send(json)
+
+    /**
+     * Start or stop the PC sampling itself for the Stats screen.
+     *
+     * Sent ungated, unlike input: a dropped subscribe while the socket is down would
+     * leave the screen permanently blank, so the screen re-sends it on reconnect (the
+     * subscription belongs to the socket, and a new socket has none).
+     */
+    fun watchStats(on: Boolean) {
+        if (!on) {
+            send(JSONObject().put("t", SYS).put("on", false))
+            // Stop drawing the moment we stop asking: the last sample is already a
+            // second old, and a dashboard frozen on a stale reading is worse than none.
+            _stats.value = null
+            return
+        }
+        // Glancing at the trackpad and coming back keeps the minute of graph; leaving
+        // the screen for ten and coming back does not, because those two ends drawn as
+        // one line would be a claim about a stretch of time nobody sampled.
+        val newest = _statsHistory.value.lastOrNull()
+        if (newest == null || SystemClock.elapsedRealtime() - newest.receivedAt > STATS_GAP_MS) {
+            _statsHistory.value = emptyList()
+        }
+        send(JSONObject().put("t", SYS).put("on", true))
+    }
+
+    /** Start or stop the PC watching its own foreground app, for Deck's context row.
+     *  Same shape as [watchStats]: ungated so a drop while the socket is down doesn't
+     *  leave the subscription permanently off, and the last-known app is cleared the
+     *  moment nobody's asking for it rather than left showing a stale context. */
+    fun watchActiveWindow(on: Boolean) {
+        send(JSONObject().put("t", WIN_WATCH).put("on", on))
+        if (!on) _activeWindow.value = null
+    }
 
     /** Ask the PC whether the assistant's backend is up. [retry] is a person pressing
      *  the button, which is always allowed to skip the PC's backoff. */

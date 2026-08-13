@@ -46,7 +46,68 @@ activity rather than four screens.
 The TV remote is the couch mode: a D-pad with OK (arrows auto-repeat on hold, 400ms then
 ~16/sec like a real keyboard), Back/Start/menu, transport and volume, chip rows for
 Esc/Alt+Tab/Task view/Close and F1–F12, and a power button that offers screen off, lock,
-sleep, restart and shut down (the last two behind a confirm).
+sleep, restart and shut down (the last two behind a confirm). Any of the five can be
+scheduled instead of fired immediately — quick picks (5/15/30/60 min) or a custom number
+of minutes — and restart/shutdown hand the countdown to the OS's own `shutdown /t`, so it
+keeps running even if the tray app isn't. The pending timer is the PC's state, not the
+phone's: it's visible as a chip next to the power button and synced to every connected
+phone, and can be edited or cancelled from the same picker.
+
+## Resource dashboard
+
+The Monitor tab's second half is a live read of the PC itself: CPU as a ring plus a bar
+per logical core, memory, the last minute of both on one shared 0–100 chart, network
+throughput each way, a meter per fixed drive, and the five processes currently using the
+most processor time.
+
+Everything comes from Windows' own primitives rather than a performance-counter
+dependency — `NtQuerySystemInformation` for per-core processor time,
+`GlobalMemoryStatusEx` for memory, `DriveInfo` and `NetworkInterface` for the rest.
+Kernel time *includes* idle time, so a core's load is `(kernel + user − idle) / total`
+over the interval, not `kernel + user`; both that and the byte-counter deltas are
+covered by [`SystemStatsTests`](../server/PortalRemote.Tests/SystemStatsTests.cs),
+because a rate computed against a counter that reset produces a plausible wrong number
+rather than an error.
+
+**Nothing is sampled until the screen is open.** The phone sends `{"t":"sys","on":true}`
+when the Stats screen composes and `on:false` when it's disposed; the server refcounts
+those and stops its timer when the last one leaves, with the subscription owned by the
+socket so a phone that walks out of Wi-Fi releases it too. A resource monitor that
+permanently costs 1% of the CPU it is reporting on is the one bug this feature must not
+ship with.
+
+Samples arrive at 1Hz and the phone keeps the last 60 for the charts. History is kept
+across a glance at another tab but thrown away after a gap of more than five seconds —
+two ends of a graph drawn as one line would be a claim about a stretch of time nobody
+sampled. Gauges and bars tween between samples so a jump from 12% to 60% reads as a
+swing rather than a cut, and snap instead under the system "remove animations" setting.
+
+Not sampled: GPU load (the only route is the `GPU Engine` performance-counter category,
+which means a new dependency and hundreds of milliseconds to bind) and per-disk I/O.
+
+## How it looks
+
+The phone is drawn as an instrument panel: chamfered panels with a bracket at their
+square corners, tick-scale dials, segmented meters, monospace figures on a ruled ground.
+That language is one kit ([`ui/theme/`](../android/app/src/main/java/com/portalremote/ui/theme/)),
+and the Material3 colour scheme is *derived* from it rather than written alongside it —
+so a stock `Chip` or `Card` lands on the same colours and the same 45° cut as a
+hand-drawn panel.
+
+**Light and dark are the same instrument under different lighting.** They share every
+dimension, shape and type style, and differ only in colour and in how hard the glow
+renders — on light it drops to a trace, because a glow is light *added* to a dark ground
+and on a white one the same passes read as a printing fault.
+
+**Settings → Colour** picks one of four accent pairs (Ice, Neon, Deep, Steel), applied
+live across the whole app and stored in `AppSettings.accent`. Only the accents are the
+user's: the neutrals, and what amber and red mean, stay put. `ContrastTest` measures
+every accent against both faces at WCAG's thresholds, which is what makes the picker safe
+to extend — two of the four shipped pairs were changed *by that test*, because hues that
+differ strongly in hue can still sit within a few percent in luminance and become one
+shape to anyone who doesn't separate colour.
+
+The reasoning behind all of it is in [design-system.md](design-system.md) §3–§7.
 
 ## Quick share
 
@@ -63,7 +124,7 @@ notification fires, so it's pasteable by the time you look at it. Files land in
 A share made while the PC is asleep, or cut off by a Wi-Fi drop mid-upload, is **queued
 and re-sent on the next reconnect** rather than failed — the phone is the device that
 moves between networks, so "try again later" is the app's job. Queued items say so on
-the Share tab and can be tapped to retry immediately; the queue is in memory, so it does
+Transfer's share half and can be tapped to retry immediately; the queue is in memory, so it does
 not survive the app's process being killed. See [phase5-share.md](phase5-share.md),
 which also carries the plan for the internet relay that would make this work off the LAN
 (§5, deliberately not built yet).

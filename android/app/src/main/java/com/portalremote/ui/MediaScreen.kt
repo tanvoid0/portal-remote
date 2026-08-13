@@ -23,13 +23,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Cast
@@ -77,6 +77,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -84,6 +85,8 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.portalremote.audio.SpeakerService
 import com.portalremote.audio.SpeakerState
+import com.portalremote.audio.equalizerSpectrum
+import com.portalremote.audio.tapEqualizer
 import com.portalremote.data.SavedHost
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
@@ -93,7 +96,10 @@ import com.portalremote.net.MediaApi
 import com.portalremote.net.NowPlaying
 import com.portalremote.net.Playhead
 import com.portalremote.net.Protocol
+import com.portalremote.net.Volume
 import com.portalremote.ui.theme.HapticPress
+import com.portalremote.ui.theme.HudEqualizerBars
+import com.portalremote.ui.theme.HudSectionHeader
 import com.portalremote.ui.theme.portalCardBorder
 import com.portalremote.ui.theme.portalCardColors
 import com.portalremote.ui.theme.rememberPressScale
@@ -129,6 +135,8 @@ fun MediaScreen(
     onCast: (url: String) -> Unit,
     onCastFile: (Uri) -> String?,
     onPlayer: (JSONObject) -> Unit,
+    volume: Volume?,
+    onSetVolume: (Float) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -143,7 +151,7 @@ fun MediaScreen(
         CastLink(onCast, onCastFile)
 
         cast?.let {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
             CastTransport(
                 cast = it,
                 status = castStatus,
@@ -155,15 +163,19 @@ fun MediaScreen(
             )
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(16.dp))
 
         NowPlayingCard(host = host, state = nowPlaying, onSeek = onSeek)
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
+
+        EqualizerSection(host)
+
+        Spacer(Modifier.height(12.dp))
 
         Row(
-            modifier = Modifier.padding(vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TransportButton(
@@ -197,19 +209,76 @@ fun MediaScreen(
             )
         }
 
-        Text("Volume", style = MaterialTheme.typography.titleMedium)
-        Row(
-            modifier = Modifier.padding(top = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
-        ) {
-            TransportButton(Icons.AutoMirrored.Filled.VolumeOff, "Mute", onClick = { onMedia("mute") })
-            TransportButton(Icons.AutoMirrored.Filled.VolumeDown, "Volume down", onClick = { onMedia("vol_down") })
-            TransportButton(Icons.AutoMirrored.Filled.VolumeUp, "Volume up", onClick = { onMedia("vol_up") })
-        }
+        HudSectionHeader("Volume")
+        VolumeRow(
+            volume = volume,
+            onMute = { onMedia("mute") },
+            onSetLevel = onSetVolume,
+            modifier = Modifier.padding(top = 8.dp),
+        )
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(16.dp))
 
         SpeakerCard(host)
+    }
+}
+
+/**
+ * Mute toggle, a slider at the level itself, and the percentage — replacing three
+ * stepped buttons that could only ever nudge blind. The PC reports where the level
+ * actually is ([Volume]), so dragging goes straight to a spot instead of tapping
+ * vol_up twenty times to get there. Same drag convention as the now-playing scrub bar
+ * above: the finger's position wins locally until release sends it, so the bar doesn't
+ * fight the thumb while the PC's own echo is still in flight.
+ *
+ * Disabled rather than hidden when [volume] carries no level — a PC with no audio
+ * output device — since the row still names what's missing instead of the screen
+ * quietly losing a control.
+ */
+@Composable
+private fun VolumeRow(
+    volume: Volume?,
+    onMute: () -> Unit,
+    onSetLevel: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    val level = volume?.level
+    val muted = volume?.muted == true
+    val shown = dragging ?: level ?: 0f
+
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        TransportButton(
+            icon = if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+            description = if (muted) "Unmute" else "Mute",
+            enabled = level != null,
+            onClick = onMute,
+        )
+        Slider(
+            value = shown,
+            onValueChange = { dragging = it },
+            onValueChangeFinished = {
+                // Not cleared here, same reason as the scrub bar's own drag state: a
+                // push landing right after this one can still carry the pre-drag level
+                // for a frame, and snapping back to it reads as the change failing.
+                dragging?.let { onSetLevel(it) }
+            },
+            enabled = level != null,
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+        )
+        Text(
+            if (level != null) "${(shown * 100).toInt()}%" else "—",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(40.dp),
+        )
+    }
+    // Released on the same timer as the scrub bar, once the PC has had time to answer.
+    LaunchedEffect(dragging) {
+        if (dragging == null) return@LaunchedEffect
+        delay(SEEK_SETTLE_MS)
+        dragging = null
     }
 }
 
@@ -264,7 +333,7 @@ private fun SpeakerCard(host: SavedHost) {
                 Text(
                     when (val current = state) {
                         is SpeakerState.Off ->
-                            "The PC's speakers keep playing too — mute them there"
+                            "Mutes the PC's speakers while this plays, unmutes them after"
                         is SpeakerState.Connecting -> "Connecting…"
                         is SpeakerState.Playing ->
                             "Playing · ${current.sampleRate / 1000}kHz " +
@@ -293,6 +362,26 @@ private fun SpeakerCard(host: SavedHost) {
             )
         }
     }
+}
+
+/**
+ * The Media screen's one meter: the PC's own audio, live — whether or not this phone is
+ * also playing it out loud, which is why it lives here rather than under the Speaker
+ * switch above. [SpeakerService] already has a tap on the same bytes when it's running,
+ * so this rides its spectrum rather than opening a second connection to the same PC for
+ * the same audio; otherwise it keeps its own read-only tap open for as long as this
+ * screen is (see [tapEqualizer]).
+ */
+@Composable
+private fun EqualizerSection(host: SavedHost) {
+    val speakerState by SpeakerService.speaker.collectAsState()
+    val spectrum by equalizerSpectrum.collectAsState()
+
+    LaunchedEffect(host, speakerState) {
+        if (speakerState !is SpeakerState.Playing) tapEqualizer(host)
+    }
+
+    HudEqualizerBars(levels = spectrum.toList())
 }
 
 /**
@@ -508,11 +597,11 @@ private fun CastTargets(
     val remote = targets.filter { it.kind !in LOCAL_KINDS }
     if (remote.isEmpty() && !scanning) return
 
-    Text("Cast to", style = MaterialTheme.typography.titleMedium)
+    HudSectionHeader("Cast to")
     FlowRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 12.dp),
+            .padding(top = 8.dp, bottom = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         FilterChip(
@@ -571,11 +660,11 @@ private fun CastLink(onCast: (url: String) -> Unit, onCastFile: (Uri) -> String?
         Unit
     }
 
-    Text("Cast a link", style = MaterialTheme.typography.titleMedium)
+    HudSectionHeader("Cast a link")
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 12.dp),
+            .padding(top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

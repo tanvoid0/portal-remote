@@ -28,9 +28,10 @@ Two surfaces, two frequencies:
   (pairing, connect/disconnect, tab switches), plus tight <100ms feedback on presses.
 
 Current state (for grounding, not to be treated as final):
-- Android already uses Material3 with a blue seed (`#2563EB` light / `#60A5FA` dark,
-  [Theme.kt](android/app/src/main/java/com/portalremote/ui/theme/Theme.kt)) but no
-  type scale, spacing scale, or motion spec beyond Material3 defaults.
+- Android used Material3 with a blue seed (`#2563EB` light / `#60A5FA` dark) and no
+  type scale, spacing scale or motion spec beyond Material3 defaults. It is now drawn
+  entirely from the instrument palette in
+  [Hud.kt](../android/app/src/main/java/com/portalremote/ui/theme/Hud.kt) — see §3.
 - Desktop is stock WinForms — system gray, default fonts, no dark mode, no icon
   language (the tray plus a single QR window, since replaced by
   [MainForm.cs](server/PortalRemote.Server/Tray/MainForm.cs) — see §12 —
@@ -61,79 +62,146 @@ Current state (for grounding, not to be treated as final):
 
 ## 3. Color tokens
 
-Keep the existing blue as the brand accent (it's already in production-adjacent code);
-build a full scale around it instead of introducing a new palette.
+**One palette, two faces, four accents.** Everything visible in this app is drawn from
+the *instrument palette* in
+[`ui/theme/Hud.kt`](../android/app/src/main/java/com/portalremote/ui/theme/Hud.kt) —
+including the Material3 `ColorScheme`, which is derived from it rather than written
+beside it. There is no second list of hex values anywhere, because two lists is how the
+dashboard came to look like a different product from the tab next to it.
+
+A palette is `HudColors`: a set of neutrals, a pair of accents, two fixed status hues,
+and one number for how hard glow renders.
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `accent` | `#2563EB` | `#60A5FA` | primary actions, active nav item, focus ring |
-| `accent-pressed` | `#1D4ED8` | `#3B82F6` | pressed/active state |
-| `bg` | `#EAEEF6` | `#080C18` | screen background / window canvas |
-| `surface` | `#FFFFFF` | `#101725` | cards, sheets, the QR panel |
-| `surface-raised` | `#FFFFFF` + shadow-sm | `#18202F` | nav bar, top bar |
-| `surface-muted` | `#DDE4F0` | `#1F2839` | **sunken** fills: key faces, the trackpad, input boxes, the PC's chat bubble |
-| `border` | `#D2DAE8` | `#2A3446` | dividers, card edges — decorative hairlines |
-| `border-strong` | `#74809A` | `#64748B` | the boundary of a *control*: inputs, outlined buttons, the trackpad |
-| `text-primary` | `#0E1524` | `#EEF2F8` | |
-| `text-secondary` | `#55607A` | `#9AA7BD` | hints, timestamps |
-| `success` (connected) | `#166534` | `#4ADE80` | connection status |
-| `danger` (disconnected/error) | `#DC2626` | `#F87171` | connection status, destructive actions |
-| `warning` | `#92400E` | `#FBBF24` | reconnecting / "wait" states |
-| `violet` (`tertiary`) | `#6D28D9` | `#A78BFA` | the one non-accent hue — badges, accent illustration |
+| `background` | `#E4EAF2` | `#04070E` | the canvas every panel rests on, plus its ruled grid |
+| `panel` | `#FFFFFF` | `#0A1220` | a panel face, the title row, the nav capsule |
+| `sunken` | `#D3DDE9` | `#111C2E` | one step *in*: the trackpad, key faces, inputs, the PC's chat bubble |
+| `edge` | `#B6C6D8` | `#1D3149` | the hairline round a panel |
+| `grid` | `#B9CBDD` | `#17293F` | ruling, unlit segments, empty track — texture, never content |
+| `live` | accent | accent | the value, and the selected thing |
+| `second` | accent | accent | the second series, the second thing worth telling apart |
+| `warn` | `#92400E` | `#FBBF24` | getting full, reconnecting, "wait" |
+| `alarm` | `#B91C1C` | `#F87171` | this is wrong — disconnected, out of space, destructive |
+| `text` | `#0B1220` | `#E6F1FF` | |
+| `text-dim` | `#4E5F79` | `#8FA6C4` | labels, units, hints, timestamps |
+| `glow` | `0.22` | `1.0` | how hard the bloom passes render (see §7's kit) |
 
-Status color is a first-class token, not an afterthought — connection state (paired /
-connecting / disconnected) is the one piece of state the user checks constantly on
-both the tray icon and the Android top bar, so it needs one consistent color pair used
-identically in both codebases.
+`border-strong` (`#64748B` / `#5C7089`) survives as a separate token for the one job the
+`edge` hairline can't do: the boundary of a *control* has to clear WCAG 1.4.11's 3:1, and
+a decorative divider should not.
 
-**The neutrals carry the accent's hue.** Every grey above is a blue-tinted slate at
-3–8% saturation rather than a pure/zinc grey. A neutral ramp with no hue in it next to
-a saturated blue accent reads as two unrelated palettes stacked, which is the specific
-thing "plain" describes. The `tertiary` violet exists for the same reason: a palette
-with exactly one hue has nowhere to go. It is deliberately *not* wired to chips or the
-nav pill — "selected" is one color across the app, and that color is the accent.
+### The accents are the only swappable part
 
-**Three revisions this table has been through, and why (keep them):**
+`HudAccent` is four pairs — **Ice** (cyan/violet, the default), **Neon** (magenta/blue),
+**Deep** (sky/teal) and **Steel** (near-neutral). The user picks one in Settings →
+Colour; it is stored in `AppSettings.accent` and read by `PortalRemoteTheme(accent = …)`,
+which recomputes the whole scheme. Adding a fifth is one line in the enum — every
+Material slot that needs it (`primaryContainer`, `onPrimaryContainer`, the pressed state,
+the tertiary set) is *derived* from the pair rather than listed, because hand-picking
+twelve values per accent is how a swappable palette stops being swappable after the
+second one.
 
-1. **Light mode had one surface value, not four.** `surface`, `surface-raised` and
-   every Material `surfaceContainer*` slot were all `#FFFFFF` on a `#FAFAFA` page. Cards,
-   the trackpad, key faces, selected chips and outlined buttons were therefore white
-   shapes on white, distinguishable only by a `#E4E4E7` hairline at 1.2:1 — the
-   user-visible fault this revision fixes. `bg` is a step deeper and tinted, and
-   `surface-muted` is the sunken fill that was simply missing.
-2. **`border` split in two.** One token was doing two jobs with opposite requirements: a
-   divider wants to be quiet, a control boundary has to clear WCAG 1.4.11's 3:1 or the
-   control has no visible extent. They map onto Material's existing `outlineVariant`
-   (divider) / `outline` (control) pair, which already means exactly this.
-3. **Light `success` and `warning` are 800-weight now** (`#166534` / `#92400E`, from
-   `#16A34A` / `#D97706`). The old values measured 3.0–3.3:1 on light surfaces, which
-   §9 had to write a standing "never set small text in these" constraint around —
-   inevitably violated the first time someone needed a green line of text. Both clear
-   4.5:1 on every light surface now and the constraint is gone.
+Three things deliberately do **not** vary:
+
+1. **The neutrals.** How far a panel sits from its canvas is a legibility decision the
+   app has already made, and not the user's to break.
+2. **`warn` and `alarm`.** They are status, not brand: amber has to keep meaning "getting
+   full" and red "this is wrong", whichever accent is on. This also constrains what may
+   *be* an accent — no amber, no red, or the machine would have two vocabularies for one
+   colour.
+3. **What passes the audit.** `ContrastTest` runs the entire matrix — every accent × both
+   faces — against §9's thresholds, so a new accent is covered the moment it is declared.
+   Two of the four pairs were changed by that test rather than by eye: `Neon`'s blue and
+   `Deep`'s teal are each a step away from their obvious value because pink-400 beside
+   sky-400, and blue-700 beside teal-700, sit within a few percent of each other in
+   *luminance* — a striking pair and a useless one, because two traces drawn in them are
+   one shape to anyone who doesn't separate hue.
+
+### Why cyan, and not the blue this app shipped with
+
+The accent used to be `#2563EB`/`#60A5FA`. At the luminance these screens run at, a mid
+blue reads as *a link* and a cyan reads as *a signal* — and every accented thing here is
+a signal: what is selected, what is live, what the value is. The blue survives as the
+`Deep` accent for anyone who preferred it.
+
+Status colour remains a first-class token used identically by both codebases — connection
+state is the one thing the user checks constantly, on the tray icon and the phone's title
+row alike.
+
+**The desktop mirrors this table, but not the picker.**
+[`Theme/Palette.cs`](../server/PortalRemote.Server/Theme/Palette.cs) carries the same
+tokens at the **Ice** accent and stops there. The tray window is a status surface someone
+glances at a few times a week; the two halves are installed separately and can be
+different versions; and a window that silently recoloured itself because of a setting on
+a phone would read as a fault rather than a feature.
+
+**Two revisions worth keeping:**
+
+1. **Light mode had one surface value, not four.** `surface`, `surface-raised` and every
+   Material `surfaceContainer*` slot were `#FFFFFF` on a `#FAFAFA` page, so cards, the
+   trackpad and selected chips were white shapes on white separated by a 1.2:1 hairline.
+2. **The light neutrals sit further apart than a light theme usually needs.** On dark a
+   panel separates from its canvas by *emitting* — it is the brighter thing and a few
+   percent is plenty. On light there is no such trick, and the first light build of this
+   kit read as one pale sheet with some cyan on it. The canvas is pushed down, the panel
+   stays pure white, and the edge is dark enough to be a drawn line rather than a
+   suggestion.
 
 ---
 
 ## 4. Typography
 
-- **Android**: default to the system font (Roboto / Google Sans depending on OS), but
-  define an explicit scale — don't rely on Material3 defaults untouched:
-  - Display (pairing success, empty states): 28sp / line-height 34sp / tracking 0
-  - Title (screen headers): 20sp / 26sp / 0
-  - Body: 15sp / 22sp / 0
-  - Label (nav items, buttons): 13sp / 16sp / +0.1sp (small text gets slightly
-    *positive* tracking for legibility, per Apple's size-specific tracking rule)
-- **Desktop**: `Segoe UI Variable` if present (Win11), fall back to `Segoe UI`. Define
-  three weights only: heading (11pt semibold — matches current QrForm heading),
-  body (9.5–10pt regular), caption (9pt, `text-secondary`).
+**Two registers, split by what the text is for** — the split falls on Material's own
+axis, so the whole app picks it up without a call site changing.
+
+- **Prose** — anything you read a sentence of: a hint, an error, an assistant reply, a
+  filename. System sans, `Body*`/`Title*`/`Display*`. Monospace prose is a costume; it
+  reads slower, and this app puts real sentences in front of people at exactly the moments
+  they are least patient (a failed pairing, a rejected token).
+- **Instrument text** — labels, units, figures, and the short imperative words on
+  controls. Monospace and tracked, `Label*`. Every Material3 `Button`, `Chip` and `Tab`
+  draws its text with a Label style, which is what carries the register across the app.
+
+It buys two concrete things: tracked uppercase separates a label from the value beneath
+it without needing a second colour, and monospace figures don't reflow under the eye, so a
+reading that changes every second stops looking like it is twitching.
+
+Sizes — Display 28/24/20sp, Title 20/16/14sp, Body 15/14/13sp, Label 12/11/10sp with
++0.8/+1.0/+1.4sp tracking. The Label sizes are each a point smaller than the sans scale
+they replaced: monospace runs wider at the same nominal size, and a Button's label still
+has to fit the same 48dp target.
+
+`HudType` adds four instrument styles with no Material slot: `Label` (10sp, +2sp
+tracking), `Readout` (15sp bold), `Dial` (30sp bold) and `Mono` (13sp, for data that
+isn't a number — a process name, a drive label).
+
+- **Desktop**: `Segoe UI Variable` if present (Win11), fall back to `Segoe UI`. Three
+  weights only: heading (11pt semibold), body (9.5–10pt regular), caption (9pt,
+  `text-dim`).
 
 ---
-
 ## 5. Spacing, radius, elevation
 
 - **Spacing scale**: 4 / 8 / 12 / 16 / 24 / 32 (px on desktop, dp on Android). Pick
   from this set only — no arbitrary values.
-- **Corner radius**: 8px small controls (buttons, chips), 12px cards/sheets, 20px
-  bottom-sheet-style surfaces. One scale shared by both platforms.
+- **Corners are cut, not rounded.** The Material `Shapes` scale is
+  `CutCornerShape` at 3 / 5 / 8 / 10 / 14dp (extraSmall → extraLarge). This is the
+  single highest-leverage line in the theme: every stock component in the app — chips,
+  cards, text fields, dialogs — is chamfered off the same 45° as the hand-drawn panels,
+  without touching one of their call sites.
+  - The cuts are **smaller than the radii they replaced**. A 45° cut removes about 1.4×
+    the visual mass of a round of the same size, so matching the old numbers produced
+    octagons.
+  - Material3 hardcodes `Button` to a full pill regardless of the theme's shapes, so
+    the nine text buttons in the app pass `shape = MaterialTheme.shapes.medium`
+    explicitly.
+  - **Round survives for keys.** Circular `IconButton`s — the TV remote's D-pad, the
+    transport row — stay round on purpose: cut is for panels and fields, round is for
+    the things you press like hardware.
+  - Panels themselves use `HudPanelShape`: a cut on **two** corners only (top-end,
+    bottom-start). Four reads as a stop sign; two reads as machined, and the asymmetry
+    is what leaves the other two corners square for a bracket to sit in.
 - **Elevation**: 2-step shadow scale (`shadow-sm` for resting cards, `shadow-md` for
   anything overlaying content — QR panel, modals). Bigger surface = stronger shadow,
   per Apple's materials guidance.
@@ -144,10 +212,10 @@ nothing in this app is distinguished by fill alone:
 
 | Component | Fill | Edge |
 |---|---|---|
-| Card, panel, sheet | `surface-raised` | `border` hairline |
-| Input, key face, the trackpad | `surface-muted` | `border-strong` (3:1) |
-| Input, focused | `surface-muted` | `accent`, 2dp |
-| Primary button, selected chip | `accent` / `accent`-tinted container | none — the fill *is* the contrast |
+| Card, panel, sheet | `panel` | `edge` hairline + corner brackets |
+| Input, key face, the trackpad | `sunken` | `border-strong` (3:1) |
+| Input, focused | `sunken` | `live`, 2dp |
+| Primary button, selected chip | `live` / `live`-tinted container | none — the fill *is* the contrast |
 
 On Android the first row is `portalCardColors()` + `portalCardBorder()` from
 `ui/theme/Surfaces.kt`, so a card can't be built with only half of it. The same file
@@ -232,6 +300,51 @@ Rules:
 ---
 
 ## 7. Component inventory
+
+### The instrument kit
+
+Before the per-screen notes: the primitives every screen is assembled from, in
+[`ui/theme/HudKit.kt`](../android/app/src/main/java/com/portalremote/ui/theme/HudKit.kt).
+They exist because the alternative is what this app had — fifteen call sites each
+deciding their own corner radius, border and header treatment, which is how a design
+system becomes a suggestion. A screen should be able to say *"a panel, called this, with
+these readings in it"* and get the app's answer.
+
+- **`Modifier.hudCanvas()`** — the `background` fill plus its ruled grid. Applied **once**,
+  at the app root, so every panel in every screen rests on one surface rather than
+  carrying its own texture; that is what makes a tab switch read as moving across one
+  machine rather than between separate documents. Screens with opaque content of their
+  own (the trackpad, the mirror) simply cover it. A screen must never apply it a second
+  time — a grid over a grid is a moiré.
+- **`HudPanel(title, trailing)`** — chamfered face, hairline edge, and a bright bracket at
+  the two corners the chamfer leaves square. The brackets are the trick that makes the
+  whole language cheap: four sides of border is a box, but a short mark at the corner
+  reads as something machined, and it costs two lines.
+- **`HudSectionHeader`** — a tracked uppercase label with a rule running out to whatever
+  sits on the right, so a header is one line rather than two things floating near each
+  other. Used inside panels and directly on the canvas.
+- **`HudReading(label, value)`** — the shape every number in the app is shown in: label
+  above, figure below, in the hue that means something about it.
+- **`HudMeter(fraction)`** — a bar that is 32 lit cells rather than a filled rectangle.
+  The segmentation does real work: a continuous bar at 61% and one at 64% are the same
+  picture, while "lit cells out of 32" is a number you can read off the shape. It is also
+  the one meter treatment that survives both palettes, because unlit cells stay visible
+  on white where a 12%-alpha track would not.
+- **`HudPulse`** — the live dot. Its canvas is deliberately three times the dot, because
+  the bloom is three times its radius and clipped bloom reads as a smudge.
+- **`HudEqualizerBars(levels)`** — the stats dashboard's core matrix turned sideways: a
+  row of bars, each its own stack of lit cells, swept `hud.live` → `hud.second` left to
+  right so frequency reads without a legend. Fed only real data — see §7's MediaScreen
+  entry for where it comes from and why it isn't `android.media.audiofx.Visualizer`.
+- **`glowLine` / `glowArc` / `glowDot`** — bloom, faked with three stroke passes (wide and
+  nearly transparent, narrower, then the line). `RenderEffect` needs API 31; this is two
+  extra draw calls and behaves identically on every device the app runs on. All three take
+  the palette's `glow` factor, which is why the same call sites produce a lit trace on
+  dark and one clean stroke on light — **a glow is light added to a dark ground; on a
+  light one the same passes are ink spreading, which reads as a printing fault.**
+
+The dashboard (below) is the densest use of the kit and the screen the rest of it was
+derived from. When adding a screen, reach for these before inventing a surface.
 
 ### Android (Compose)
 - **PairScreen** — ordered by what it costs the user, not by what's technically
@@ -464,14 +577,30 @@ Rules:
   after 4s: it used to clear only when the field was typed in again, so it sat there
   claiming to describe the present long after it stopped doing so.
   - **Speaker card** — a `Switch` in a standard §5 card at the bottom of the screen,
-    under the volume buttons rather than up beside the cast picker: it answers the same
-    question those buttons do (where the PC's sound comes out), and it is the opposite
+    under the volume slider rather than up beside the cast picker: it answers the same
+    question that slider does (where the PC's sound comes out), and it is the opposite
     direction from casting, which sends something from here to there. Its subtitle is
     the whole design: it carries the one fact that will otherwise surprise people —
     that this *copies* the PC's output instead of replacing it — and then becomes a
-    live status line ("Playing · 48kHz stereo", or the reason it is retrying). No
-    animation, no meter: audio playing is not something this screen needs to also
-    draw, and a level meter on a screen whose job is input is exactly §1's ornament.
+    live status line ("Playing · 48kHz stereo", or the reason it is retrying).
+  - **Equalizer** — real playback data, not decoration: 16 `HudEqualizerBars` (§7's kit)
+    fed by a Goertzel pass per band over the raw PCM `/audio/stream` already carries,
+    computed on the phone rather than via `android.media.audiofx.Visualizer` — that
+    needs an actual local `AudioTrack` session, which ties the bars to whether this
+    phone happens to also be playing the audio out loud (exactly the thing they must
+    not depend on), and turned out to be unreliable on top of that. Sits under the
+    now-playing card, live while this screen is open whether or not the Speaker switch
+    is on: `SpeakerService`'s own read loop feeds the same spectrum when it's running,
+    and a lightweight read-only tap (`tapEqualizer`) opens only when it isn't — closing
+    the moment the screen does, rather than surviving in the background the way the
+    Speaker feature itself deliberately does.
+  - **Volume** — a mute toggle, a slider at the level itself, and the percentage,
+    replacing three stepped buttons that could only ever nudge blind. The PC now
+    reports where the level actually is (`SystemVolume`, a small `IAudioEndpointVolume`
+    wrapper beside `LoopbackCapture`'s own COM interop) instead of only accepting
+    `vol_up`/`vol_down`/`mute` taps, so dragging goes straight to a spot rather than
+    twenty taps to get there. Same drag convention as the scrub bar above: the finger's
+    position wins locally until release sends it.
 - **TvRemoteScreen** — the couch mode: a D-pad on a 240dp circle with OK in the
   middle, power/back/Start/menu above it, transport + volume below, then chip rows
   for the odds and ends (Esc, Alt+Tab, Task view, Close…) and F1–F12. Everything
@@ -485,6 +614,31 @@ Rules:
     room. Screen off is first because it's the one a couch actually wants: the PC
     keeps playing and the monitor stops lighting the room, and any input undoes it.
     Wire values are pinned against the server by `PowerModeTest`.
+  - **Each mode row is a tap-to-fire button plus a clock icon**, not one control doing
+    two things on a timer vs. a long-press: nothing else in this picker is
+    press-and-hold, so overloading the same tap with a hidden second gesture would be
+    the one control in the app that doesn't do what every other one does. The clock
+    opens a picker (quick chips — 5/15/30/60 min — plus a custom-minutes field) that
+    schedules the mode on the PC instead of firing it now.
+  - **A scheduled destructive mode gets a warning line, not a second confirm
+    dialog.** The immediate button stacks a confirm because there is no undo once it's
+    sent; a timer already *is* an undo window — the countdown is visible and
+    cancellable the whole time it's counting down — so gating it behind another modal
+    would be asking twice for the same reason twice.
+  - **The pending timer is the PC's state, not the phone's**, pushed on connect like
+    `cast_status` and broadcast to every paired phone on every change (set, edited,
+    cancelled, fired) — see `PowerTimer` server-side. It shows twice on purpose: an
+    `errorContainer` chip beside the power button, visible without opening anything,
+    and a banner at the top of the power picker with Edit/Cancel — the same
+    "visible where you already are, plus the place you'd go looking" split as the
+    shell's reconnect state (§7's RemoteScreen notes). The countdown ticks once a
+    second (`rememberCountdownText`) rather than animating: it's a reading, not a
+    transition.
+  - **Restart and shutdown hand their countdown to the OS** (`shutdown /t N`) rather
+    than keeping their own clock, so the countdown survives the tray app closing;
+    lock/sleep/screen-off have no such native delayed form and are timed in-process,
+    which is the one place this feature's robustness ends short of the other two —
+    see the `ponytail:` note on `PowerTimer` for the upgrade path if that ever matters.
   - **The arrows auto-repeat on hold** — 400ms then ~16/sec, matching Windows' own
     keyboard repeat, because walking down a long list from the couch is otherwise
     forty separate taps. One haptic on the press and none during the repeat, per
@@ -501,6 +655,13 @@ Rules:
   user reaches for mid-page rather than once a session. §13's argument is that chrome
   competing with the control surface is overhead — here the chrome *is* part of the
   control surface.
+  - **The bar sits at the bottom, not the top**, directly above the shell's floating nav
+    capsule (§7's RemoteScreen shell) — a thumb reaches the bottom of the phone, not the
+    top, and every mobile browser this app is imitating agrees. It takes the `panel`
+    face + `edge` hairline any chrome bar gets (§5's face-and-edge table), and the
+    address field itself is `sunken` with a `medium` (cut-corner) shape rather than a
+    bare Material outline on the canvas colour — the field had no face of its own before,
+    which on a light background meant an outline on white, i.e. nothing to aim at.
   - **The cast button is the reason the screen exists**, so it is the only thing in the
     bar carrying a `Badge`: the count of media found on this page, disabled at zero.
     It is the one piece of state on this screen the page itself cannot show.
@@ -613,8 +774,40 @@ Rules:
   Material3 `FilterChip`s below the frame (monitor picker, quality preset, and a
   zoom-reset chip that appears only while zoomed) — chips, not a settings sheet,
   because every one of them is a thing you change *while watching* the result.
-  Background is flat black rather than a surface token: it reads as the letterbox
-  around a picture, not as a card the picture sits on.
+  Background is `PortalRemoteTheme.hud.background` rather than flat black: it still
+  reads as the letterbox around a picture (the frame is fit-scaled to the box, so
+  nothing but bare canvas ever shows through the sides), but a fixed black ignored
+  §13's own "form is the identity, not the darkness" reasoning and stayed a fixed
+  dark hole in light mode with no way to lighten it — the one surface in the app
+  that didn't answer the theme toggle.
+- **StatsScreen** (the resource dashboard) — the densest use of the kit, and the screen
+  the rest of the app's look was reverse-engineered from. Its content is a *readout*, and
+  a readout is parsed in one glance — value, trend, is-it-bad — which is why every real
+  instrument (cockpit, car dash, mixing desk) draws it as figures on a ruled ground with
+  lit scales rather than as a page of cards.
+  - **It briefly owned a fixed dark palette of its own**, which is worth recording
+    because it was the wrong shape and the fix is the current architecture. That version
+    made this one screen look designed and every other screen look like a Material sample
+    next to it — and it forced the Monitor tab's title row, sub-tab row and nav capsule
+    into a bespoke dark mode so its chrome didn't seam against the panel. What actually
+    carried the character turned out to be the *geometry* — chamfers, brackets, tick
+    scales, segmented meters, monospace figures on a grid — none of which needs a black
+    background. So the palette became §3's light/dark pair, the kit became shared, and
+    all of that special-casing was deleted.
+  - **Dials**: a 44-tick scale lit to the reading, a bloomed arc over it, a glowing head.
+    The 270° sweep with the gap at the bottom is the shape every physical gauge uses,
+    because the gap is where the label goes.
+  - **Values tween, one thing loops.** §2 rule 2's silence protects the surfaces you
+    drive the PC through; this is the opposite case, where a reading that steps once a
+    second looks like a broken meter. So readings glide between samples and exactly one
+    element repeats — the 7-second radar sweep on the CPU dial. Two sweeps at different
+    phases stops reading as an instrument and starts reading as a screensaver. The sweep
+    is dark-only: a translucent wedge over white is a grey smear, so it gates on the
+    palette's `glow` rather than drawing something fainter.
+  - **The core matrix animates once, not per core.** 32 columns each with their own
+    `animateFloatAsState` would be 32 recomposition scopes for a single `Canvas` that
+    redraws as a unit anyway; likewise one bloom pass per column rather than per cell,
+    which would be 448 extra draws a frame for something nobody can see cell by cell.
   - **Full screen** is a chip on that row, and it takes the shell with it: title row,
     nav bar and the chip row itself all go, leaving only the frame. The controls come
     back through a 40dp button at 35% black in the top corner, which opens the *same*
@@ -1045,7 +1238,15 @@ reconnect. `BackHandler` closes it.
   watching the result* stays where it is — the mirror's monitor and quality
   chips (§7) are still on the mirror. Settings holds the preferences you set
   once (pointer speed, scroll direction, fine control, scroll momentum, keep-awake,
-  haptics) and the mirror's *default* preset, which the chips then write back to.
+  haptics, accent) and the mirror's *default* preset, which the chips then write back to.
+- **The accent picker is the one place the palette is the user's** (§3). Four pairs,
+  drawn as swatches rather than named chips — the name of a colour is not the colour, and
+  each option means different hues on the two faces (a cyan that works on black is not the
+  cyan that works on white), so the only honest preview is the pair you would actually
+  get. The swatch is split on the same 45° the panels are cut on, so it reads as a chip of
+  the machine rather than a paint dot. Only the accents are offered: the neutrals, and
+  what amber and red mean, are legibility decisions the app has already made, and a picker
+  that can produce an unreadable screen is a bug with a settings row in front of it.
 - **Feel preferences ship on.** Fine control defaults on and momentum defaults to
   `STANDARD`, which breaks §12's usual "defaults reproduce the old behaviour" rule on
   purpose: both are corrections to how the pad felt, and a correction nobody finds is
@@ -1077,16 +1278,29 @@ control surface is overhead. Roughly 200dp of an 800dp phone used to be chrome
 (status bar + 64dp top bar + 80dp labelled nav bar + gesture bar). That is now
 about 100dp.
 
-- **System bars are hidden, not removed.** `MainActivity` calls
-  `WindowInsetsControllerCompat.hide(systemBars())` with
-  `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`: an edge swipe brings the clock and the
-  back gesture back as a transient overlay, without a layout shift mid-drag — which
-  is the whole reason for the transient behaviour rather than a sticky toggle.
-- **Cutouts are still respected.** With the bars gone, `WindowInsets.systemBars` is
-  0 and the Material defaults collapse with it, so every top bar in the app asks for
-  `WindowInsets.safeDrawing.only(Top)` and every `Scaffold` for the horizontal side
-  of it. On a phone with no cutout that costs nothing; on one with a notch it is the
-  difference between a title and a title under the camera.
+- **The status bar stays up; the system nav bar doesn't.** `SystemBars()`
+  (`ui/theme/SystemBars.kt`) hides only `Type.navigationBars()` — this app already
+  replaces it with its own floating capsule, so showing both is chrome twice. The
+  status bar is real information nowhere else on the phone states (clock, battery,
+  notifications), and `themes.xml`'s transparent `statusBarColor` plus every top
+  bar's own `safeDrawing.only(Top)` padding means it draws *in* the app's own top
+  row rather than as a strip above it — the same colour, the same surface, just
+  system icons layered on. `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE` still governs
+  the hidden nav bar, so an edge swipe brings it back without a layout shift
+  mid-drag. `SystemBars(immersive = true)` drops both, for the one screen (the
+  mirror, full screen) whose content is itself a screen — see below.
+  - This replaced an earlier version of this phase that hid the status bar too.
+    `WindowInsets.safeDrawing.only(Top)` still includes the display cutout
+    regardless of bar visibility (a punch-hole camera doesn't go away because the
+    bar hiding over it does), so on any cutout phone — most phones sold today —
+    that padding was reserved and painted with the top bar's own colour whether or
+    not anything was drawn in it. With the status bar hidden, nothing was: a
+    blank, cutout-sized band on every screen, on every phone that has the exact
+    hardware feature this app was trying to design around. Showing the status bar
+    is what gives that space a job.
+  - Status bar icon colour follows the theme (`isAppearanceLightStatusBars`,
+    reactive to `isSystemInDarkTheme()` in `SystemBars()`) rather than a fixed
+    choice, since every top row it draws over already does the same.
 - **Chrome states, it doesn't narrate.** The title row shows "Reconnecting…" and
   nothing when connected — the §3 `success` dot already says that, and a permanent
   label saying the normal thing is the cheapest clutter to delete. Same reasoning
@@ -1098,6 +1312,20 @@ about 100dp.
   is that switching between the four things you do with your hands no longer travels
   through the bottom of the screen. The tab row is labelled where the nav bar isn't,
   because "Trackpad" vs "Remote" is a distinction icons alone don't make.
+- **Six icons is the ceiling, so the same merge happened twice more.** Adding the
+  stats dashboard would have made seven, in a capsule whose slots are already the
+  narrowest targets in the app. Instead **Monitor** holds the mirror and the stats
+  screen (one activity: looking at that machine rather than driving it) and
+  **Transfer** holds share and files (one activity: getting something over there),
+  leaving five. All three rows are the same composable —
+  [`PortalSubTabRow`](../android/app/src/main/java/com/portalremote/ui/SubTabs.kt) —
+  because the argument above only holds if the row costs 48dp *once*, and three
+  near-identical copies is how that stops being true.
+- **The dashboard is the one screen allowed to look alive.** §2 rule 2 buys silence
+  at high frequency on the surfaces you drive through; a screen whose entire content
+  is a number that changes every second is the opposite case. Its gauges, bars and
+  meters tween their *value* only — a `Canvas` redrawing from an interpolated float,
+  never an animated size or padding — and snap under the §9 reduced-motion check.
 - **Screen padding is 10dp, not 16dp**, on the input screens (trackpad, keyboard) —
   still on §5's scale, one step down. Media keeps a looser 16dp because it's a
   centered cluster of buttons with space to spare, not a surface fighting for room.

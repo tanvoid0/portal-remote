@@ -38,6 +38,9 @@ data class BrowserSettings(
     /** Hosts the user has switched blocking *off* for — sites that break with it on. */
     val allowedHosts: Set<String> = emptySet(),
     val blockThirdPartyCookies: Boolean = true,
+    /** Auto-click "reject"/"decline" on the known consent-banner vendors — on by
+     *  default, same as ad blocking, with the same escape hatch if a site breaks. */
+    val cookieBlockEnabled: Boolean = true,
     val saveHistory: Boolean = true,
     val searchEngine: SearchEngine = SearchEngine.DUCKDUCKGO,
 )
@@ -50,6 +53,7 @@ class BrowserStore(private val context: Context) {
         val ADBLOCK = booleanPreferencesKey("adblock_enabled")
         val ALLOWED = stringPreferencesKey("adblock_allowed_hosts")
         val THIRD_PARTY_COOKIES = booleanPreferencesKey("block_third_party_cookies")
+        val COOKIE_BLOCK = booleanPreferencesKey("cookie_prompt_block_enabled")
         val SAVE_HISTORY = booleanPreferencesKey("save_history")
         val SEARCH_ENGINE = stringPreferencesKey("search_engine")
     }
@@ -61,6 +65,7 @@ class BrowserStore(private val context: Context) {
             allowedHosts = prefs[Keys.ALLOWED].orEmpty()
                 .split('\n').filter { it.isNotBlank() }.toSet(),
             blockThirdPartyCookies = prefs[Keys.THIRD_PARTY_COOKIES] ?: defaults.blockThirdPartyCookies,
+            cookieBlockEnabled = prefs[Keys.COOKIE_BLOCK] ?: defaults.cookieBlockEnabled,
             saveHistory = prefs[Keys.SAVE_HISTORY] ?: defaults.saveHistory,
             searchEngine = prefs[Keys.SEARCH_ENGINE]
                 ?.let { name -> SearchEngine.entries.firstOrNull { it.name == name } }
@@ -81,6 +86,7 @@ class BrowserStore(private val context: Context) {
             prefs[Keys.ADBLOCK] = settings.adBlockEnabled
             prefs[Keys.ALLOWED] = settings.allowedHosts.joinToString("\n")
             prefs[Keys.THIRD_PARTY_COOKIES] = settings.blockThirdPartyCookies
+            prefs[Keys.COOKIE_BLOCK] = settings.cookieBlockEnabled
             prefs[Keys.SAVE_HISTORY] = settings.saveHistory
             prefs[Keys.SEARCH_ENGINE] = settings.searchEngine.name
         }

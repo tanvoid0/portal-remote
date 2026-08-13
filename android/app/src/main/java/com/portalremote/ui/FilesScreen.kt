@@ -189,7 +189,7 @@ fun FilesScreen(host: SavedHost, bottomInset: Dp = 0.dp) {
                     detail = error ?: "",
                     tint = MaterialTheme.colorScheme.error,
                     action = {
-                        Button(onClick = { reload() }) {
+                        Button(onClick = { reload() }, shape = MaterialTheme.shapes.medium) {
                             Icon(
                                 Icons.Filled.Refresh,
                                 contentDescription = null,

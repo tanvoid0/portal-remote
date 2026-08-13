@@ -35,6 +35,12 @@ public static partial class Power
         [MarshalAs(UnmanagedType.U1)] bool force,
         [MarshalAs(UnmanagedType.U1)] bool wakeupEventsDisabled);
 
+    /// <summary>Wire values <see cref="Apply"/> accepts — checked up front by anything
+    /// that schedules a mode for later, since a typo failing silently at fire time
+    /// beats no one finding out.</summary>
+    public static readonly IReadOnlySet<string> Modes =
+        new HashSet<string> { "screen_off", "lock", "sleep", "restart", "shutdown" };
+
     /// <summary>Apply one power mode. Names match the phone's <c>PowerMode</c> wire values.</summary>
     public static void Apply(string mode)
     {
@@ -68,6 +74,26 @@ public static partial class Power
             default: throw new UnknownMessageException($"unknown power mode: {mode}");
         }
     }
+
+    /// <summary>
+    /// Same as <see cref="Apply"/> for "restart"/"shutdown", but handed to the OS's own
+    /// countdown instead of firing now — <c>PowerTimer</c>'s pick for those two modes,
+    /// since a delayed system call already exists and nothing here has to keep its own
+    /// clock or survive this process staying up.
+    /// </summary>
+    public static void ApplyDelayed(string mode, int delaySeconds)
+    {
+        switch (mode)
+        {
+            case "restart": Shutdown($"/r /t {delaySeconds}"); break;
+            case "shutdown": Shutdown($"/s /t {delaySeconds}"); break;
+            default: throw new UnknownMessageException($"power mode has no delayed form: {mode}");
+        }
+    }
+
+    /// <summary>Aborts a countdown started by <see cref="ApplyDelayed"/> — the OS's own
+    /// abort, which is a no-op (nonzero exit, nothing thrown) once it's too late.</summary>
+    public static void CancelDelayed() => Shutdown("/a");
 
     private static void Shutdown(string arguments) =>
         Process.Start(new ProcessStartInfo("shutdown", arguments)

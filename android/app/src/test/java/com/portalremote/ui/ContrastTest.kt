@@ -4,6 +4,8 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
 import com.portalremote.ui.theme.DarkColors
 import com.portalremote.ui.theme.DarkExtendedColors
+import com.portalremote.ui.theme.HudAccent
+import com.portalremote.ui.theme.hudColors
 import com.portalremote.ui.theme.LightColors
 import com.portalremote.ui.theme.LightExtendedColors
 import com.portalremote.ui.theme.PortalExtendedColors
@@ -98,6 +100,67 @@ class ContrastTest {
 
     @Test
     fun darkThemeMeetsAA() = checkTheme("dark", DarkColors, DarkExtendedColors)
+
+    /**
+     * The instrument palette, for **every accent on both faces**.
+     *
+     * This is the test that makes the accent swappable rather than merely configurable.
+     * A colour picker is an invitation to add hues, and the failure it invites is a
+     * pretty one that nobody can read — so the check runs the whole matrix rather than
+     * the default, and a new [HudAccent] entry is covered the moment it is declared.
+     *
+     * The readings on these screens are large-and-bold figures or drawn traces, so 3:1
+     * is the bar for the accents themselves; anything that is prose — a label, a process
+     * name, a filename — is held to the full 4.5:1.
+     */
+    @Test
+    fun everyAccentMeetsAAOnBothFaces() {
+        HudAccent.entries.forEach { accent ->
+            listOf(true, false).forEach { dark ->
+                val hud = hudColors(accent, dark)
+                val face = "${accent.name}/${if (dark) "dark" else "light"}"
+
+                // Text, on both surfaces it can land on.
+                assertContrast("$face text/background", hud.text, hud.background, 4.5)
+                assertContrast("$face text/panel", hud.text, hud.panel, 4.5)
+                assertContrast("$face dim/background", hud.textDim, hud.background, 4.5)
+                assertContrast("$face dim/panel", hud.textDim, hud.panel, 4.5)
+
+                // The hues that carry a reading.
+                assertContrast("$face live/panel", hud.live, hud.panel, 3.0)
+                assertContrast("$face second/panel", hud.second, hud.panel, 3.0)
+                assertContrast("$face warn/panel", hud.warn, hud.panel, 3.0)
+                assertContrast("$face alarm/panel", hud.alarm, hud.panel, 3.0)
+                // Accented content also lands on the canvas, not only on a panel — a
+                // section label, the trackpad's reticle marks.
+                assertContrast("$face live/background", hud.live, hud.background, 3.0)
+
+                // The two accents have to be told apart from *each other*: they are two
+                // lines on one chart, and a legend the reader must consult is a failed
+                // chart.
+                val separation = ratio(hud.live, hud.second)
+                assertTrue(
+                    separation >= 1.25,
+                    "$face live/second: %.2f:1, the two series are indistinguishable".format(separation),
+                )
+
+                // A solid accent fill has to carry a label.
+                val onFill = if (dark) Color(0xFF04121A) else Color(0xFFFFFFFF)
+                assertContrast("$face onAccent/live", onFill, hud.live, 3.0)
+
+                // The panel has to lift off the canvas, and the grid has to stay behind
+                // both — it is texture, and texture that competes with a trace is noise.
+                assertTrue(
+                    ratio(hud.panel, hud.background) >= 1.06,
+                    "$face panel/background: indistinguishable",
+                )
+                assertTrue(
+                    ratio(hud.grid, hud.panel) < ratio(hud.textDim, hud.panel),
+                    "$face grid is louder than its own labels",
+                )
+            }
+        }
+    }
 
     /**
      * A surface has to differ from the one it sits on. Not a WCAG rule — 1.4.11 exempts
