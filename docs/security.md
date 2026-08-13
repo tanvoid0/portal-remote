@@ -20,8 +20,16 @@ app window if it's ever suspected leaked.
   server's plaintext request logs — this was checked and fixed during development (see
   git history).
 - Path traversal is blocked on every file endpoint (list/download/upload) by resolving
-  against the share root and rejecting anything that escapes it — covered by 27 automated
-  checks including `../..`, drive-rooted paths, and crafted upload filenames.
+  against the share root and rejecting anything that escapes it — `server/PortalRemote.Tests/
+  FilePathsTests.cs` covers `../..`, drive-rooted and UNC paths, drive-relative `C:name`,
+  and a sibling folder whose name merely starts with the root's.
+- **An uploaded filename is reduced to something that can only name one ordinary file**
+  (`FilePaths.SafeFileName`). Dropping the directory component is not enough on Windows:
+  `Path.GetFileName` deliberately keeps an NTFS stream suffix, so `notes.txt:hidden` would
+  have written an alternate data stream that nothing afterwards lists; a quote would have
+  reached `explorer.exe`'s argument line via the tray's reveal-in-folder; and `NUL` or
+  `COM1` name a device in every directory, which `File.Create` opens instead of a file.
+  All three are handled in the one function every caller routes through.
 - File uploads have no size cap (`Kestrel MaxRequestBodySize` is unlimited) —
   intentional, so large files transfer, but it means anyone holding the pairing token can
   fill the disk. Acceptable for a personal LAN tool; would want a cap before this became
@@ -72,3 +80,26 @@ app window if it's ever suspected leaked.
   the PC validates every action against the six it registered, drops anything else, and
   runs only the ones ticked on the phone — with a second confirmation for shutdown and
   restart, and a refusal to run the same plan twice.
+- **Both self-updaters will only download from GitHub.** The tray's update replaces the
+  running `.exe` with what it fetched, and the assistant's one-click setup unzips and
+  starts a second program — in both cases the URL comes out of a release JSON, and neither
+  binary is code-signed, so there is nothing downstream to catch a swap. The release list
+  is read over TLS from `api.github.com`, and `UpdateCheck.IsTrustedAssetUrl` then requires
+  the asset URL itself to be HTTPS on `github.com` or `*.githubusercontent.com`; an asset
+  pointing anywhere else is treated as no asset at all. Checked again immediately before
+  the swap, since that is the method that overwrites the exe.
+- **The phone re-checks a link's scheme before opening it**, rather than trusting the
+  `kind: "link"` the PC put on the share. It is the mirror of the `ShellExecute` rule
+  above: handing the system a `intent://` or a custom scheme is a launch into another app,
+  not a page, so a share only reaches `ACTION_VIEW` through `CastUrl.normalize`, which
+  allows `http`/`https` and nothing else.
+- **The Android app is excluded from backup and device transfer** (`allowBackup="false"`
+  plus `data_extraction_rules.xml`, since API 31+ reads the latter). The pairing token
+  lives in the app's DataStore, and holding it is what the first line of this file says it
+  is — Auto Backup would put it in Google Drive and restore it onto a different phone.
+  Re-pairing is a QR scan, so nothing here is worth carrying across a device swap.
+- **Request logging is turned down in code, not only in `appsettings.json`.** The shipped
+  build is a single `.exe` and that file is not published beside it, so the setting there
+  applies to development only. What it suppresses is Hosting's per-request line, which
+  prints the full URL — and the streaming endpoints carry `?token=` because an `<img>` tag
+  cannot set a header.

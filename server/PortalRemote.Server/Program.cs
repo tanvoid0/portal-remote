@@ -226,6 +226,12 @@ internal static class Program
         // truncate them. LAN-only + token auth already bounds who can hit this.
         builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = null);
         builder.Logging.AddSimpleConsole(o => o.SingleLine = true);
+        // In code, not only in appsettings.json: the shipped build is a single .exe and
+        // that file is not published beside it, so on a real install the setting there
+        // does nothing. What it suppresses is Hosting's per-request line, which prints
+        // the full URL — and the streaming endpoints carry the pairing token in the
+        // query string because an <img> tag cannot set a header (TokenAuth).
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.Services.AddSingleton(config);
 
         var app = builder.Build();

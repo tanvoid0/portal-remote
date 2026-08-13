@@ -105,6 +105,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.portalremote.MainActivity
 import com.portalremote.R
 import com.portalremote.data.SavedHost
+import com.portalremote.net.CastUrl
 import com.portalremote.net.FileApi
 import com.portalremote.net.ShareEntry
 import com.portalremote.net.ShareKind
@@ -718,9 +719,16 @@ private fun openShare(
 
     val text = entry.text ?: return null
     if (entry.kind == ShareKind.LINK) {
+        // Both `kind` and `text` arrive from the PC (ShareEntry.fromPush), so the
+        // http(s) check is re-done here rather than taken on the sender's word: this
+        // hands a URL straight to the system, and `intent://` or a custom scheme is a
+        // launch into another app, not a page. Same rule the PC applies in the other
+        // direction before ShellExecute (docs/security.md); CastUrl is where it already
+        // lives on this side.
+        val target = CastUrl.normalize(text) ?: return "That isn't a link this app will open."
         // ACTION_VIEW with no chooser: the user's default browser is the right answer,
         // and this is a link they just sent themselves from the other device.
-        val browse = Intent(Intent.ACTION_VIEW, text.trim().toUri())
+        val browse = Intent(Intent.ACTION_VIEW, target.toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return runCatching { context.startActivity(browse) }
             .fold(onSuccess = { null }, onFailure = { "No app can open that link." })

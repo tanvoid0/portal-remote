@@ -52,19 +52,56 @@ public class UpdateCheckTests
         var release = UpdateCheck.Parse(
             """
             {"tag_name":"v0.2.0","assets":[
-              {"name":"PortalRemote-0.2.0.apk","browser_download_url":"https://x/apk"},
-              {"name":"PortalRemote.exe","browser_download_url":"https://x/exe"}
+              {"name":"PortalRemote-0.2.0.apk","browser_download_url":"https://github.com/o/r/releases/download/v0.2.0/a.apk"},
+              {"name":"PortalRemote.exe","browser_download_url":"https://github.com/o/r/releases/download/v0.2.0/PortalRemote.exe"}
             ]}
             """);
 
         Assert.NotNull(release);
         Assert.Equal("0.2.0", release!.Version);
-        Assert.Equal("https://x/exe", release.ExeUrl);
+        Assert.Equal("https://github.com/o/r/releases/download/v0.2.0/PortalRemote.exe", release.ExeUrl);
     }
 
     [Fact]
     public void ReleaseWithoutAnExeIsNotAnUpdate()
     {
         Assert.Null(UpdateCheck.Parse("""{"tag_name":"v0.2.0","assets":[]}"""));
+    }
+
+    [Fact]
+    public void AnExeHostedSomewhereElseIsNotAnUpdate()
+    {
+        // These bytes replace the running executable and nothing signs them, so the one
+        // thing that has to hold is that they came from the release the API described.
+        Assert.Null(UpdateCheck.Parse(
+            """
+            {"tag_name":"v0.2.0","assets":[
+              {"name":"PortalRemote.exe","browser_download_url":"https://evil.example/PortalRemote.exe"}
+            ]}
+            """));
+
+        // Plain HTTP from the right host is still someone else's bytes on the way over.
+        Assert.Null(UpdateCheck.Parse(
+            """
+            {"tag_name":"v0.2.0","assets":[
+              {"name":"PortalRemote.exe","browser_download_url":"http://github.com/o/r/PortalRemote.exe"}
+            ]}
+            """));
+    }
+
+    [Theory]
+    [InlineData("https://github.com/o/r/releases/download/v1/PortalRemote.exe", true)]
+    [InlineData("https://objects.githubusercontent.com/x/y", true)]
+    [InlineData("https://api.github.com/repos/o/r/releases/assets/1", true)]
+    [InlineData("http://github.com/o/r/x.exe", false)]
+    [InlineData("https://github.com.evil.example/x.exe", false)]
+    [InlineData("https://notgithub.com/x.exe", false)]
+    [InlineData("https://evil.example/?x=github.com", false)]
+    [InlineData("/relative/path.exe", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void OnlyGitHubAssetUrlsAreTrusted(string? url, bool expected)
+    {
+        Assert.Equal(expected, UpdateCheck.IsTrustedAssetUrl(url));
     }
 }

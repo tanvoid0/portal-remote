@@ -14,16 +14,16 @@ public class AgentPlatformSetupTests
       "tag_name": "v0.3.1",
       "assets": [
         {"name": "agent-platform-desktop-0.3.1-x86_64-pc-windows-msvc.zip",
-         "browser_download_url": "https://example.invalid/desktop.zip"},
+         "browser_download_url": "https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/desktop.zip"},
         {"name": "agent-platform-server-aarch64-apple-darwin.tar.xz",
-         "browser_download_url": "https://example.invalid/mac.tar.xz"},
+         "browser_download_url": "https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/mac.tar.xz"},
         {"name": "agent-platform-server-installer.ps1",
-         "browser_download_url": "https://example.invalid/installer.ps1"},
+         "browser_download_url": "https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/installer.ps1"},
         {"name": "agent-platform-server-x86_64-pc-windows-msvc.zip.sha256",
-         "browser_download_url": "https://example.invalid/sum"},
+         "browser_download_url": "https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/sum"},
         {"name": "agent-platform-server-x86_64-pc-windows-msvc.zip",
-         "browser_download_url": "https://example.invalid/server.zip"},
-        {"name": "sha256.sum", "browser_download_url": "https://example.invalid/sha256.sum"}
+         "browser_download_url": "https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/server.zip"},
+        {"name": "sha256.sum", "browser_download_url": "https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/sha256.sum"}
       ]
     }
     """;
@@ -31,7 +31,7 @@ public class AgentPlatformSetupTests
     [Fact]
     public void PicksTheWindowsServerZip()
     {
-        Assert.Equal("https://example.invalid/server.zip", AgentPlatformSetup.AssetUrl(Release));
+        Assert.Equal("https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/server.zip", AgentPlatformSetup.AssetUrl(Release));
     }
 
     [Fact]
@@ -41,8 +41,19 @@ public class AgentPlatformSetupTests
         // uploading. The caller turns this into "install it yourself", not a crash.
         Assert.Null(AgentPlatformSetup.AssetUrl("""
         {"assets": [{"name": "agent-platform-server-x86_64-unknown-linux-gnu.tar.xz",
-                     "browser_download_url": "https://example.invalid/linux.tar.xz"}]}
+                     "browser_download_url": "https://github.com/tanvoid0/agent-platform/releases/download/v0.3.1/linux.tar.xz"}]}
         """));
         Assert.Null(AgentPlatformSetup.AssetUrl("""{"tag_name": "v0.3.1"}"""));
+    }
+
+    [Fact]
+    public void AZipHostedSomewhereElseIsNotOffered()
+    {
+        // Whatever comes back is unzipped and started, so the right-looking name is not
+        // enough on its own — see Update.UpdateCheck.IsTrustedAssetUrl.
+        Assert.Null(AgentPlatformSetup.AssetUrl("""
+        {"assets": [{"name": "agent-platform-server-x86_64-pc-windows-msvc.zip",
+                     "browser_download_url": "https://evil.example/server.zip"}]}
+        """));
     }
 }

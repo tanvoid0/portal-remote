@@ -121,7 +121,10 @@ public static class AgentPlatformSetup
             if (name is null) continue;
             if (!name.StartsWith(AssetPrefix, StringComparison.OrdinalIgnoreCase)) continue;
             if (!name.EndsWith(AssetSuffix, StringComparison.OrdinalIgnoreCase)) continue;
-            if (asset.TryGetProperty("browser_download_url", out var u) && u.GetString() is { Length: > 0 } url)
+            // Same rule as our own updater, for the same reason: what comes back is
+            // unzipped and started. See Update.UpdateCheck.IsTrustedAssetUrl.
+            if (asset.TryGetProperty("browser_download_url", out var u) && u.GetString() is { Length: > 0 } url &&
+                Update.UpdateCheck.IsTrustedAssetUrl(url))
                 return url;
         }
 

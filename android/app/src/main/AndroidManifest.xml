@@ -29,8 +29,15 @@
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- Backup is off because of one value: the pairing token in this app's DataStore.
+         Holding it is the practical equivalent of keyboard and mouse access to the
+         paired PC (docs/security.md), and Auto Backup would copy it to Google Drive and
+         restore it onto a different phone. Re-pairing is a QR scan; there is nothing
+         else here worth carrying across a device swap. Both attributes: allowBackup
+         covers ≤ API 30, dataExtractionRules is what API 31+ reads. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"

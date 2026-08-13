@@ -43,11 +43,30 @@ public static class UpdateCheck
             var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
             if (name is null || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
             var url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
-            if (url is not null) return new ReleaseInfo(version, url);
+            if (IsTrustedAssetUrl(url)) return new ReleaseInfo(version, url!);
         }
 
         return null;
     }
+
+    /// <summary>
+    /// A release asset URL this app is willing to download and then <b>run</b>.
+    ///
+    /// The release list itself is fetched over TLS from <c>api.github.com</c>, so this is
+    /// not where the trust comes from — it is what stops a URL inside that JSON from
+    /// pointing anywhere else. <see cref="DownloadAndSwapAsync"/> replaces the running
+    /// executable with these bytes and there is no code signature to fall back on, so
+    /// "wherever the JSON said" is one indirection too many for that.
+    ///
+    /// Shared with <see cref="Ai.AgentPlatformSetup"/>, which downloads and starts a
+    /// second program off the same kind of URL.
+    /// </summary>
+    public static bool IsTrustedAssetUrl(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        (uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
+         uri.Host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase) ||
+         uri.Host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Numeric-segment compare, so 0.10.0 beats 0.9.0 where a string compare would not.
@@ -109,6 +128,11 @@ public static class UpdateCheck
     /// </summary>
     public static async Task<string> DownloadAndSwapAsync(ReleaseInfo release, CancellationToken cancel = default)
     {
+        // Checked here as well as in Parse: this is the method that overwrites the exe,
+        // and it should not be reachable with a URL nobody vetted.
+        if (!IsTrustedAssetUrl(release.ExeUrl))
+            throw new InvalidOperationException($"Refusing to update from {release.ExeUrl}: not a GitHub release asset.");
+
         var current = Environment.ProcessPath
                       ?? throw new InvalidOperationException("Cannot locate the running executable.");
         var staged = current + ".new";
