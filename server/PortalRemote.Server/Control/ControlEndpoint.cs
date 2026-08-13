@@ -27,7 +27,7 @@ public static class ControlEndpoint
 
     public static void MapControlEndpoint(
         this WebApplication app, ServerConfig config, ConnectionState connectionState, ShareHub shareHub,
-        NowPlaying nowPlaying, AiHealth ai)
+        NowPlaying nowPlaying, AiHealth ai, AiActions aiActions)
     {
         app.Map("/control", async (HttpContext context, ILoggerFactory loggerFactory) =>
         {
@@ -72,7 +72,7 @@ public static class ControlEndpoint
                 // opens, with no request of its own. Whatever we last learned — this
                 // does not probe, so a cold connect is never held up by a dead port.
                 await client.SendJsonAsync(ai.Snapshot(), context.RequestAborted);
-                await PumpAsync(socket, client, nowPlaying, ai, log, context.RequestAborted);
+                await PumpAsync(socket, client, nowPlaying, ai, aiActions, log, context.RequestAborted);
             }
             catch (OperationCanceledException)
             {
@@ -111,8 +111,8 @@ public static class ControlEndpoint
 
     /// <summary>Read messages until the client closes the socket.</summary>
     private static async Task PumpAsync(
-        WebSocket socket, ClientSocket client, NowPlaying nowPlaying, AiHealth ai, ILogger log,
-        CancellationToken ct)
+        WebSocket socket, ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiActions aiActions,
+        ILogger log, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(ReceiveBufferBytes);
         var pending = new MemoryStream();
@@ -142,7 +142,7 @@ public static class ControlEndpoint
 
                 var text = Encoding.UTF8.GetString(pending.GetBuffer(), 0, (int)pending.Length);
                 pending.SetLength(0);
-                await HandleAsync(client, nowPlaying, ai, text, log, ct);
+                await HandleAsync(client, nowPlaying, ai, aiActions, text, log, ct);
             }
         }
         finally
@@ -153,7 +153,7 @@ public static class ControlEndpoint
     }
 
     private static async Task HandleAsync(
-        ClientSocket client, NowPlaying nowPlaying, AiHealth ai, string text, ILogger log,
+        ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiActions aiActions, string text, ILogger log,
         CancellationToken ct)
     {
         JsonElement message;
@@ -199,6 +199,46 @@ public static class ControlEndpoint
             return;
         }
 
+        // Deciding takes as long as a local model takes to think — tens of seconds is
+        // normal. Awaited here it would hold the pump, and this is the socket carrying
+        // mouse movement, so it runs on its own and answers when it has an answer.
+        if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "ai_act")
+        {
+            var id = Id(message);
+            var goal = message.TryGetProperty("goal", out var g) && g.ValueKind == JsonValueKind.String
+                ? g.GetString() ?? string.Empty
+                : string.Empty;
+            var context = nowPlaying.Snapshot();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await client.SendJsonAsync(await aiActions.DecideAsync(id, goal, context, ct), ct);
+                }
+                catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException
+                                               or OperationCanceledException or InvalidOperationException)
+                {
+                    // The phone left while the model was thinking. Nothing ran, so
+                    // there is nothing to report and nothing to undo.
+                }
+            }, ct);
+            return;
+        }
+
+        // Executed inline: these are the same key presses the buttons send, and they are
+        // as fast. A plan runs once — AiActions holds that, not this.
+        if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "ai_confirm")
+        {
+            var approved = new List<int>();
+            if (message.TryGetProperty("approved", out var list) && list.ValueKind == JsonValueKind.Array)
+                foreach (var index in list.EnumerateArray())
+                    if (index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out var value))
+                        approved.Add(value);
+
+            await client.SendJsonAsync(aiActions.Confirm(Id(message), approved), ct);
+            return;
+        }
+
         try
         {
             var reply = InputActions.Dispatch(message);
@@ -216,6 +256,12 @@ public static class ControlEndpoint
             await SendErrorAsync(client, $"input failed: {ex.Message}", ct);
         }
     }
+
+    /// <summary>The phone's id for this exchange, echoed back on every message about it.</summary>
+    private static string Id(JsonElement message) =>
+        message.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String
+            ? id.GetString() ?? string.Empty
+            : string.Empty;
 
     private static Task SendErrorAsync(ClientSocket client, string detail, CancellationToken ct) =>
         client.SendJsonAsync(new { t = "error", detail }, ct);

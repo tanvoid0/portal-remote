@@ -4,8 +4,8 @@ Design notes for putting a chatbot and an action-taking assistant into the Andro
 app, backed by the **agent-platform** API (`../../ai/agentic-ai/agent-platform`, the
 Rust `agent-platformd`).
 
-**Status:** 7a is built (§13) and 7b is built but not yet driven live (§14). Everything
-else here is design.
+**Status:** 7a is built (§13), 7b is built but not yet driven live (§14), and 7c is built
+and driven end to end against a live backend (§15). Everything else here is design.
 
 The short version: agent-platform already has the exact primitive this needs, the phone
 must never talk to it directly, and the whole feature has to survive the platform being
@@ -475,6 +475,108 @@ The 503 path and the chat pane have not been driven on a device.
 
 **Not built:** 7c onward. Nothing yet calls `/api/v1/decide`, so the assistant can talk
 about the PC but cannot touch it — which is what the stock system prompt tells it to say.
+
+## 15. What is built (7c)
+
+The whole assistant loop — declare, decide, confirm, execute — over handlers that already
+existed. Nothing in `InputActions` changed.
+
+**Server** — `Ai/AiActions.cs`. Six actions (`media_control`, `press_keys`, `type_text`,
+`cast_url`, `player_transport`, `power`), each mapping onto a message the phone's own
+buttons already send, so 7c adds a decision layer rather than a second way to press keys.
+Registration is idempotent by name and happens **on first use, not at startup**: startup is
+the one moment we know the backend is probably down (§4), so registering there would be a
+guaranteed failed request every launch.
+
+**Three deviations from §5, all deliberate:**
+
+- **`now_playing` is context, not an action.** As an action it can only tell the model what
+  it already asked for; as context on every `/decide` it is what makes "pause it" refer to
+  something. The read is still there — it just arrives before the decision instead of after.
+- **Approval is by index, not by `action_id`.** A plan can legitimately contain the same
+  action twice ("type this, then press enter"), and approving by name would run both halves
+  of a pair the user only half-agreed to.
+- **The confirmation is a dialog, not a bottom sheet.** `AlertDialog` is what every other
+  confirmation in this app already uses, including the power menu this one has to match.
+
+**Wire**, on the socket that is already open:
+
+```
+-> {"t":"ai_act","id":"goal-1","goal":"pause it and lock the PC"}
+<- {"t":"ai_plan","id":"goal-1","thought":"…","actions":[{"index":0,"action_id":"power",
+    "summary":"Power: lock","destructive":false,"parameters":{…}}]}
+-> {"t":"ai_confirm","id":"goal-1","approved":[0]}
+<- {"t":"ai_result","id":"goal-1","results":[{"index":0,"ok":true,"detail":"Power: lock"}]}
+```
+
+`ai_act` is answered **off the pump**. Deciding takes as long as a local model takes to
+think — tens of seconds — and this is the socket carrying mouse movement.
+
+**The plain-language summary is written by the PC**, not the phone. The PC is the side that
+knows what these actions actually press, and two implementations of "what will this button
+do" is one too many when the answer is what somebody approves.
+
+**Phone** — `net/AiPlan.kt` and a confirmation dialog in `ui/AssistantScreen.kt`. A second
+send button (the wand) is what asks for a plan: asking a question and asking for this PC to
+be touched are different acts, and inferring which was meant from the wording is a guess
+that presses keys when it is wrong. Everything starts ticked, destructive modes are red and
+take a second confirm, and both the goal and the outcome land in the transcript — a plan
+that simply vanished reads as one that quietly went ahead.
+
+**Verified** against the running server and a live `agent-platformd`, driving `/control` as
+the phone does:
+
+| Case | Result |
+|---|---|
+| `ai_act` "mute the PC" | `media_control`/`mute` planned, confirmed, **executed** — `ok:true` |
+| `ai_act` "press the escape key on the PC" | `press_keys`/`["esc"]` planned, confirmed, **executed** — `ok:true` |
+| The same `ai_confirm` sent twice | second one refused: `"Already run."` |
+| `ai_confirm` for an id the PC never issued | `ai_result` with `"That plan is no longer held. Ask again."` |
+| `ai_act` while a `ping` follows it | `pong` answered first — the pump is not held by the decision |
+| A model that answered in prose | empty action list, no confirmation sheet, transcript line instead |
+| `ai_act` with no agent-platform token | `ai_plan` carrying the fix, not a status code (see below) |
+| Automated checks | 40 server tests pass, 6 of them new (what survives validation, and what the survivors turn into); 116 JVM tests pass, 6 of them new (plan and result parsing) |
+
+Round trip on this machine: **~10s** with `llama3.1:8b` cold, ~1s warm. That is the number
+the "Working out what to do…" line exists for.
+
+**`AgentPlatform.Model` does not choose who plans.** `decide_route` passes an empty model
+id to `decide_actions`, so `/decide` always asks agent-platform's *own* default
+(`DEFAULT_MODEL`); our `Model` only ever reaches `/v1/chat/completions`. Two different
+models can therefore answer the chat and the plan, and nothing in either config says so.
+
+**The model is the weak link, and the validation is what makes that survivable.**
+`gemma4:latest` answered the tool prompt in prose twice out of two, with the thought
+truncated mid-sentence — `/decide` text-parsed it into an empty action list. `llama3.1:8b`
+returned a clean tool call every time. §7's "the model's output is untrusted input" is not
+hypothetical: on this machine, with the wrong model, it is the common case.
+
+**What the 401 shook out.** `agent-platformd` on this machine has a master key set, so
+every route except `/health` refuses us — which means **§9's "empty token is the zero-setup
+path" is not true here**, and the first thing 7c does on a fresh install may well be fail.
+`EnsureSuccessStatusCode`'s wording ("Response status code does not indicate success") was
+going straight to a phone screen, where it tells the person holding it nothing. A 401 has
+one cause and one fix, so it now says so, naming the config file to put a token in.
+
+**Getting a live backend took longer than building against it, and the reason is worth
+recording.** The `agent-platformd` on this machine is spawned by the agent-platform desktop
+app, which hands it an environment of its own — its own master key and its own database.
+Neither matches the repo's `.env`, so the documented "mint a token with
+`AGENT_PLATFORM_MASTER_KEY`" path cannot work against an app-spawned daemon: the key in
+`.env` is simply not the key it is running with, and a direct run against its database is
+refused outright (`migration 1 was previously applied but has been modified`). What worked
+was running `agent-platformd` directly with a key of our own and
+`DATABASE_URL=sqlite:<scratch>?mode=rwc` — note the single-colon form, since `sqlite://C:/…`
+makes sqlx read the drive letter as a URL authority. **§9's setup instructions only apply to
+a daemon you start yourself.**
+
+**Not verified:** the phone. Every result above came from driving `/control` directly, which
+is the same socket and the same frames the app sends — but the confirmation dialog, the
+tick boxes, the second confirm on shutdown and the transcript lines have not been on a
+device. The `power`/destructive path was deliberately not driven live for the obvious
+reason; it is covered by unit tests only.
+
+**Not built:** 7d onward. No voice, no `portal.android.*`, no sessions, no `ExePath` launch.
 
 ## Sources
 

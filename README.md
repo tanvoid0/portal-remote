@@ -308,6 +308,17 @@ Three ways in, in the order the app offers them:
   goes through the same validation as the phone's, so only `http`/`https` ever
   reaches a player, and there is no other action on that surface. The startup
   banner says when it is on.
+- **The assistant sends what you ask it off this machine if its provider is a hosted
+  one.** Every other feature here is LAN-only; this one is not, and how far a message
+  travels is decided by whichever provider `agent-platformd` is configured with — a local
+  model keeps it on the machine, a hosted one does not. That applies to both halves:
+  chat messages, and the goals behind "do this on the PC". The phone never talks to
+  agent-platform directly and never holds its token — the PC does, over loopback — but
+  that is about credentials, not about where the text ends up.
+- **Nothing the assistant proposes runs on its own.** `/decide` only ever returns a plan;
+  the PC validates every action against the six it registered, drops anything else, and
+  runs only the ones ticked on the phone — with a second confirmation for shutdown and
+  restart, and a refusal to run the same plan twice.
 - Anyone holding the pairing token has the practical equivalent of physical
   keyboard/mouse access to the PC — same trust model as RDP or TeamViewer.
   Rotate the token from the app window if it's ever suspected leaked.

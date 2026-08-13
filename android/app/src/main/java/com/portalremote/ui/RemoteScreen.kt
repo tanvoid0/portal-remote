@@ -85,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
+import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
@@ -148,8 +149,13 @@ fun RemoteScreen(
     chat: List<ChatTurn>,
     chatStreaming: Boolean,
     chatError: String?,
+    plan: AiPlan?,
+    deciding: Boolean,
     onProbeAi: (retry: Boolean) -> Unit,
     onSendChat: (String) -> Unit,
+    onAct: (String) -> Unit,
+    onConfirmPlan: (List<Int>) -> Unit,
+    onCancelPlan: () -> Unit,
     onRegenerateChat: () -> Unit,
     onStopChat: () -> Unit,
     onClearChat: () -> Unit,
@@ -340,8 +346,13 @@ fun RemoteScreen(
                             chat = chat,
                             streaming = chatStreaming,
                             error = chatError,
+                            plan = plan,
+                            deciding = deciding,
                             onProbe = onProbeAi,
                             onSend = onSendChat,
+                            onAct = onAct,
+                            onConfirm = onConfirmPlan,
+                            onCancelPlan = onCancelPlan,
                             onRegenerate = onRegenerateChat,
                             onStop = onStopChat,
                             onClear = onClearChat,

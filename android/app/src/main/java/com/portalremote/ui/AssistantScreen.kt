@@ -1,6 +1,7 @@
 package com.portalremote.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.ChatTurn
 
@@ -59,8 +64,13 @@ fun AssistantScreen(
     chat: List<ChatTurn>,
     streaming: Boolean,
     error: String?,
+    plan: AiPlan?,
+    deciding: Boolean,
     onProbe: (retry: Boolean) -> Unit,
     onSend: (String) -> Unit,
+    onAct: (String) -> Unit,
+    onConfirm: (List<Int>) -> Unit,
+    onCancelPlan: () -> Unit,
     onRegenerate: () -> Unit,
     onStop: () -> Unit,
     onClear: () -> Unit,
@@ -73,13 +83,103 @@ fun AssistantScreen(
             chat = chat,
             streaming = streaming,
             error = error,
+            deciding = deciding,
             onSend = onSend,
+            onAct = onAct,
             onRegenerate = onRegenerate,
             onStop = onStop,
             onClear = onClear,
         )
     } else {
         BackendDown(state = state, onProbe = onProbe)
+    }
+
+    // Outside the pane split on purpose: a plan asked for a moment ago must not be
+    // dismissed by the backend blinking, because the actions in it are still ours to run.
+    plan?.let { ConfirmPlan(plan = it, onConfirm = onConfirm, onCancel = onCancelPlan) }
+}
+
+/**
+ * The confirmation — step 7c, and structurally the whole of §7.
+ *
+ * **Nothing auto-executes.** Every action is listed in plain language with its parameters,
+ * approval is per-action, and the two power modes that lose unsaved work take a second
+ * confirm on top — the same rule the TV remote's power menu already follows, for the same
+ * reason: a mis-tap here costs whatever was open on a machine in another room.
+ */
+@Composable
+private fun ConfirmPlan(plan: AiPlan, onConfirm: (List<Int>) -> Unit, onCancel: () -> Unit) {
+    // Everything starts ticked: the model was asked to do this, and a sheet that starts
+    // empty makes the common case — "yes, all of that" — the fiddly one.
+    val approved = remember(plan.id) { mutableStateListOf<Int>().apply { addAll(plan.actions.map { it.index }) } }
+    var confirmingDestructive by remember(plan.id) { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        icon = { Icon(Icons.Filled.AutoAwesome, contentDescription = null) },
+        title = { Text("Do this on the PC?") },
+        text = {
+            Column {
+                // The model's own reasoning, which is the only thing that explains *why*
+                // these actions and not others.
+                if (plan.thought.isNotBlank()) {
+                    Text(
+                        plan.thought,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+                plan.actions.forEach { action ->
+                    val ticked = action.index in approved
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (ticked) approved.remove(action.index) else approved.add(action.index)
+                            }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = ticked, onCheckedChange = null)
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            action.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (action.destructive) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val destructive = plan.actions.any { it.destructive && it.index in approved }
+                if (destructive) confirmingDestructive = true else onConfirm(approved.toList())
+            }) { Text("Run") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+
+    if (confirmingDestructive) {
+        AlertDialog(
+            onDismissRequest = { confirmingDestructive = false },
+            title = { Text("Shut down or restart the PC?") },
+            text = { Text("Anything unsaved on the PC will be lost.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingDestructive = false
+                    onConfirm(approved.toList())
+                }) { Text("Do it") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDestructive = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 
@@ -138,7 +238,9 @@ private fun ChatPane(
     chat: List<ChatTurn>,
     streaming: Boolean,
     error: String?,
+    deciding: Boolean,
     onSend: (String) -> Unit,
+    onAct: (String) -> Unit,
     onRegenerate: () -> Unit,
     onStop: () -> Unit,
     onClear: () -> Unit,
@@ -208,6 +310,17 @@ private fun ChatPane(
             if (chat.isNotEmpty() && !streaming) {
                 TextButton(onClick = onClear) { Text("Clear") }
             }
+            // A local model deciding takes tens of seconds. Without this, "Do it" is a
+            // button that looks like it did nothing for most of a minute.
+            if (deciding) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    "Working out what to do…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         Row(
@@ -234,6 +347,18 @@ private fun ChatPane(
                 }),
                 maxLines = 4,
             )
+            // Two buttons, because asking a question and asking for this PC to be touched
+            // are different acts. Guessing which was meant from the wording is a guess
+            // this app doesn't have to make — and the wrong guess presses keys.
+            TransportButton(
+                icon = Icons.Filled.AutoAwesome,
+                description = "Do it on the PC",
+                filled = false,
+                enabled = draft.isNotBlank() && !streaming && !deciding,
+            ) {
+                onAct(draft)
+                draft = ""
+            }
             TransportButton(
                 icon = Icons.AutoMirrored.Filled.Send,
                 description = "Send",

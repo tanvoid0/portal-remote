@@ -16,6 +16,7 @@ import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
 import com.portalremote.net.AiChat
 import com.portalremote.net.AiChatException
+import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.ChatEvent
 import com.portalremote.net.ChatTurn
@@ -51,6 +52,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** How long WsClient gets to fix a drop on the known address before a discovery
@@ -91,6 +93,14 @@ private const val CAST_TARGETS = "cast_targets"
 
 /** Whether the assistant's backend is up, pushed by the PC. */
 private const val AI_STATE = "ai_state"
+
+/** A goal for the assistant to plan, and the plan that comes back — step 7c. */
+private const val AI_ACT = "ai_act"
+private const val AI_PLAN = "ai_plan"
+
+/** The subset of a plan the user approved, and what running it did. */
+private const val AI_CONFIRM = "ai_confirm"
+private const val AI_RESULT = "ai_result"
 
 /** Errors come back as `{"t":"error","detail":…}`; this is the one that means the
  *  receiver page has gone away since we last cast to it. */
@@ -181,6 +191,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _chatStreaming = MutableStateFlow(false)
 
     val chatStreaming: StateFlow<Boolean> = _chatStreaming.asStateFlow()
+
+    private val _plan = MutableStateFlow<AiPlan?>(null)
+
+    /** The plan waiting to be confirmed, or null. **Nothing runs while this is set** —
+     *  the sheet it drives is the confirmation, not a preview of something already
+     *  happening (`docs/phase7-assistant.md` §7). */
+    val plan: StateFlow<AiPlan?> = _plan.asStateFlow()
+
+    private val _deciding = MutableStateFlow(false)
+
+    /** A goal is with the model. A local one takes tens of seconds to think, so this is
+     *  the difference between a slow answer and a tap that did nothing. */
+    val deciding: StateFlow<Boolean> = _deciding.asStateFlow()
+
+    /** Names each goal so the plan and its result can be tied back to it. The PC refuses
+     *  to run one id twice, which is what stops a reconnect-and-resend doing the same
+     *  thing to the PC a second time (§4.4). */
+    private var goalId = 0L
 
     private var nextShareId = 0L
 
@@ -312,6 +340,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (json.optString("t") == AI_STATE) {
                     _aiState.value = AiState.fromPush(json)
+                    return@collect
+                }
+                if (json.optString("t") == AI_PLAN) {
+                    onPlan(AiPlan.fromPush(json))
+                    return@collect
+                }
+                if (json.optString("t") == AI_RESULT) {
+                    // What happened goes in the transcript rather than a toast: it is the
+                    // record of something this app did to the PC, and it is worth being
+                    // able to scroll back to.
+                    _chat.value += ChatTurn(ChatTurn.ASSISTANT, AiPlan.describeResult(json))
                     return@collect
                 }
                 if (json.optString("t") == CAST_STATUS) {
@@ -600,6 +639,72 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Ask the assistant to *do* something — step 7c.
+     *
+     * Deliberately a different button from Send. Asking a question and asking for the PC
+     * to be touched are different acts, and inferring which one was meant from the wording
+     * is a guess this app does not have to make.
+     */
+    fun askAssistant(goal: String) {
+        val text = goal.trim()
+        if (text.isEmpty() || _deciding.value || _plan.value != null) return
+        _chatError.value = null
+        _chat.value += ChatTurn(ChatTurn.USER, text)
+        _deciding.value = true
+        send(JSONObject().put("t", AI_ACT).put("goal", text).put("id", "goal-${goalId++}"))
+    }
+
+    /**
+     * Run the actions the user ticked, by index.
+     *
+     * The subset is the point: a plan is not all-or-nothing, and approving "pause it" does
+     * not have to mean approving "and shut down the PC" (§5).
+     */
+    fun confirmPlan(approved: List<Int>) {
+        val plan = _plan.value ?: return
+        _plan.value = null
+        if (approved.isEmpty()) {
+            _chat.value += ChatTurn(ChatTurn.ASSISTANT, "Nothing was run.")
+            return
+        }
+        send(
+            JSONObject()
+                .put("t", AI_CONFIRM)
+                .put("id", plan.id)
+                .put("approved", JSONArray(approved)),
+        )
+    }
+
+    /** Dismiss without running anything. Says so in the transcript, because a plan that
+     *  simply vanished reads as one that quietly went ahead. */
+    fun cancelPlan() {
+        if (_plan.value == null) return
+        _plan.value = null
+        _chat.value += ChatTurn(ChatTurn.ASSISTANT, "Cancelled — nothing was run.")
+    }
+
+    /**
+     * A plan arrived.
+     *
+     * Three endings, and only one of them is a sheet: a decision that failed, an assistant
+     * that had nothing to do, and an actual proposal. The first two belong in the
+     * transcript — putting an empty confirmation sheet on screen would be asking the user
+     * to approve nothing.
+     */
+    private fun onPlan(plan: AiPlan) {
+        _deciding.value = false
+        when {
+            plan.error != null -> _chatError.value = plan.error
+            plan.actions.isEmpty() ->
+                _chat.value += ChatTurn(
+                    ChatTurn.ASSISTANT,
+                    plan.thought.ifBlank { "Nothing I can do on the PC covers that." },
+                )
+            else -> _plan.value = plan
+        }
+    }
+
+    /**
      * Ask again for the last reply.
      *
      * Drops the previous answer rather than appending a second one: the user is saying
@@ -624,6 +729,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearChat() {
         stopChat()
+        _plan.value = null
+        _deciding.value = false
         _chat.value = emptyList()
         _chatError.value = null
     }

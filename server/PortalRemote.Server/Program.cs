@@ -75,6 +75,11 @@ internal static class Program
             if (share.HasClients) _ = share.BroadcastAsync(payload);
         };
 
+        // The acting half — step 7c. Registers what this PC can do the first time
+        // somebody asks for something, not at startup: the backend is usually not up
+        // yet, and a guaranteed-failed request every launch is not a registration.
+        using var aiActions = new AiActions(config.AgentPlatform);
+
         // Built before the app so the endpoints can be mapped against it; it doesn't
         // touch the network until Start().
         using var dlna = new DlnaRenderer(config);
@@ -86,7 +91,7 @@ internal static class Program
         // filter nothing.
         CastRouter.OwnRendererUuid = dlna.Uuid;
 
-        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, dlna);
+        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, aiActions, dlna);
 
         try
         {
@@ -147,7 +152,7 @@ internal static class Program
 
     private static WebApplication BuildApp(
         ServerConfig config, string[] args, ConnectionState connectionState, PairApproval approval, ShareHub share,
-        NowPlaying nowPlaying, AiHealth ai, DlnaRenderer dlna)
+        NowPlaying nowPlaying, AiHealth ai, AiActions aiActions, DlnaRenderer dlna)
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -189,7 +194,7 @@ internal static class Program
                 : Results.Ok(new { token, name = Environment.MachineName, port = config.RunningPort });
         });
 
-        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai);
+        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai, aiActions);
         app.MapFilesEndpoints(config);
         app.MapScreenEndpoints(config);
         app.MapShareEndpoints(config, share);
