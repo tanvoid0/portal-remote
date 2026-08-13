@@ -1,7 +1,10 @@
 package com.portalremote.ui
 
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.SystemClock
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -34,6 +37,7 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -42,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -95,6 +100,7 @@ fun MediaScreen(
     cast: CastState?,
     castStatus: CastStatus?,
     onCast: (url: String) -> Unit,
+    onCastFile: (Uri) -> String?,
     onPlayer: (JSONObject) -> Unit,
 ) {
     Column(
@@ -105,7 +111,7 @@ fun MediaScreen(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        CastLink(onCast)
+        CastLink(onCast, onCastFile)
 
         cast?.let {
             Spacer(Modifier.height(16.dp))
@@ -349,7 +355,7 @@ private fun formatTime(ms: Long): String {
 private const val CAST_ACK_MS = 4_000L
 
 @Composable
-private fun CastLink(onCast: (url: String) -> Unit) {
+private fun CastLink(onCast: (url: String) -> Unit, onCastFile: (Uri) -> String?) {
     var typed by remember { mutableStateOf("") }
     var lastSent by remember { mutableStateOf<String?>(null) }
     // Normalising as the user types is also the enabled-state check: if it can't be
@@ -389,6 +395,7 @@ private fun CastLink(onCast: (url: String) -> Unit) {
             onClick = submit,
         )
     }
+    CastFile(onCastFile)
     // An acknowledgement, not a status: the PC has it, and a line still saying so ten
     // minutes later is claiming to describe the present.
     LaunchedEffect(lastSent) {
@@ -402,6 +409,46 @@ private fun CastLink(onCast: (url: String) -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+/**
+ * Phase 4d: cast a file that lives on this phone. The phone serves it and the PC pulls
+ * it, so this is a link like any other by the time it reaches the wire — nothing is
+ * uploaded, and a two-hour film starts playing immediately.
+ */
+@Composable
+private fun CastFile(onCastFile: (Uri) -> String?) {
+    var problem by remember { mutableStateOf<String?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) problem = onCastFile(uri)
+    }
+
+    TextButton(
+        onClick = {
+            problem = null
+            // Audio and images too: the receiver page and mpv both take whatever the
+            // format is, and "video only" would be an arbitrary restriction.
+            picker.launch(arrayOf("video/*", "audio/*", "image/*"))
+        },
+        modifier = Modifier.padding(top = 4.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.VideoLibrary,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Text("Cast a file from this phone", modifier = Modifier.padding(start = 8.dp))
+    }
+    // Every reason this fails is something the user can act on — a lost connection, an
+    // address the PC can't reach, a document with no length — so none of them are worth
+    // swallowing.
+    problem?.let {
+        Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
         )
     }
 }

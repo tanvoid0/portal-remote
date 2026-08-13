@@ -4,8 +4,8 @@ Research and design notes for turning Portal Remote into a Web-Video-Caster-styl
 app where the **PC is the screen** and the phone is the browser/remote — while
 keeping everything Phases 0–3 already do (PC → phone control) working.
 
-**Status:** 4a, 4b, 4e and 4g are built — see §13. Everything else in this document is
-still design.
+**Status:** 4a, 4b, 4e, 4g and the file-serving half of 4d are built — see §13.
+Everything else in this document is still design.
 
 ---
 
@@ -893,6 +893,44 @@ the real client messages:
 is proven is every line of our side of the pipe and none of mpv's. Nothing here forwards
 `Referer`/`Cookie` either (`--http-header-fields`), because nothing on the phone sends
 them yet; that arrives with 4d, not before.
+
+### The phone as a server (4d, the `/f/<id>` half)
+
+`net/MediaServer.kt` — `GET`/`HEAD`, one route, byte ranges, and nothing else. Pick a
+video in the Media tab and the phone mints an id for it and casts
+`http://<phone>:<port>/f/<id>?token=…`; mpv or the receiver page pulls the bytes. Nothing
+is uploaded first, which is the point — a two-hour film starts playing immediately rather
+than after it has crossed the Wi-Fi twice.
+
+- **Only ids minted by `offer` are servable.** No path from the wire is ever resolved
+  against anything, which is the whole traversal defence. `FilePaths.cs` has to sanitise
+  because it takes a path; this doesn't take one.
+- **Same pairing token**, in the query string, compared with `MessageDigest.isEqual`. Ids
+  are 12 random bytes on top of that.
+- **Bound to one address, not `0.0.0.0`** — the one on the PC's subnet, chosen by
+  `pickLocalAddress`. A phone has several (Wi-Fi, a VPN's tun, mobile data); handing the
+  PC the wrong one is a cast that fails with no explanation at either end. The server is
+  rebuilt if that address or the pairing changes.
+- **Ephemeral port.** The URL carries it, so the fixed `:8766` in §3 would only have been
+  one more thing that can already be taken.
+- **Started on first use, closed with the ViewModel.** No foreground service, so this
+  matches the ceiling §4 already describes: the phone must stay awake and on Wi-Fi for
+  the length of the film. The read grant on a picked document dies with the process
+  anyway, so nothing here is worth outliving it.
+
+**Verified** — 10 JVM tests driving the real server over real loopback sockets: whole
+file, `bytes=100-199`, open-ended `bytes=900-`, suffix `bytes=-100` (how ffmpeg reaches a
+trailing `moov` atom), `HEAD` with no body, 401 with a wrong or missing token, 404 for an
+id nobody offered *and* for `/f/../../etc/passwd`, 416 past the end with
+`Content-Range: bytes */1000`, and the subnet match in `pickLocalAddress`.
+
+**Not verified:** the Android half — the picker, the `ContentResolver` size/name lookup
+and the `skip()`-based seek — and a real PC pulling a real film. Those need a device.
+
+**Not built:** `/p/<id>`, the cookie-replaying proxy. It is what makes *dumb* receivers
+work (§4), and we have none yet — our own PC can be handed headers directly, which is
+route 1 and cheaper. Build it with the first third-party target, not before. Subtitles
+and the CORS header Chromecast needs come with it.
 
 **Not built yet, in order:** everything in §11 from 4c onward.
 

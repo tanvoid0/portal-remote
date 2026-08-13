@@ -1,5 +1,6 @@
 package com.portalremote.ui
 
+import android.net.Uri
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
@@ -59,6 +60,7 @@ fun ControlScreen(
     cast: CastState?,
     castStatus: CastStatus?,
     onCast: (url: String) -> Unit,
+    onCastFile: (Uri) -> String?,
     onPlayer: (JSONObject) -> Unit,
     onPower: (mode: String) -> Unit,
 ) {
@@ -111,6 +113,7 @@ fun ControlScreen(
                         cast = cast,
                         castStatus = castStatus,
                         onCast = onCast,
+                        onCastFile = onCastFile,
                         onPlayer = onPlayer,
                     )
                     ControlMode.REMOTE -> TvRemoteScreen(

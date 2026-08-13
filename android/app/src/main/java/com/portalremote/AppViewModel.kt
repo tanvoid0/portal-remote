@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,16 +17,21 @@ import com.portalremote.data.SavedHost
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
 import com.portalremote.net.ConnectionState
+import com.portalremote.net.MediaServer
 import com.portalremote.net.NowPlaying
+import com.portalremote.net.Protocol
 import com.portalremote.net.ServerHello
 import com.portalremote.net.ShareApi
 import com.portalremote.net.ShareEntry
 import com.portalremote.net.ShareKind
 import com.portalremote.net.WsClient
 import com.portalremote.net.discoverHosts
+import com.portalremote.net.localIpv4Addresses
+import com.portalremote.net.pickLocalAddress
 import com.portalremote.ui.copyToClipboard
 import com.portalremote.ui.displayNameOf
 import com.portalremote.ui.notifyShare
+import java.io.IOException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -118,6 +124,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val castStatus: StateFlow<CastStatus?> = _castStatus.asStateFlow()
 
     private var nextShareId = 0L
+
+    /** Serves picked files to the PC. Null until something is cast from this phone —
+     *  a listening socket nobody asked for is not worth the battery. */
+    private var mediaServer: MediaServer? = null
+
+    /** `<token>@<address>` the live [mediaServer] was started for. */
+    private var mediaKey: String? = null
 
     /**
      * Outgoing shares that haven't landed yet, keyed by entry id and holding the
@@ -486,6 +499,74 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun send(json: JSONObject) = ws.send(json)
 
+    /**
+     * Cast a file that lives on this phone — phase 4d of `docs/phase4-casting.md`.
+     *
+     * The phone becomes the server for the length of the film: it mints an id for the
+     * picked document and hands the PC a URL pointing back here, which mpv or the
+     * receiver page then pulls with range requests. Nothing is uploaded first; a
+     * two-gigabyte film would otherwise have to cross the Wi-Fi before playing.
+     *
+     * Returns null when the cast went out, or the reason it didn't.
+     */
+    fun castLocalFile(uri: Uri): String? {
+        val host = currentHost ?: return "Not connected to a PC"
+        // Which of this phone's addresses the PC can dial back on. Getting this wrong
+        // produces a cast that fails silently at the other end.
+        val local = pickLocalAddress(localIpv4Addresses(), host.host)
+            ?: return "This phone has no network address the PC could reach"
+
+        val resolver = getApplication<Application>().contentResolver
+        var name = "Video"
+        var size = -1L
+        resolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (cursor.moveToFirst()) {
+                if (nameColumn >= 0) name = cursor.getString(nameColumn) ?: name
+                if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) size = cursor.getLong(sizeColumn)
+            }
+        }
+        // No length means no Content-Length and no seeking, and a player that can't
+        // seek in a local film is worse than one that says it can't play it.
+        if (size <= 0) return "Can't tell how big that file is, so it can't be streamed"
+
+        val server = mediaServer(host.token, local) ?: return "Couldn't open a port on this phone"
+        val id = server.offer(
+            MediaServer.Item(name, resolver.getType(uri) ?: "application/octet-stream", size) { offset ->
+                val stream = resolver.openInputStream(uri) ?: throw IOException("can't read $uri")
+                // ponytail: skip() rather than a seekable descriptor. On a MediaStore or
+                // file-backed document this *is* a seek; on an exotic provider it reads
+                // and throws away. Swap to openFileDescriptor if that ever shows up.
+                var skipped = 0L
+                while (skipped < offset) {
+                    val moved = stream.skip(offset - skipped)
+                    if (moved <= 0) break
+                    skipped += moved
+                }
+                stream
+            }
+        )
+
+        val url = server.urlFor(id, local) ?: return "Couldn't open a port on this phone"
+        send(Protocol.cast(url, name))
+        return null
+    }
+
+    /**
+     * The file server, started on first use and rebuilt when the pairing or this
+     * phone's address changes — a URL minted against the old address is dead anyway.
+     */
+    private fun mediaServer(token: String, address: String): MediaServer? {
+        val key = "$token@$address"
+        if (mediaKey != key) {
+            mediaServer?.close()
+            mediaServer = runCatching { MediaServer(token).apply { start(address) } }.getOrNull()
+            mediaKey = if (mediaServer != null) key else null
+        }
+        return mediaServer
+    }
+
     fun disconnect() {
         ws.disconnect()
     }
@@ -500,6 +581,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         ws.disconnect()
+        // The read grant on a picked document dies with the process anyway, so there
+        // is nothing here worth outliving it.
+        mediaServer?.close()
     }
 }
 

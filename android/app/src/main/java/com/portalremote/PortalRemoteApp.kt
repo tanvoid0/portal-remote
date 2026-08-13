@@ -101,6 +101,7 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             cast = cast,
                             castStatus = castStatus,
                             shares = shares,
+                            onCastFile = { viewModel.castLocalFile(it) },
                             onShareText = { viewModel.shareText(it) },
                             onRetryShare = { viewModel.retryShare(it) },
                             onForget = { viewModel.forgetHost() },

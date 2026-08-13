@@ -1,5 +1,6 @@
 package com.portalremote.ui
 
+import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
@@ -129,6 +130,7 @@ fun RemoteScreen(
     cast: CastState?,
     castStatus: CastStatus?,
     shares: List<ShareEntry>,
+    onCastFile: (Uri) -> String?,
     onShareText: (String) -> Unit,
     onRetryShare: (Long) -> Unit,
     onForget: () -> Unit,
@@ -264,6 +266,7 @@ fun RemoteScreen(
                             cast = cast,
                             castStatus = castStatus,
                             onCast = { url -> gatedSend(Protocol.cast(url)) },
+                            onCastFile = onCastFile,
                             onPlayer = gatedSend,
                             onPower = { mode -> gatedSend(Protocol.power(mode)) },
                         )
