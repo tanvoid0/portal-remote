@@ -47,7 +47,8 @@ free — the same route `FilesScreen` already uses).
 **Phone** (`android/`)
 
 - `net/ShareApi.kt`, `net/ShareEntry.kt` — transport and the history model.
-- `ui/ShareScreen.kt` — the list, the "Send clipboard" button, and the clipboard and
+- `ui/ShareScreen.kt` — the chat thread and its composer (clipboard suggestion, attach
+  menu, one text field), the searchable library view, and the clipboard and
   notification helpers.
 - `AndroidManifest.xml` — the `ACTION_SEND` intent filter. **This is the feature.**
   Everything else is plumbing behind it; the share sheet is how anyone actually

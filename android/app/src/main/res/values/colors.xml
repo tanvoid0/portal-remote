@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="launch_background">#FF0F1420</color>
+    <!-- `bg` light, matching Theme.kt's BgLight; values-night has the dark one. -->
+    <color name="launch_background">#FFFAFAFA</color>
     <color name="ic_launcher_background">#FF2563EB</color>
 </resources>

@@ -262,8 +262,9 @@ Rules:
     a *sibling* node, not on the bar itself, or it takes the tab icons with it. API 31+;
     below that the bar is simply solid. The two list screens take the bar height as a
     `bottomInset` param and re-apply it to their `LazyColumn`'s `contentPadding` and to
-    their FAB and snackbar — rows scroll under the glass, but nothing you have to *hit*
-    or read ends up behind it.
+    anything anchored at the bottom — Files' FAB, both screens' snackbars, Share's
+    composer. Rows scroll under the glass, but nothing you have to *hit* or read ends up
+    behind it.
   - **A dead session is not a dropped one, and the dot has three states.** A rejected
     token used to drop the whole shell back to PairScreen — losing the folder Files was
     showing and anything in flight, and replacing the screen under a moving finger with
@@ -495,25 +496,56 @@ Rules:
     since nothing else re-runs the listing and at the root there isn't even a folder to
     step into and back from. The empty state is inside the refresh box too and scrolls
     for it, because an empty folder is the most likely one to want re-checking.
-- **ShareScreen** — the same list spec as Files, and deliberately the *secondary*
-  surface for its own feature: the primary way in is the system share sheet
-  (`ACTION_SEND`), because opening this app to share something into it would defeat
-  the point. Rows are icon-per-kind (link/image/file/note, per §11's recognition
-  rule), incoming tinted `accent` and outgoing `text-secondary` so direction reads
-  without a label. Empty state carries the three ways to send something, since none
-  of them are visible from this screen. Notifications are the one piece of chrome
-  that fires when the user isn't looking: heads-up importance, and the payload is
-  already on the clipboard before it appears — the notification is a receipt, not a
-  step. A share that hasn't gone across yet reads "Waiting for your PC" in
-  `text-secondary`, never "Failed" in `danger`: it is queued and will be re-sent on
-  the next reconnect, and colouring it as a failure would tell the user to do
-  something about a state the app is already handling. It is one of the two tabs
-  whose list runs *under* the frosted nav bar, so it takes the bar's height as a
-  `bottomInset` and re-applies it as `contentPadding` — content padding, not a
-  `Modifier.padding`, because translucency needs something moving behind it while the
-  last row still ends above it. The FAB and snackbar clear the bar outright: a "Send
-  clipboard" button read through a blur is one you can see and can't reliably hit. See
+- **ShareScreen** — a **conversation between the two devices**, and deliberately the
+  *secondary* surface for its own feature: the primary way in is the system share
+  sheet (`ACTION_SEND`), because opening this app to share something into it would
+  defeat the point. Two views over one history, switched by a pair of `FilterChip`s at
+  the top — chips because this is chrome over one feature, the job the mirror's chips
+  do, not a second level of navigation under the shell's own tabs. Notifications are
+  the one piece of chrome that fires when the user isn't looking: heads-up importance,
+  and the payload is already on the clipboard before it appears — the notification is
+  a receipt, not a step. A share that hasn't gone across yet reads "Waiting for your
+  PC" in `text-secondary`, never "Failed" in `danger`: it is queued and will be re-sent
+  on the next reconnect, and colouring it as a failure would tell the user to do
+  something about a state the app is already handling. See
   [phase5-share.md](phase5-share.md).
+  - **Chat** — the default view. Bubbles sided by device (this phone right in
+    `primaryContainer`, the PC left in `surfaceVariant`) with the squared-off corner
+    pointing at its own side: direction is carried by position and colour, which the
+    eye reads without stopping, so no bubble spells out who sent it. A hand-off
+    between two devices in front of you *is* a conversation, and a thread is the shape
+    people already read fluently for "who sent what, in what order". The list is
+    `reverseLayout` over the model's newest-first order rather than a re-sorted copy —
+    that puts the newest at the bottom, opens the view there, and pushes an arriving
+    share in from the bottom edge, none of which is true of a list merely sorted the
+    other way. File and image entries render as icon-plus-name, not as a sentence.
+  - **Composer** — pinned under the thread, and the only place in the app where the
+    frosted nav bar has something opaque behind it: a text field you can see through
+    the glass and can't reliably hit is worse than one that stops above it, so the
+    composer's surface runs to the screen edge and its controls take the `bottomInset`
+    as padding *inside* that surface. One field for everything typed, because
+    `ShareKind.forText` already decides link vs note on both ends of the wire — asking
+    the user to declare it would be asking for something already known. Attachments
+    are an attach-icon menu (Image → the system photo picker, one uri and no media
+    permission to answer; File → `GetContent`). Above the field, a **clipboard
+    suggestion** row: the clipboard is invisible state, so it shows what it would send
+    — the first two lines, the kind's icon, or a decoded thumbnail when what's copied
+    is an image — and disappears once there's a draft, since at that point it isn't
+    what the user is about to send. Everything here ends at the same two calls the
+    share sheet makes; there is no second code path for sending. Sends carry
+    `haptics.tap()` per §6a.
+  - **Library** — the same entries as rows (the Files list spec: icon-per-kind per
+    §11's recognition rule, incoming tinted `accent` and outgoing `text-secondary`),
+    with a search field, a scrolling row of kind filters (All/Links/Images/Files/Notes)
+    and a newest/oldest sort chip that flips rather than opening a menu — there are
+    exactly two orders, and a menu to pick between two things is a menu too many. This
+    is the view for "where did that PDF go", which a thread answers only with
+    scrolling. Its rows are what runs *under* the frosted bar, taking the bar's height
+    as `bottomInset` and re-applying it as `contentPadding` — content padding, not a
+    `Modifier.padding`, because translucency needs something moving behind it while the
+    last row still ends above it. The snackbar clears the bar outright, for the same
+    reason. Filtering is a plain list operation: the history is capped in the model, so
+    an index would be an index over a list that fits in a screenful of RAM.
 - **ScreenScreen** (mirror) — belongs to §1's high-frequency bucket, the strictest
   case in the app: **zero animation on the surface itself**. The frame is the
   content, it refreshes 8–15× a second on its own, and any transition layered on

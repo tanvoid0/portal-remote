@@ -2,9 +2,12 @@
 <resources>
     <!--
       Compose owns all in-app theming; this XML theme only controls the window before
-      the first frame. A dark window background avoids a white flash on launch.
+      the first frame — and one thing after it: WebView reads `isLightTheme` off the
+      activity theme to decide whether algorithmic darkening applies, so this pair
+      (here + values-night) is what makes web pages follow the system theme. A
+      framework Light/dark parent defines that attribute for us from API 29 on.
     -->
-    <style name="Theme.PortalRemote" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.PortalRemote" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/launch_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

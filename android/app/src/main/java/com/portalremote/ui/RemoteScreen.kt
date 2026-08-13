@@ -151,6 +151,7 @@ fun RemoteScreen(
     onStopChat: () -> Unit,
     onClearChat: () -> Unit,
     onShareText: (String) -> Unit,
+    onShareUri: (Uri) -> Unit,
     onRetryShare: (Long) -> Unit,
     onForget: () -> Unit,
 ) {
@@ -314,6 +315,7 @@ fun RemoteScreen(
                             host = host,
                             shares = shares,
                             onShareText = onShareText,
+                            onShareUri = onShareUri,
                             onRetry = onRetryShare,
                             bottomInset = padding.calculateBottomPadding(),
                         )

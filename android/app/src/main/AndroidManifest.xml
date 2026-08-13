@@ -27,6 +27,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.PortalRemote"
             android:label="@string/app_name"
             android:launchMode="singleTop">

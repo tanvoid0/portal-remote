@@ -124,6 +124,7 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             onStopChat = { viewModel.stopChat() },
                             onClearChat = { viewModel.clearChat() },
                             onShareText = { viewModel.shareText(it) },
+                            onShareUri = { viewModel.shareUri(it) },
                             onRetryShare = { viewModel.retryShare(it) },
                             onForget = { viewModel.forgetHost() },
                         )

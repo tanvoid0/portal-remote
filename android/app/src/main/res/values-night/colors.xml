@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- `bg` dark, matching Theme.kt's BgDark — see docs/design-system.md §3. -->
+    <color name="launch_background">#FF0F1420</color>
+</resources>

@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -80,6 +81,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -87,6 +89,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.ProfileStore
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.portalremote.data.BrowserSettings
@@ -151,6 +154,9 @@ fun BrowserScreen(
     var fullscreenView by remember { mutableStateOf<View?>(null) }
 
     val tab = session.ensureOne()
+    // A page paints white until its own background lands; on a dark app that's a flash
+    // on every load. The WebView starts on the app's background colour instead.
+    val pageBackground = MaterialTheme.colorScheme.background.toArgb()
 
     LaunchedEffect(Unit) { adBlock.load(context) }
     LaunchedEffect(settings.adBlockEnabled, settings.allowedHosts) {
@@ -179,7 +185,11 @@ fun BrowserScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // System bars are hidden app-wide and the window doesn't fit them, so nothing pads
+    // for the keyboard on its own: without this the IME covers the bottom of the page —
+    // including whatever field was just tapped, which is every search box on the web —
+    // and the address bar when the page is short enough to sit under it.
+    Box(modifier = Modifier.fillMaxSize().imePadding()) {
         Column(modifier = Modifier.fillMaxSize()) {
             BrowserBar(
                 address = address,
@@ -239,6 +249,7 @@ fun BrowserScreen(
                                 ctx = ctx,
                                 tab = tab,
                                 adBlock = adBlock,
+                                background = pageBackground,
                                 settingsProvider = { settings },
                                 onTitle = { title ->
                                     tab.title = title
@@ -401,6 +412,7 @@ private fun newWebView(
     ctx: Context,
     tab: BrowserTab,
     adBlock: AdBlock,
+    background: Int,
     settingsProvider: () -> BrowserSettings,
     onTitle: (String?) -> Unit,
     onFullscreen: (View?) -> Unit,
@@ -442,7 +454,19 @@ private fun newWebView(
         // people install a blocker to stop, and casting doesn't need local playback.
         mediaPlaybackRequiresUserGesture = true
         setGeolocationEnabled(false)
+
+        // Dark mode, the way a current browser does it: a site that ships its own dark
+        // theme gets `prefers-color-scheme: dark` and renders it; a site that doesn't
+        // gets WebView's own darkening. Both are driven by the *activity* theme's
+        // `isLightTheme` — see values/themes.xml and values-night/themes.xml, which is
+        // where "follows the system" actually comes from. Needs WebView on API 29+;
+        // below that pages stay light, which is the old behaviour, not a new bug.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(this, true)
+        }
     }
+
+    setBackgroundColor(background)
 
     setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
         downloadFile(ctx, url, userAgent, contentDisposition, mimeType)
