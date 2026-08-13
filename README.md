@@ -21,7 +21,7 @@ PC.
   <img src="docs/assets/screenshots/android-stats.png" width="180" alt="Monitor tab, stats mode in dark: lit CPU and memory dials, a glowing minute-long load trace, and a lit cell per logical core">
   <img src="docs/assets/screenshots/android-stats-light.png" width="180" alt="The same dashboard in light mode: identical panels, dials and meters redrawn as ink on paper rather than light on black">
   <img src="docs/assets/screenshots/android-stats-detail.png" width="180" alt="Monitor tab, stats mode scrolled down: the mirrored network trace, a segmented meter per fixed drive, and the processes using the most CPU">
-  <img src="docs/assets/screenshots/android-browser.png" width="180" alt="Browser tab: an in-app browser with adblock, showing this project's own repository, with the cast button beside the address bar">
+  <img src="docs/assets/screenshots/android-browser.png" width="180" alt="Browser tab: an in-app browser showing this project's own repository, with the address bar at the bottom within thumb reach">
   <img src="docs/assets/screenshots/android-screen.png" width="180" alt="Monitor tab, screen mode: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
   <img src="docs/assets/screenshots/android-assistant.png" width="180" alt="Assistant tab: a question answered in text, followed by a proposed PC action the user must approve before anything runs">
 </p>
@@ -29,6 +29,7 @@ PC.
 <p align="center">
   <img src="docs/assets/screenshots/android-share.png" width="180" alt="Transfer tab, share mode: a thread of links and notes sent to the PC, each bubble squared off on the sending device's side, with the composer below">
   <img src="docs/assets/screenshots/android-files.png" width="180" alt="Transfer tab, files mode: the PC's shared folder as a list of files and folders with sizes, a download button per row and an upload action">
+  <img src="docs/assets/screenshots/android-browser-adblock.png" width="180" alt="Browser tab on canyoublockit.com's adblock test: every ad slot on the page is empty and the site's own script is complaining that an adblocker is preventing it from loading">
 </p>
 
 <p align="center"><sub>

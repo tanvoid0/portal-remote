@@ -662,6 +662,24 @@ derived from. When adding a screen, reach for these before inventing a surface.
     address field itself is `sunken` with a `medium` (cut-corner) shape rather than a
     bare Material outline on the canvas colour — the field had no face of its own before,
     which on a light background meant an outline on white, i.e. nothing to aim at.
+  - **The address field is a `BasicTextField`, not `OutlinedTextField`** — same reason
+    PairScreen's `DigitBox` is hand-rolled (§7's PairScreen notes). The stock field's
+    internal padding assumes its own ~56dp height and *clips its own text* once forced
+    shorter, so a compact bar cannot be built out of it. Hand-rolling also puts the
+    focus edge (`border-strong` → `live` at 2dp) under the same §5 rule every other
+    input in the app follows.
+  - **The bar hides itself while you read.** A scroll down takes it away, a scroll up or
+    reaching the top brings it back, over `TabSwitchDuration` — this is chrome on a
+    surface whose whole job is showing someone else's page, and the §13 budget it is
+    otherwise exempt from still applies to the moments nobody is reaching for it.
+  - **Back, forward and cast appear only when they'd do something.** A fresh tab has no
+    history and nothing found, and a permanently disabled control is space the address
+    field needs more than the icon does. The cast button is the sole exception to being
+    *always* present — it appears once there is something to cast or something already
+    casting, which is the only state in which it is the reason the screen exists.
+  - **Submitting the address clears focus and hides the keyboard.** Compose's `Go`
+    action fires the callback and leaves the field exactly as it was, which on a bottom
+    bar means the page you just asked for loads behind a keyboard.
   - **The cast button is the reason the screen exists**, so it is the only thing in the
     bar carrying a `Badge`: the count of media found on this page, disabled at zero.
     It is the one piece of state on this screen the page itself cannot show.

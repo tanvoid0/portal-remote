@@ -768,6 +768,15 @@ bare word with no dot is a search — `recipes` must never become `https://recip
   throwaway-WebView transport trick (`onCreateWindow` never tells you the target
   URL). Non-`http(s)` schemes are refused outright — `intent://` and `market://`
   are how a page throws you into an app store.
+- **Cookie-prompt auto-decline** — a script run on `onPageFinished` that clicks
+  reject/decline on the handful of consent-banner vendors that cover most of the
+  market (OneTrust, Cookiebot, Quantcast/IAB TCF, Didomi, TrustArc, Osano,
+  Sourcepoint), plus a generic pass over any cookie/consent/GDPR container whose
+  button text is exactly "reject"/"decline"/"disagree". Retried on an interval and
+  through a `MutationObserver`, both giving up after a few seconds, since banners
+  are routinely injected well after load. On by default with its own switch in
+  Privacy & blocking, because a wrong click on a consent dialog can leave a page
+  stuck and the escape hatch has to be reachable without a rebuild.
 - **Media sniffing** — `shouldInterceptRequest` classifies by extension
   (`.m3u8`/`.mpd`/`.mp4`/`.webm`/`.mkv`/`.mov`), plus a `<video>` scan on
   `onPageFinished` for players that set `src` directly and never generate an
@@ -784,6 +793,16 @@ walk (including that a malformed `com` rule can't take the whole web down), the
 segment and blob exclusions, the address-vs-search decision, and history
 capping/dedup. An earlier build with the single-tab version installed and opened on
 the device.
+
+**Verified live against `canyoublockit.com`** (Simple and eXtreme tests), on a paired
+phone: every third-party ad slot came back empty and the site's own detector fired its
+"Adblocker detected … preventing the page from fully loading" notice, which is the
+site conceding the point. The pop-under test — "clicking anywhere on this page will
+trigger an ad in a new tab" — left the tab count at 1. Both match what this section
+claims and what it doesn't: the **self-hosted interstitial still appears**, because it
+is first-party and a hostname blocker has nothing to match on; killing it needs the
+cosmetic rules the parser deliberately skips. The README's
+`android-browser-adblock.png` is that run.
 
 **One bug the pixels caught that the tree did not:** the WebView Box used
 `fillMaxSize()` inside a `Column`, so it claimed the full height and — being a real
