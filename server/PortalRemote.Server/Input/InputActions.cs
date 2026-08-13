@@ -151,13 +151,21 @@ public static class InputActions
                 var url = GetString(msg, "url") ?? throw new UnknownMessageException("cast needs 'url'");
                 var checkedUrl = Cast.CastLauncher.Validate(url);
 
-                // A receiver page gives real transport control; ShellExecute just
-                // throws the link at whatever is registered and forgets it. Prefer
-                // the receiver whenever one is attached.
+                // Three routes, best control first. An attached receiver page wins
+                // because opening it was a deliberate choice of *screen* — quite
+                // possibly not this one. Then mpv, which plays formats a browser
+                // can't and takes the same commands. ShellExecute last: it throws
+                // the link at whatever is registered and forgets it.
                 if (Cast.CastHub.Instance.HasReceivers)
                 {
                     Cast.CastHub.Instance.Load(checkedUrl, GetString(msg, "title"));
                     return new { t = "cast_ok", url = checkedUrl, via = "receiver" };
+                }
+
+                if (Cast.MpvPlayer.Instance.Available)
+                {
+                    Cast.MpvPlayer.Instance.Load(checkedUrl, GetString(msg, "title"));
+                    return new { t = "cast_ok", url = checkedUrl, via = "mpv" };
                 }
 
                 Cast.CastLauncher.Open(checkedUrl);
@@ -178,17 +186,24 @@ public static class InputActions
                     ?? throw new UnknownMessageException("player needs 'action'");
                 if (!PlayerActions.Contains(action))
                     throw new UnknownMessageException($"unknown player action: {action}");
-                if (!Cast.CastHub.Instance.HasReceivers)
+                // Same order as "cast" above, and for the same reason: drive whatever
+                // the cast actually landed on.
+                if (Cast.CastHub.Instance.HasReceivers)
+                    Cast.CastHub.Instance.Command(new
+                    {
+                        t = action,
+                        to = GetDouble(msg, "to"),
+                        by = GetDouble(msg, "by"),
+                        level = GetDouble(msg, "level"),
+                        muted = GetBool(msg, "muted")
+                    });
+                else if (Cast.MpvPlayer.Instance.Running)
+                    Cast.MpvPlayer.Instance.Command(
+                        action, GetDouble(msg, "to"), GetDouble(msg, "by"),
+                        GetDouble(msg, "level"), GetBool(msg, "muted"));
+                else
                     throw new UnknownMessageException("no cast receiver is attached");
 
-                Cast.CastHub.Instance.Command(new
-                {
-                    t = action,
-                    to = GetDouble(msg, "to"),
-                    by = GetDouble(msg, "by"),
-                    level = GetDouble(msg, "level"),
-                    muted = GetBool(msg, "muted")
-                });
                 return new { t = "player_ok", action };
             }
 

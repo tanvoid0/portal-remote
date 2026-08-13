@@ -12,7 +12,7 @@ import org.json.JSONObject
  * buttons for the second case would offer control that doesn't exist.
  */
 data class CastState(val url: String, val via: String, val title: String? = null) {
-    val controllable: Boolean get() = via == RECEIVER
+    val controllable: Boolean get() = via == RECEIVER || via == MPV
 
     /** The title if the caster sent one, otherwise the link itself. */
     val label: String get() = title ?: url
@@ -20,7 +20,11 @@ data class CastState(val url: String, val via: String, val title: String? = null
     companion object {
         const val RECEIVER = "receiver"
 
-        /** `{"t":"cast_ok","url":…,"via":"receiver"|"shell"}`, or null if it isn't one. */
+        /** The PC's own mpv window. Reports position and takes the same transport
+         *  commands as a receiver page, so nothing downstream tells them apart. */
+        const val MPV = "mpv"
+
+        /** `{"t":"cast_ok","url":…,"via":"receiver"|"mpv"|"shell"}`, or null if it isn't one. */
         fun fromAck(json: JSONObject, title: String? = null): CastState? {
             val url = json.optString("url").ifBlank { return null }
             return CastState(url = url, via = json.optString("via"), title = title)

@@ -81,7 +81,11 @@ public sealed class CastHub
         lock (gate)
         {
             receivers.RemoveAll(s => s.State != WebSocketState.Open);
-            attached = receivers.Count > 0;
+            // A running mpv is a receiver as far as the phone is concerned: it holds a
+            // position, it takes transport commands, and it can go away. The phone
+            // draws its controls from this one boolean and does not need to learn the
+            // difference between a browser tab and a player window.
+            attached = receivers.Count > 0 || MpvPlayer.Instance.Running;
             status = lastStatus;
         }
 
@@ -117,6 +121,18 @@ public sealed class CastHub
     public void OnStatus(string json)
     {
         lock (gate) lastStatus = json;
+        Publish();
+    }
+
+    /// <summary>
+    /// Whoever was reporting has gone — the mpv window was closed, or its pipe broke.
+    /// Dropping the last status matters as much as the notification: a receiver page
+    /// attaching afterwards would otherwise inherit mpv's playhead until its own first
+    /// tick.
+    /// </summary>
+    public void ClearStatus()
+    {
+        lock (gate) lastStatus = null;
         Publish();
     }
 

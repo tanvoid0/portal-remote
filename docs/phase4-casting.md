@@ -4,8 +4,8 @@ Research and design notes for turning Portal Remote into a Web-Video-Caster-styl
 app where the **PC is the screen** and the phone is the browser/remote — while
 keeping everything Phases 0–3 already do (PC → phone control) working.
 
-**Status:** 4a, 4e, 4g and the receiver→phone status channel (first half of 4b) are
-built — see §13. Everything else in this document is still design.
+**Status:** 4a, 4b, 4e and 4g are built — see §13. Everything else in this document is
+still design.
 
 ---
 
@@ -840,10 +840,61 @@ a bar pinned at zero claims a position we don't have.
 clamp, and a live stream having no bar to scrub). **Not yet driven on a device against a
 real receiver** — that is the next thing to do with it.
 
-**Not built yet, in order:** mpv itself (the other half of 4b — HLS/DASH playback, and a
-player that outlives the page being closed), then everything in §11 from 4c onward. mpv
-now slots in behind a status shape that already exists and is already rendered, which is
-the opposite of the "work thrown away" this section previously predicted.
+### mpv (the other half of 4b)
+
+`Cast/MpvPlayer.cs`, ~250 lines, and it slotted in behind the status shape above exactly
+as that section predicted: **no new wire message and no new parsing on the phone.** mpv
+reports through `CastHub.OnStatus` in the receiver page's own shape, `Snapshot()` counts
+a running mpv as a receiver, and the scrub bar, the toggle and the
+controls-disappear-when-it-does handling all work against it untouched. The phone's one
+change is a constant: `via:"mpv"` is controllable too.
+
+**Routing is three-deep now** — receiver page, then mpv, then `ShellExecute`. The page
+wins because opening it was a deliberate choice of *screen*, quite possibly not this one;
+mpv wins over the shell because it plays HLS and DASH and can be driven.
+
+**Detect, do not bundle** (§6): `MpvPath` in config, then `mpv.exe` next to our own exe,
+then `PATH`. Nothing found is not an error — the cast falls through to the default
+handler, which is what it did before.
+
+**Adopt, don't duplicate.** `Start()` tries the pipe *before* launching anything, so an
+mpv left over from a previous run of this server is reused rather than fought with. Same
+rule [phase7-assistant.md §4.3](phase7-assistant.md) sets for `agent-platformd`.
+
+Two things worth keeping:
+
+- **Nothing blocking happens under the state lock.** The first version wrote commands
+  through an auto-flushing `StreamWriter`, and `StreamWriter.AutoFlush` on a named pipe
+  means `FlushFileBuffers`, which **blocks until the peer reads**. Holding the lock over
+  that deadlocked three ways — the write waited for mpv to read, mpv waited for us to
+  read its events, and the read loop waited for the lock the write was holding — and it
+  took the phone's control socket down with it, since the reply to `cast` never came.
+  Commands are now written to the pipe directly, under a lock that guards nothing but
+  the writes. Real mpv reads continuously so this would have fired rarely, which is the
+  worst frequency for a hang to have.
+- **`force-media-title` is set after the load, not as a load option.** `loadfile`'s
+  options argument changed shape across mpv versions; the property did not.
+
+**Verified** against a stand-in that serves `\\.\pipe\portalremote-mpv` and answers a
+`loadfile` with the property-change events mpv emits — the real socket, the real server,
+the real client messages:
+
+| Case | Result |
+|---|---|
+| `cast` with no receiver page and mpv reachable | `via:"mpv"`; six `observe_property`, then `loadfile`, then `force-media-title` |
+| `duration`/`pause`/`time-pos` events | pushed on as `cast_status` — `position 3.5`, `duration 120` |
+| `eof-reached` reported as `null` (mpv for "unavailable") | read as false, not as a stale previous value |
+| A command reply (`{"error":"success",…}`) on the same pipe | ignored; only `property-change` events are read |
+| `player pause` / `seek to:42` / `volume level:0.25 muted:true` | `set_property pause true`, `seek 42 absolute`, `volume 25` + `mute true` — mpv's 0–100 scale, the phone's 0–1 |
+| `player stop` | `quit`; the pipe closes and the phone gets `receiver:false, status:null` |
+| `player` after that | `"no cast receiver is attached"` |
+
+**Not verified:** mpv actually playing anything — there is no mpv on this machine, so what
+is proven is every line of our side of the pipe and none of mpv's. Nothing here forwards
+`Referer`/`Cookie` either (`--http-header-fields`), because nothing on the phone sends
+them yet; that arrives with 4d, not before.
+
+**Not built yet, in order:** everything in §11 from 4c onward.
 
 ## Sources
 

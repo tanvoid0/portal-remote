@@ -53,6 +53,9 @@ internal static class Program
             if (share.HasClients) _ = share.BroadcastAsync(payload);
         };
 
+        // mpv reports through the same hub, so the line above covers it too.
+        MpvPlayer.Instance.ConfiguredPath = config.MpvPath;
+
         var app = BuildApp(config, args, connectionState, approval, share, nowPlaying);
 
         try
@@ -96,6 +99,9 @@ internal static class Program
 
         Application.Run();
 
+        // A player window we launched and can no longer be reached to control is an
+        // orphan; closing it is the last thing this process owes the desktop.
+        MpvPlayer.Instance.Quit();
         app.StopAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult();
         return 0;
     }

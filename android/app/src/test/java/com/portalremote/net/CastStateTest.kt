@@ -28,6 +28,16 @@ class CastStateTest {
     }
 
     @Test
+    fun `an mpv cast is controllable too`() {
+        // mpv reports its position and takes the same transport commands, so the
+        // transport row belongs here as much as on a receiver page.
+        val state = CastState.fromAck(
+            JSONObject("""{"t":"cast_ok","url":"https://example.com/stream.m3u8","via":"mpv"}""")
+        )
+        assertTrue(state!!.controllable)
+    }
+
+    @Test
     fun `an ack without a url is not a cast`() {
         assertNull(CastState.fromAck(JSONObject("""{"t":"cast_ok"}""")))
     }

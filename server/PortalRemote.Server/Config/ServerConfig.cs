@@ -26,6 +26,13 @@ public sealed class ServerConfig
     /// <summary>Shared secret the phone must present on every request.</summary>
     public string Token { get; set; } = NewToken();
 
+    /// <summary>
+    /// Where mpv lives, if it isn't next to our own exe or on PATH. Empty is the
+    /// normal case — detect, do not bundle (<c>docs/phase4-casting.md</c> §6) — and a
+    /// cast falls back to the desktop's default handler when nothing is found.
+    /// </summary>
+    public string MpvPath { get; set; } = string.Empty;
+
     /// <summary>Root directory exposed to the file browser. Nothing outside it is reachable.</summary>
     public string ShareRoot { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "PortalRemoteShare");
