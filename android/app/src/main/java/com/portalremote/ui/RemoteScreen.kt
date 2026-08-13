@@ -85,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
+import com.portalremote.net.AiCatalog
 import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.CastState
@@ -151,6 +152,9 @@ fun RemoteScreen(
     chatError: String?,
     plan: AiPlan?,
     deciding: Boolean,
+    aiCatalog: AiCatalog?,
+    aiCatalogLoading: Boolean,
+    aiCatalogError: String?,
     onProbeAi: (retry: Boolean) -> Unit,
     onSendChat: (String) -> Unit,
     onAct: (String) -> Unit,
@@ -159,6 +163,8 @@ fun RemoteScreen(
     onRegenerateChat: () -> Unit,
     onStopChat: () -> Unit,
     onClearChat: () -> Unit,
+    onLoadAiCatalog: () -> Unit,
+    onSelectAiModel: (provider: String?, model: String) -> Unit,
     onShareText: (String) -> Unit,
     onShareUri: (Uri) -> Unit,
     onRetryShare: (Long) -> Unit,
@@ -315,9 +321,16 @@ fun RemoteScreen(
                         )
                         RemoteTab.BROWSER -> BrowserScreen(
                             session = browser,
+                            cast = cast,
+                            castStatus = castStatus,
+                            // Same rule as the Media tab: an unknown target is one of
+                            // the PC's own routes, and those all seek.
+                            castSeekable = castTargets
+                                .firstOrNull { t -> t.id == cast?.target }?.seek ?: true,
                             // The browser's cast button obeys the same chosen screen as
                             // the Media tab's — one choice, not one per entry point.
                             onCast = { url, title -> gatedSend(Protocol.cast(url, title, castTarget)) },
+                            onPlayer = gatedSend,
                         )
                         RemoteTab.SCREEN -> ScreenScreen(
                             host = host,
@@ -348,6 +361,9 @@ fun RemoteScreen(
                             error = chatError,
                             plan = plan,
                             deciding = deciding,
+                            catalog = aiCatalog,
+                            catalogLoading = aiCatalogLoading,
+                            catalogError = aiCatalogError,
                             onProbe = onProbeAi,
                             onSend = onSendChat,
                             onAct = onAct,
@@ -356,6 +372,8 @@ fun RemoteScreen(
                             onRegenerate = onRegenerateChat,
                             onStop = onStopChat,
                             onClear = onClearChat,
+                            onLoadCatalog = onLoadAiCatalog,
+                            onSelectModel = onSelectAiModel,
                         )
                     }
                 }

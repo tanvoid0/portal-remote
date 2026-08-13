@@ -105,11 +105,21 @@ fun ControlScreen(
                         onScroll = onScroll,
                         onClick = onClick,
                         onShortcut = onCombo,
+                        onText = onText,
+                        onTap = onTap,
+                        onFocusKeyboard = {
+                            if (mode != ControlMode.KEYBOARD) haptics.tick()
+                            mode = ControlMode.KEYBOARD
+                        },
                     )
                     ControlMode.KEYBOARD -> KeyboardScreen(
                         onText = onText,
                         onTap = onTap,
                         onCombo = onCombo,
+                        onSubmit = {
+                            if (mode != ControlMode.TRACKPAD) haptics.tick()
+                            mode = ControlMode.TRACKPAD
+                        },
                     )
                     ControlMode.MEDIA -> MediaScreen(
                         host = host,

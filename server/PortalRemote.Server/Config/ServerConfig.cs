@@ -174,6 +174,17 @@ public sealed class AgentPlatformConfig
     public string Model { get; set; } = "gpt-4o-mini";
 
     /// <summary>
+    /// Which provider <see cref="Model"/> belongs to — passed through as agent-platform's
+    /// own optional <c>provider</c> hint. Empty means "let agent-platform resolve it from
+    /// <see cref="Model"/> alone" (its alias table, or its own default), which is what
+    /// every install did before the phone could switch either one. Settable from
+    /// <c>/ai/model</c>, not from a phone-supplied chat request, for the same reason the
+    /// system prompt isn't (<see cref="AiChatEndpoint"/>): it changes which backend a
+    /// goal is sent to, not what's asked, and belongs behind the pairing token only.
+    /// </summary>
+    public string Provider { get; set; } = string.Empty;
+
+    /// <summary>
     /// Prepended to every conversation. Kept in config rather than in code because the
     /// useful version of it names this PC and what the phone can ask for, and that is a
     /// per-install fact.

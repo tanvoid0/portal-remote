@@ -18,6 +18,17 @@ private val AccentDark = Color(0xFF60A5FA)
 private val AccentPressedLight = Color(0xFF1D4ED8)
 private val AccentPressedDark = Color(0xFF3B82F6)
 
+// `primaryContainer`/`onPrimaryContainer` have no entry in §3's token table, and left
+// unset here they don't inherit the accent above — Compose's lightColorScheme()/
+// darkColorScheme() default every unspecified slot to Material's own baseline palette,
+// a fixed purple with no relation to the `primary` passed in. That is what the user
+// chat bubble (this screen, ShareScreen's chat) rendered as until now: an off-brand
+// color the §9 contrast audit never covered, because it isn't in §3 either. Paired with
+// text-primary rather than a new hue — that pairing is already audited (§9) at 4.63:1+
+// in both themes, so it's contrast-safe by construction instead of by a fresh check.
+private val PrimaryContainerLight = Color(0xFFDCE9FE)
+private val PrimaryContainerDark = Color(0xFF1E2A45)
+
 private val BgLight = Color(0xFFFAFAFA)
 private val BgDark = Color(0xFF0F1420)
 private val SurfaceLight = Color(0xFFFFFFFF)
@@ -69,6 +80,8 @@ private val LocalPortalExtendedColors = staticCompositionLocalOf { LightExtended
 private val LightColors: ColorScheme = lightColorScheme(
     primary = AccentLight,
     onPrimary = SurfaceLight,
+    primaryContainer = PrimaryContainerLight,
+    onPrimaryContainer = TextPrimaryLight,
     secondary = AccentLight,
     onSecondary = SurfaceLight,
     secondaryContainer = SurfaceRaisedLight,
@@ -96,6 +109,8 @@ private val LightColors: ColorScheme = lightColorScheme(
 private val DarkColors: ColorScheme = darkColorScheme(
     primary = AccentDark,
     onPrimary = BgDark,
+    primaryContainer = PrimaryContainerDark,
+    onPrimaryContainer = TextPrimaryDark,
     secondary = AccentDark,
     onSecondary = BgDark,
     secondaryContainer = SurfaceRaisedDark,

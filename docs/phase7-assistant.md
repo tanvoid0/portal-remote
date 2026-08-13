@@ -578,6 +578,64 @@ reason; it is covered by unit tests only.
 
 **Not built:** 7d onward. No voice, no `portal.android.*`, no sessions, no `ExePath` launch.
 
+## 16. What is built (7b addendum — switching provider and model from the phone)
+
+§11.2 asked "which provider answers?" as an open decision. It still is, per conversation
+— but which one gets picked no longer has to be a config-file edit on the PC, which is
+what made it worth building ahead of the numbered steps: 7c–7e all send a goal to
+whichever provider `AgentPlatform.Model`/`.Provider` name, and none of them needed to
+change for this.
+
+**Server** — `Ai/AiModelsEndpoint.cs`, `GET /ai/models` and `POST /ai/model`, both
+token-authed and both answering **503 with the health snapshot** when agent-platform
+isn't up, same rule as `/ai/chat`. `GET` proxies agent-platform's own
+`GET /v1/capabilities` and `GET /v1/models` and merges them: only providers
+`/v1/capabilities` marks `chat`-capable are kept (an embeddings-only provider has
+nothing to offer a chat picker), and every provider/model row carries whether it's
+`configured` rather than being dropped when it isn't — this app's "never hide, say why"
+rule (§4.5), applied to one disabled row instead of a whole screen. The merge is a pure
+function (`AiModelsEndpoint.BuildCatalog`) precisely so it's testable without a live
+backend — 5 xunit tests cover it. `POST` persists `AgentPlatform.Model`/`.Provider` and
+saves; it does not validate against the catalogue, because agent-platform is the one
+place that actually knows whether a pairing resolves, and the next chat turn says so
+exactly as it would for a value hand-edited into `config.json`.
+
+`AgentPlatform` gained a `Provider` field alongside `Model`, and `/ai/chat` now forwards
+it to agent-platform as the same optional `provider` hint their own `/v1/chat/completions`
+already accepts (`chat_target` in their `llm.rs`, verified against
+`desktop/crates/server/src/llm.rs` on this date) — empty stays empty, so a config file
+written before this shipped keeps resolving exactly as it did.
+
+**Phone** — `net/AiModels.kt` (`AiCatalog`/`AiProvider`/`AiModel`, `fetch`/`select`) and a
+model picker in `ui/AssistantScreen.kt`: a small chip above the transcript showing the
+current model, opening a `ModalBottomSheet` grouped by provider on tap. The catalogue
+read can hit live provider APIs on the PC's side, so it's fetched on first open of the
+sheet, not on every tab open — and not re-fetched on a second open, since picking a model
+doesn't change what's available to pick. Selecting one updates the chip immediately and
+rolls back with the PC's own error message if the switch is refused, same
+optimistic-then-reconcile shape as the rest of this screen's state.
+
+**A second thing addressed in the same pass, unrelated to switching:** `primaryContainer`/
+`onPrimaryContainer` had no entry in `docs/design-system.md` §3 and were never set in
+`Theme.kt`, so both this screen's user bubble and ShareScreen's chat bubble were rendering
+Material's baseline purple — off-brand, and never covered by the §9 contrast audit because
+it isn't in §3 either. Fixed by pairing new blue-tinted container colors with the already-
+audited text-primary token (paired for guaranteed contrast rather than a fresh check), and
+the assistant's reply now sits in its own `surfaceContainerHigh` bubble rather than running
+transparent into the screen background, matching ShareScreen's "both sides get a bubble"
+shape.
+
+**Verified:** server builds clean, 50 xunit tests pass (5 new). Phone compiles clean
+(`compileDebugKotlin`), 120 JVM tests pass (4 new, `AiModelsTest`) covering `AiCatalog`
+parsing — the empty-string-vs-null "PC hasn't chosen yet" distinction, missing
+providers/models degrading to empty lists rather than a crash, and `withCurrent` leaving
+the lists alone.
+
+**Not verified:** anything live, same caveat as 7b/7c above — no running agent-platform to
+call `GET /v1/capabilities` or `GET /v1/models` against, so the picker's sheet, the chip,
+and the rollback-on-refusal path have not been driven on a device or against a real
+backend.
+
 ## Sources
 
 - `../../ai/agentic-ai/agent-platform/docs/CLIENT_INTEGRATION.md` — tokens, workspaces, the client contract

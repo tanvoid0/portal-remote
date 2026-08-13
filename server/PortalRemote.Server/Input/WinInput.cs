@@ -271,4 +271,156 @@ public static partial class WinInput
         }
         Send([.. batch]);
     }
+
+    // --- Touch injection -----------------------------------------------------------
+    //
+    // A separate API from everything above: SendInput's mouse events are what every
+    // other message on this socket drives, but they only ever look like a mouse to
+    // the app on the other end. InjectTouchInput is Windows' actual touch-digitizer
+    // path (Win8+) — an app that only responds to WM_POINTER/WM_TOUCH, or that does
+    // its own native pinch/rotate handling, only sees a real finger through this.
+
+    public enum TouchPhase { Down, Move, Up }
+
+    /// <summary>One finger's state for a single injected frame. [Id] is a slot
+    /// 0..9 the caller owns for the finger's whole contact — Windows identifies a
+    /// touch by this id across Down/Move/Up, not by anything Android hands us.</summary>
+    public readonly record struct TouchContact(uint Id, double Nx, double Ny, TouchPhase Phase);
+
+    /// <summary>Concurrent contacts requested from Windows. 10 matches every touch
+    /// digitizer Windows ships drivers for; nothing in this app needs more fingers
+    /// than that.</summary>
+    private const uint MaxTouchContacts = 10;
+
+    /// <summary>Shows the system's own touch ripple at each injected point — the
+    /// same visual feedback a real finger gets, so an injected touch isn't silently
+    /// indistinguishable from a stuck digitizer if something goes wrong.</summary>
+    private const uint TouchFeedbackIndirect = 0x2;
+
+    private const int PointerTypeTouch = 0x00000002;
+
+    private const uint PointerFlagInRange = 0x00000002;
+    private const uint PointerFlagInContact = 0x00000004;
+    private const uint PointerFlagDown = 0x00010000;
+    private const uint PointerFlagUpdate = 0x00020000;
+    private const uint PointerFlagUp = 0x00040000;
+
+    private const uint TouchMaskContactArea = 0x00000004;
+
+    /// <summary>Half-width/height of the synthetic contact ellipse, in px. A real
+    /// fingertip covers a handful of pixels, not a mathematical point, and a touch-
+    /// aware app is entitled to read <c>rcContact</c> to size its hit target.</summary>
+    private const int TouchContactRadius = 5;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointerInfo
+    {
+        public int PointerType;
+        public uint PointerId;
+        public uint FrameId;
+        public uint PointerFlags;
+        public nint SourceDevice;
+        public nint HwndTarget;
+        public POINT PtPixelLocation;
+        public POINT PtPixelLocationRaw;
+        public POINT PtHimetricLocation;
+        public POINT PtHimetricLocationRaw;
+        public uint Time;
+        public uint HistoryCount;
+        public int InputData;
+        public uint KeyStates;
+        public ulong PerformanceCount;
+        public int ButtonChangeType;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointerTouchInfo
+    {
+        public PointerInfo PointerInfo;
+        public uint TouchFlags;
+        public uint TouchMask;
+        public RECT RcContact;
+        public RECT RcContactRaw;
+        public uint Orientation;
+        public uint Pressure;
+    }
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool InitializeTouchInjection(uint maxContacts, uint dwMode);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool InjectTouchInput(uint count, [In] PointerTouchInfo[] contacts);
+
+    private static bool _touchInjectionReady;
+    private static readonly object TouchInitLock = new();
+
+    /// <summary>Per-process, and only once: a second call is a no-op on Windows, but
+    /// there is no reason to pay the call on every touch frame.</summary>
+    private static void EnsureTouchInjectionInitialized()
+    {
+        if (_touchInjectionReady) return;
+        lock (TouchInitLock)
+        {
+            if (_touchInjectionReady) return;
+            if (!InitializeTouchInjection(MaxTouchContacts, TouchFeedbackIndirect))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeTouchInjection failed");
+            _touchInjectionReady = true;
+        }
+    }
+
+    /// <summary>
+    /// Inject one frame of real touch input — Windows' touch-digitizer path, not a
+    /// mouse pretending to be one. [contacts] should carry every finger still down,
+    /// not just the one that changed, the same way a real digitizer reports a frame.
+    /// </summary>
+    public static void Touch(int? monitor, IReadOnlyList<TouchContact> contacts)
+    {
+        if (contacts.Count == 0) return;
+        EnsureTouchInjectionInitialized();
+
+        var bounds = BoundsFor(monitor);
+        var infos = new PointerTouchInfo[contacts.Count];
+        for (var i = 0; i < contacts.Count; i++)
+        {
+            var c = contacts[i];
+            var x = bounds.X + (int)Math.Round(Math.Clamp(c.Nx, 0, 1) * (bounds.Width - 1));
+            var y = bounds.Y + (int)Math.Round(Math.Clamp(c.Ny, 0, 1) * (bounds.Height - 1));
+            var flags = c.Phase switch
+            {
+                TouchPhase.Down => PointerFlagDown | PointerFlagInRange | PointerFlagInContact,
+                TouchPhase.Move => PointerFlagUpdate | PointerFlagInRange | PointerFlagInContact,
+                TouchPhase.Up => PointerFlagUp,
+                _ => throw new ArgumentOutOfRangeException(nameof(contacts), c.Phase, "unknown touch phase")
+            };
+
+            infos[i] = new PointerTouchInfo
+            {
+                PointerInfo = new PointerInfo
+                {
+                    PointerType = PointerTypeTouch,
+                    PointerId = c.Id,
+                    PointerFlags = flags,
+                    PtPixelLocation = new POINT { X = x, Y = y },
+                },
+                TouchFlags = 0,
+                TouchMask = TouchMaskContactArea,
+                RcContact = new RECT
+                {
+                    Left = x - TouchContactRadius, Top = y - TouchContactRadius,
+                    Right = x + TouchContactRadius, Bottom = y + TouchContactRadius,
+                },
+            };
+        }
+
+        if (!InjectTouchInput((uint)infos.Length, infos))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "InjectTouchInput failed");
+    }
 }

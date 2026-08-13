@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using PortalRemote.Auth;
 using PortalRemote.Config;
 
@@ -147,17 +148,22 @@ public static class AiChatEndpoint
     private static async Task StreamAsync(
         HttpContext http, ServerConfig config, List<ChatMessage> messages, CancellationToken ct)
     {
+        // A plain object literal can't omit `provider` conditionally, and sending it
+        // empty would pin every request to "" instead of letting agent-platform resolve
+        // the model on its own — the behaviour every install had before §ai-models let
+        // the phone set a provider at all.
+        var payload = new JsonObject
+        {
+            ["model"] = config.AgentPlatform.Model,
+            ["messages"] = JsonSerializer.SerializeToNode(messages, Wire),
+            ["stream"] = true,
+        };
+        if (!string.IsNullOrWhiteSpace(config.AgentPlatform.Provider))
+            payload["provider"] = config.AgentPlatform.Provider;
+
         var request = new HttpRequestMessage(HttpMethod.Post, $"{config.AgentPlatform.BaseUrl.TrimEnd('/')}/v1/chat/completions")
         {
-            Content = new StringContent(
-                JsonSerializer.Serialize(new
-                {
-                    model = config.AgentPlatform.Model,
-                    messages,
-                    stream = true
-                }, Wire),
-                Encoding.UTF8,
-                "application/json")
+            Content = new StringContent(payload.ToJsonString(Wire), Encoding.UTF8, "application/json")
         };
 
         // Empty is legal and is the zero-setup path — no master key on their side means

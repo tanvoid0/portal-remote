@@ -22,13 +22,18 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,10 +47,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.portalremote.net.AiCatalog
+import com.portalremote.net.AiModel
 import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.ChatTurn
@@ -66,6 +74,9 @@ fun AssistantScreen(
     error: String?,
     plan: AiPlan?,
     deciding: Boolean,
+    catalog: AiCatalog?,
+    catalogLoading: Boolean,
+    catalogError: String?,
     onProbe: (retry: Boolean) -> Unit,
     onSend: (String) -> Unit,
     onAct: (String) -> Unit,
@@ -74,6 +85,8 @@ fun AssistantScreen(
     onRegenerate: () -> Unit,
     onStop: () -> Unit,
     onClear: () -> Unit,
+    onLoadCatalog: () -> Unit,
+    onSelectModel: (provider: String?, model: String) -> Unit,
 ) {
     // Probe on open, not on a timer. The PC pushes changes after this, so one is enough.
     LaunchedEffect(Unit) { onProbe(false) }
@@ -84,11 +97,16 @@ fun AssistantScreen(
             streaming = streaming,
             error = error,
             deciding = deciding,
+            catalog = catalog,
+            catalogLoading = catalogLoading,
+            catalogError = catalogError,
             onSend = onSend,
             onAct = onAct,
             onRegenerate = onRegenerate,
             onStop = onStop,
             onClear = onClear,
+            onLoadCatalog = onLoadCatalog,
+            onSelectModel = onSelectModel,
         )
     } else {
         BackendDown(state = state, onProbe = onProbe)
@@ -233,19 +251,26 @@ private fun BackendDown(state: AiState?, onProbe: (retry: Boolean) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatPane(
     chat: List<ChatTurn>,
     streaming: Boolean,
     error: String?,
     deciding: Boolean,
+    catalog: AiCatalog?,
+    catalogLoading: Boolean,
+    catalogError: String?,
     onSend: (String) -> Unit,
     onAct: (String) -> Unit,
     onRegenerate: () -> Unit,
     onStop: () -> Unit,
     onClear: () -> Unit,
+    onLoadCatalog: () -> Unit,
+    onSelectModel: (provider: String?, model: String) -> Unit,
 ) {
     var draft by remember { mutableStateOf("") }
+    var showModelPicker by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     // Follow the reply as it grows. Keyed on the last turn's length as well as the count,
@@ -255,6 +280,18 @@ private fun ChatPane(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        ModelBar(
+            currentModel = catalog?.currentModel,
+            onClick = {
+                showModelPicker = true
+                // A catalogue read can hit live provider APIs on the PC's side, so it
+                // isn't fetched until the sheet that shows it is actually opened — and
+                // not fetched again on a second open, since the list doesn't change
+                // just because the sheet closed and reopened.
+                if (catalog == null && !catalogLoading) onLoadCatalog()
+            },
+        )
+
         if (chat.isEmpty()) {
             Box(modifier = Modifier
                 .weight(1f)
@@ -370,10 +407,174 @@ private fun ChatPane(
             }
         }
     }
+
+    if (showModelPicker) {
+        ModalBottomSheet(onDismissRequest = { showModelPicker = false }) {
+            ModelPickerSheet(
+                catalog = catalog,
+                loading = catalogLoading,
+                error = catalogError,
+                onRetry = onLoadCatalog,
+                onSelect = { provider, model ->
+                    onSelectModel(provider, model)
+                    showModelPicker = false
+                },
+            )
+        }
+    }
 }
 
-/** One turn. The user's is tinted and right-shifted; the assistant's runs full width,
- *  because that is the one that gets long. */
+/** The chip that opens the model picker. Sits above the transcript rather than in a
+ *  settings screen, because which model answers is a thing this app's other "chips, not
+ *  a sheet" surfaces (the mirror's monitor/quality row) already treat as something you
+ *  change *while looking at the result* — except here the result is the whole
+ *  conversation, so a sheet (below) rather than an inline chip row is the right size for
+ *  "browse every provider and model", not just "flip between two or three presets". */
+@Composable
+private fun ModelBar(currentModel: String?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.Start,
+    ) {
+        TextButton(onClick = onClick) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.size(6.dp))
+            Text(
+                currentModel ?: "Model",
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 220.dp),
+            )
+            Spacer(Modifier.size(2.dp))
+            Icon(Icons.Filled.ExpandMore, contentDescription = "Change model", modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
+/** Every provider/model the phone could switch `/ai/chat` to, grouped by provider.
+ *  Neither an unconfigured provider nor a model belonging to one is hidden — they're
+ *  shown disabled with the reason, same rule as everywhere else in this app that a
+ *  capability might not be available (`docs/design-system.md` §4.5's empty-state rule,
+ *  applied to a single disabled row instead of a whole screen). */
+@Composable
+private fun ModelPickerSheet(
+    catalog: AiCatalog?,
+    loading: Boolean,
+    error: String?,
+    onRetry: () -> Unit,
+    onSelect: (provider: String?, model: String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 16.dp),
+    ) {
+        Text(
+            "Model",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+
+        when {
+            loading -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 32.dp),
+                contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp) }
+
+            error != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+                TextButton(onClick = onRetry) { Text("Try again") }
+            }
+
+            catalog == null || catalog.models.isEmpty() -> Text(
+                "Nothing to switch to — agent-platform isn't reporting any chat models.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 16.dp),
+            )
+
+            else -> catalog.providers.forEachIndexed { index, provider ->
+                if (index > 0) HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                ProviderGroup(
+                    provider = provider.id,
+                    configured = provider.configured,
+                    models = catalog.models.filter { it.provider == provider.id },
+                    currentModel = catalog.currentModel.takeIf { catalog.currentProvider == provider.id },
+                    onSelect = { model -> onSelect(provider.id, model) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderGroup(
+    provider: String,
+    configured: Boolean,
+    models: List<AiModel>,
+    currentModel: String?,
+    onSelect: (String) -> Unit,
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)) {
+            Text(
+                provider,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!configured) {
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    "not configured on the PC",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        models.forEach { model ->
+            val selected = model.id == currentModel
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = model.configured) { onSelect(model.id) }
+                    .padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.size(20.dp)) {
+                    if (selected) Icon(Icons.Filled.Check, contentDescription = "Current", modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    model.id,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (model.configured) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** One turn, both sides in a colored bubble so a reply reads as a distinct message
+ *  rather than blending into the screen background — the same shape as ShareScreen's
+ *  device-to-device chat, so both surfaces in this app "read as a conversation" the
+ *  same way. Sided by role: the user's is tinted and right-shifted, the assistant's is
+ *  neutral and left-shifted. */
 @Composable
 private fun Bubble(turn: ChatTurn) {
     val shape = RoundedCornerShape(16.dp)
@@ -386,9 +587,13 @@ private fun Bubble(turn: ChatTurn) {
                 .widthIn(max = 320.dp)
                 .clip(shape)
                 .background(
-                    if (turn.fromUser) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                    if (turn.fromUser) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    }
                 )
-                .padding(if (turn.fromUser) 12.dp else 0.dp),
+                .padding(12.dp),
         ) {
             Text(
                 // An assistant turn is empty for the instant between the request going

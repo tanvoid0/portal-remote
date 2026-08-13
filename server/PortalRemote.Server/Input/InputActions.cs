@@ -209,9 +209,54 @@ public static class InputActions
                 return null;
             }
 
+            case "touch":
+            {
+                var contacts = ParseTouchContacts(msg);
+                if (contacts.Count == 0)
+                    throw new UnknownMessageException("touch needs a non-empty 'contacts' list");
+                WinInput.Touch(GetInt(msg, "mon"), contacts);
+                return null;
+            }
+
             default:
                 throw new UnknownMessageException($"unknown message type: {type}");
         }
+    }
+
+    /// <summary>
+    /// Parses the `contacts` array a `touch` message carries. Split out from
+    /// <see cref="Dispatch"/> so the JSON shape can be checked without touching the
+    /// real touch-injection API — see <c>TouchProtocolTests</c>.
+    /// </summary>
+    public static List<WinInput.TouchContact> ParseTouchContacts(JsonElement msg)
+    {
+        var result = new List<WinInput.TouchContact>();
+        if (!msg.TryGetProperty("contacts", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var item in arr.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+                throw new UnknownMessageException("touch contacts must be objects");
+
+            var id = GetInt(item, "id") ?? throw new UnknownMessageException("touch contact needs 'id'");
+            if (id is < 0 or > 9)
+                throw new UnknownMessageException($"touch contact id out of range: {id}");
+
+            var nx = GetDouble(item, "nx") ?? throw new UnknownMessageException("touch contact needs 'nx'");
+            var ny = GetDouble(item, "ny") ?? throw new UnknownMessageException("touch contact needs 'ny'");
+
+            var phase = GetString(item, "phase") switch
+            {
+                "down" => WinInput.TouchPhase.Down,
+                "move" => WinInput.TouchPhase.Move,
+                "up" => WinInput.TouchPhase.Up,
+                var other => throw new UnknownMessageException($"unknown touch phase: {other ?? "<missing>"}")
+            };
+
+            result.Add(new WinInput.TouchContact((uint)id, nx, ny, phase));
+        }
+        return result;
     }
 
     private static List<ushort> ReadCombo(JsonElement msg)

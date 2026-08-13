@@ -14,8 +14,11 @@ import androidx.lifecycle.viewModelScope
 import com.portalremote.data.AppSettings
 import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
+import com.portalremote.net.AiCatalog
 import com.portalremote.net.AiChat
 import com.portalremote.net.AiChatException
+import com.portalremote.net.AiModels
+import com.portalremote.net.AiModelsException
 import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.ChatEvent
@@ -172,6 +175,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val aiState: StateFlow<AiState?> = _aiState.asStateFlow()
 
     private val aiChat = AiChat()
+    private val aiModels = AiModels()
+
+    private val _aiCatalog = MutableStateFlow<AiCatalog?>(null)
+
+    /** Every provider/model this PC could switch `/ai/chat` to, and which one currently
+     *  answers it. Null until the picker is opened — a catalogue read can hit live
+     *  provider APIs on the PC's side, so it isn't fetched on every tab open. */
+    val aiCatalog: StateFlow<AiCatalog?> = _aiCatalog.asStateFlow()
+
+    private val _aiCatalogLoading = MutableStateFlow(false)
+
+    val aiCatalogLoading: StateFlow<Boolean> = _aiCatalogLoading.asStateFlow()
+
+    private val _aiCatalogError = MutableStateFlow<String?>(null)
+
+    val aiCatalogError: StateFlow<String?> = _aiCatalogError.asStateFlow()
 
     private val _chat = MutableStateFlow<List<ChatTurn>>(emptyList())
 
@@ -629,6 +648,48 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Ask the PC whether the assistant's backend is up. [retry] is a person pressing
      *  the button, which is always allowed to skip the PC's backoff. */
     fun probeAi(retry: Boolean) = send(JSONObject().put("t", AI_STATE).put("retry", retry))
+
+    /** Load the provider/model picker's contents. Cheap to call more than once — a
+     *  second call while one is already in flight is a no-op, since two phones' worth
+     *  of "which models exist" only needs asking once. */
+    fun loadAiCatalog() {
+        val host = currentHost ?: return
+        if (_aiCatalogLoading.value) return
+        _aiCatalogLoading.value = true
+        _aiCatalogError.value = null
+        viewModelScope.launch {
+            try {
+                _aiCatalog.value = aiModels.fetch(host)
+            } catch (ex: AiModelsException) {
+                _aiCatalogError.value = ex.message
+            } finally {
+                _aiCatalogLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Switch which provider/model answers `/ai/chat`. [provider] blank means "let
+     * agent-platform decide from [model] alone" — the same zero-setup state the PC
+     * starts in (`docs/phase7-assistant.md` §9).
+     *
+     * The catalogue itself is trusted to stay put — only [AiCatalog.currentProvider] and
+     * [AiCatalog.currentModel] move — so this updates them in place rather than
+     * re-fetching a list that didn't change.
+     */
+    fun selectAiModel(provider: String?, model: String) {
+        val host = currentHost ?: return
+        val previous = _aiCatalog.value
+        _aiCatalog.value = previous?.withCurrent(provider, model)
+        viewModelScope.launch {
+            try {
+                aiModels.select(host, provider, model)
+            } catch (ex: AiModelsException) {
+                _aiCatalog.value = previous
+                _aiCatalogError.value = ex.message
+            }
+        }
+    }
 
     /** Send [text] and stream the reply — step 7b of `docs/phase7-assistant.md`. */
     fun sendChat(text: String) {

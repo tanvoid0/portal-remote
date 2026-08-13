@@ -202,6 +202,7 @@ internal static class Program
         app.MapMediaEndpoints(config, nowPlaying);
         app.MapDlnaEndpoints(config, dlna);
         app.MapAiEndpoints(config, ai);
+        app.MapAiModelEndpoints(config, ai);
 
         return app;
     }

@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -62,8 +63,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
+import com.portalremote.ui.theme.Haptics
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -124,23 +127,25 @@ internal fun precisionGain(speedPxPerMs: Float, enabled: Boolean): Float {
 private val SCROLL_RAIL_WIDTH = 44.dp
 
 /**
- * Hold-to-keep-scrolling on the rail.
+ * Hold-to-keep-scrolling — shared by the rail and two-finger vertical scroll (see
+ * [startHoldToScroll]).
  *
- * The rail is 1:1 while the finger moves, which is right for a nudge and useless for a
- * long document: a phone-height pad is maybe twelve notches of travel, so reaching the
- * bottom of anything means swiping the same strip over and over. So once the finger has
- * been still for [RAIL_HOLD_MS] it switches to rate control — displacement from where
- * the drag started becomes a speed, the way holding a scrollbar's track does. Moving
- * again hands control straight back to 1:1.
+ * Either surface is 1:1 while the finger moves, which is right for a nudge and useless
+ * for a long document: a phone-height pad is maybe twelve notches of travel, so
+ * reaching the bottom of anything means repeating the same swipe over and over. So once
+ * the finger has been still for [RAIL_HOLD_MS] it switches to rate control —
+ * displacement from where the gesture started becomes a speed, the way holding a
+ * scrollbar's track does. Moving again hands control straight back to 1:1.
  *
- * Rate is squared, not linear, so the first third of the rail's travel is a slow crawl
- * you can stop on a line, and full tilt is reserved for the far end.
+ * Rate is squared, not linear, so the first third of the travel is a slow crawl you
+ * can stop on a line, and full tilt is reserved for the far end.
  */
 private const val RAIL_HOLD_MS = 120L
 private const val RAIL_TICK_MS = 16L
 
-/** Displacement from touch-down below which holding does nothing. A finger parked where
- *  it landed is a finger resting on the pad, not a request to scroll forever. */
+/** Displacement from where the gesture started below which holding does nothing. A
+ *  finger parked where it landed is a finger resting on the pad, not a request to
+ *  scroll forever. */
 private const val RAIL_DEAD_ZONE = 20f
 
 /** Displacement past the dead zone at which the rate hits [RAIL_MAX_PX_PER_SEC]. */
@@ -149,6 +154,43 @@ private const val RAIL_FULL_SPEED = 160f
 /** Top auto-scroll rate, in the finger-travel pixels [WheelScroll] takes — about 26
  *  notches a second, which is a fast but still readable page-flick. */
 private const val RAIL_MAX_PX_PER_SEC = 1600f
+
+/**
+ * The hold-to-keep-scrolling mechanic itself, factored out so the rail and the
+ * two-finger vertical scroll share one rate curve instead of two that could drift
+ * apart. [offset] is displacement from wherever the caller considers the gesture's
+ * start — the rail's distance from touch-down, or the two-finger case's cumulative
+ * pan since the axis locked; [lastMoveMs] is the last time that offset actually
+ * changed, which is what "held still" means here.
+ */
+private fun startHoldToScroll(
+    scope: CoroutineScope,
+    wheel: WheelScroll,
+    haptics: Haptics,
+    offset: () -> Float,
+    lastMoveMs: () -> Long,
+): Job = scope.launch {
+    var running = false
+    while (isActive) {
+        delay(RAIL_TICK_MS)
+        val current = offset()
+        val over = abs(current) - RAIL_DEAD_ZONE
+        val holding = System.currentTimeMillis() - lastMoveMs() >= RAIL_HOLD_MS
+        if (!holding || over <= 0f) {
+            running = false
+            continue
+        }
+        // One bump as it takes over, then silence: this is continuous motion, and
+        // Haptics.kt's rule is that continuous motion gets nothing.
+        if (!running) { running = true; haptics.tick() }
+        val t = (over / RAIL_FULL_SPEED).coerceAtMost(1f)
+        val step = t * t * RAIL_MAX_PX_PER_SEC * (RAIL_TICK_MS / 1000f)
+        // `coasting` because it isn't a finger: it suppresses the per-notch tick and
+        // leaves the scroll echo re-stamping, which is what says the auto-scroll is
+        // still running.
+        wheel.by(dy = sign(current) * step, coasting = true)
+    }
+}
 
 /** Centroid travel a multi-finger gesture must cover before it commits to an axis.
  *  Two fingers never move perfectly straight, so without this a horizontal swipe
@@ -197,7 +239,8 @@ internal val TrackpadGestures: List<Pair<String, String>> = listOf(
     "Tap with two fingers" to "Right click",
     "Tap with three fingers" to "Reload the page (F5)",
     "Hold, then drag" to "Click and drag — select text, move a window",
-    "Two fingers up or down" to "Scroll. The strip down the right edge does the same",
+    "Two fingers up or down" to "Scroll — hold instead of releasing to keep going. " +
+        "The strip down the right edge does the same",
     "Two fingers left or right" to "Back and forward",
     "Three fingers left or right" to "Previous and next virtual desktop",
     "Three fingers up" to "Task view",
@@ -241,6 +284,11 @@ fun TrackpadScreen(
     onClick: (button: String, down: Boolean?) -> Unit,
     /** A key combo the multi-finger gestures stand for — see [swipeShortcut]. */
     onShortcut: (keys: List<String>) -> Unit,
+    onText: (String) -> Unit,
+    onTap: (key: String) -> Unit,
+    /** Fired the moment the type bar below gets focus — the shell uses this to jump
+     *  to the Keyboard tab, which is where that focus actually belongs. */
+    onFocusKeyboard: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -248,6 +296,19 @@ fun TrackpadScreen(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // A trigger, not a place to actually type: focusing it hands off to the
+        // Keyboard tab's own field immediately, before the IME has a chance to open
+        // here. Not auto-focused itself — that would fire the handoff the instant
+        // this tab is shown, which is not what landing on Trackpad means.
+        KeyCaptureField(
+            onText = onText,
+            onTap = onTap,
+            autoFocus = false,
+            label = "Tap to type",
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { if (it.isFocused) onFocusKeyboard() },
+        )
         TrackpadSurface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -299,11 +360,13 @@ private fun TrackpadSurface(
     val haptics = LocalHaptics.current
     var railActive by remember { mutableStateOf(false) }
     val railGlow by animateFloatAsState(if (railActive) 1f else 0f, Motion.pressSpec(), label = "rail")
-    // The rail's hold-to-keep-scrolling job. Held out here rather than inside the
-    // pointer handler so leaving the screen mid-drag stops it — it is the one thing in
-    // this file that keeps sending after the finger is no longer being read.
+    // The hold-to-keep-scrolling jobs (rail, and two-finger vertical scroll once the
+    // axis locks). Held out here rather than inside the pointer handler so leaving the
+    // screen mid-drag stops them — they're the only things in this file that keep
+    // sending after the finger is no longer being read.
     var railJob by remember { mutableStateOf<Job?>(null) }
-    DisposableEffect(Unit) { onDispose { railJob?.cancel() } }
+    var twoFingerHoldJob by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(Unit) { onDispose { railJob?.cancel(); twoFingerHoldJob?.cancel() } }
     // The gesture legend is onboarding, not chrome: once a finger has landed on the
     // pad the user has the idea, and a permanent two-line caption in the middle of
     // the surface is the most-looked-at clutter on the most-used screen.
@@ -416,9 +479,11 @@ private fun TrackpadSurface(
                 val longPressTimeoutMs = viewConfiguration.longPressTimeoutMillis
                 var railOffset = 0f
                 var railLastMoveMs = 0L
+                var twoFingerLastMoveMs = 0L
 
                 awaitEachGesture {
                     railJob?.cancel()
+                    twoFingerHoldJob?.cancel()
                     val down = awaitFirstDown(requireUnconsumed = false)
                     used = true
                     // Catching a coasting scroll is how you stop one, the same as
@@ -456,29 +521,10 @@ private fun TrackpadSurface(
                         haptics.tick()
                         railOffset = 0f
                         railLastMoveMs = downTimeMs
-                        railJob = scope.launch {
-                            var running = false
-                            while (isActive) {
-                                delay(RAIL_TICK_MS)
-                                val over = abs(railOffset) - RAIL_DEAD_ZONE
-                                val holding =
-                                    System.currentTimeMillis() - railLastMoveMs >= RAIL_HOLD_MS
-                                if (!holding || over <= 0f) {
-                                    running = false
-                                    continue
-                                }
-                                // One bump as it takes over, then silence: this is
-                                // continuous motion, and Haptics.kt's rule is that
-                                // continuous motion gets nothing.
-                                if (!running) { running = true; haptics.tick() }
-                                val t = (over / RAIL_FULL_SPEED).coerceAtMost(1f)
-                                val step = t * t * RAIL_MAX_PX_PER_SEC * (RAIL_TICK_MS / 1000f)
-                                // `coasting` because it isn't a finger: it suppresses the
-                                // per-notch tick and leaves the scroll echo re-stamping,
-                                // which is what says the auto-scroll is still running.
-                                wheel.by(dy = sign(railOffset) * step, coasting = true)
-                            }
-                        }
+                        railJob = startHoldToScroll(
+                            scope, wheel, haptics,
+                            offset = { railOffset }, lastMoveMs = { railLastMoveMs },
+                        )
                     }
                     var pointerCount = 1
 
@@ -510,7 +556,20 @@ private fun TrackpadSurface(
                         pointerCount = maxOf(pointerCount, pressed.size)
 
                         if (pressed.isEmpty()) {
+                            // Both fingers often lift in this very event rather than a
+                            // prior move — Compose still reports each one's final
+                            // positionChange() here even though `pressed` just went
+                            // false. Skipping it (as the `when` below does, since it
+                            // only reads `pressed`) drops the last chunk of a fast
+                            // flick from totalMove, and a real two-finger scroll can
+                            // land under TAP_SLOP and fire a right-click instead.
+                            if (mode == GestureMode.TWO_FINGER || mode == GestureMode.THREE_FINGER) {
+                                totalMove += event.changes
+                                    .map { it.positionChange().getDistance() }
+                                    .average().toFloat()
+                            }
                             railJob?.cancel()
+                            twoFingerHoldJob?.cancel()
                             // A scroll that was still travelling when the finger left
                             // keeps going, decaying, the way a wheel does. Only for the
                             // two gestures that actually scroll — a lifted swipe or a
@@ -557,6 +616,7 @@ private fun TrackpadSurface(
                                 // of the gesture decides its direction.
                                 mode = next
                                 panX = 0f; panY = 0f; axis = null
+                                twoFingerHoldJob?.cancel()
                             }
                         }
 
@@ -564,9 +624,11 @@ private fun TrackpadSurface(
                             GestureMode.RAIL -> {
                                 val primary: PointerInputChange =
                                     event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+                                // Before consuming: positionChange() is defined to return
+                                // Offset.Zero once the change is consumed.
+                                val dy = primary.positionChange().y
                                 primary.consume()
                                 velocity.addPosition(primary.uptimeMillis, primary.position)
-                                val dy = primary.positionChange().y
                                 // Where the finger is relative to where the drag began —
                                 // the auto-scroll job's throttle.
                                 railOffset = primary.position.y - down.position.y
@@ -578,9 +640,16 @@ private fun TrackpadSurface(
                             }
 
                             GestureMode.TWO_FINGER, GestureMode.THREE_FINGER -> {
+                                // Read every delta *before* consuming: positionChange()
+                                // is defined to return Offset.Zero on a consumed change,
+                                // so consuming first left panX/panY/totalMove pinned at
+                                // zero — the axis never locked, no swipe ever fired, and
+                                // the release fell straight through to the two-finger
+                                // right click.
+                                val deltas = pressed.map { it.positionChange() }
                                 event.changes.forEach { it.consume() }
-                                val dx = pressed.map { it.positionChange().x }.average().toFloat()
-                                val dy = pressed.map { it.positionChange().y }.average().toFloat()
+                                val dx = deltas.map { it.x }.average().toFloat()
+                                val dy = deltas.map { it.y }.average().toFloat()
                                 panX += dx
                                 panY += dy
                                 // The centroid, not one finger: two fingers rarely lift
@@ -596,9 +665,7 @@ private fun TrackpadSurface(
                                 // Counts towards totalMove like one-finger movement does:
                                 // without this a two-finger *scroll* ends with totalMove
                                 // still at 0 and the release above fires a right-click.
-                                totalMove += pressed
-                                    .map { it.positionChange().getDistance() }
-                                    .average().toFloat()
+                                totalMove += deltas.map { it.getDistance() }.average().toFloat()
 
                                 val committed = axis ?: run {
                                     if (max(abs(panX), abs(panY)) < AXIS_LOCK_SLOP) return@run null
@@ -609,12 +676,25 @@ private fun TrackpadSurface(
                                     // scroll opens with a dead zone the finger can feel.
                                     if (locked == Axis.VERTICAL && mode == GestureMode.TWO_FINGER) {
                                         wheel.by(dy = panY - dy)
+                                        // A swipe that stops and holds — rather than
+                                        // releasing — should keep scrolling the way the
+                                        // rail does, not sit there doing nothing until the
+                                        // finger moves again. `panY` is already displacement
+                                        // from where this gesture started.
+                                        twoFingerLastMoveMs = System.currentTimeMillis()
+                                        twoFingerHoldJob = startHoldToScroll(
+                                            scope, wheel, haptics,
+                                            offset = { panY }, lastMoveMs = { twoFingerLastMoveMs },
+                                        )
                                     }
                                     locked
                                 } ?: continue
 
                                 if (committed == Axis.VERTICAL && mode == GestureMode.TWO_FINGER) {
-                                    if (dy != 0f) wheel.by(dy = dy)
+                                    if (dy != 0f) {
+                                        wheel.by(dy = dy)
+                                        if (abs(dy) >= 1f) twoFingerLastMoveMs = System.currentTimeMillis()
+                                    }
                                 } else if (!swipeFired) {
                                     val travel = if (committed == Axis.HORIZONTAL) panX else panY
                                     if (abs(travel) >= SWIPE_TRIGGER) {

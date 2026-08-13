@@ -43,6 +43,9 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
             val chatError by viewModel.chatError.collectAsState()
             val plan by viewModel.plan.collectAsState()
             val deciding by viewModel.deciding.collectAsState()
+            val aiCatalog by viewModel.aiCatalog.collectAsState()
+            val aiCatalogLoading by viewModel.aiCatalogLoading.collectAsState()
+            val aiCatalogError by viewModel.aiCatalogError.collectAsState()
             var triedSavedHost by remember { mutableStateOf(false) }
             val haptics = rememberHaptics(settings.haptics)
 
@@ -122,6 +125,9 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             chatError = chatError,
                             plan = plan,
                             deciding = deciding,
+                            aiCatalog = aiCatalog,
+                            aiCatalogLoading = aiCatalogLoading,
+                            aiCatalogError = aiCatalogError,
                             onProbeAi = { viewModel.probeAi(it) },
                             onSendChat = { viewModel.sendChat(it) },
                             onAct = { viewModel.askAssistant(it) },
@@ -130,6 +136,8 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             onRegenerateChat = { viewModel.regenerateChat() },
                             onStopChat = { viewModel.stopChat() },
                             onClearChat = { viewModel.clearChat() },
+                            onLoadAiCatalog = { viewModel.loadAiCatalog() },
+                            onSelectAiModel = { provider, model -> viewModel.selectAiModel(provider, model) },
                             onShareText = { viewModel.shareText(it) },
                             onShareUri = { viewModel.shareUri(it) },
                             onRetryShare = { viewModel.retryShare(it) },

@@ -29,6 +29,9 @@ class BrowserTab(
 
     val found = mutableStateListOf<FoundMedia>()
 
+    /** Masters already sent off to be read for variants — players re-request them. */
+    val expandedHls = mutableSetOf<String>()
+
     /** Held so the tab survives switching away and back. Destroyed when the tab closes. */
     var webView: WebView? = null
 
@@ -36,6 +39,7 @@ class BrowserTab(
 
     fun resetPageState() {
         found.clear()
+        expandedHls.clear()
         mediaHidden = false
         blocked = 0
     }

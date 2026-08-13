@@ -568,7 +568,7 @@ private const val SKIP_FORWARD_SECONDS = 30.0
  * would claim a position we don't have.
  */
 @Composable
-private fun CastTransport(
+internal fun CastTransport(
     cast: CastState,
     status: CastStatus?,
     canSeek: Boolean,

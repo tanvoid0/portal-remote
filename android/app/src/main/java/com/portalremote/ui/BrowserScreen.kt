@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
@@ -61,6 +63,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -95,12 +98,16 @@ import com.portalremote.data.BrowserSettings
 import com.portalremote.data.BrowserStore
 import com.portalremote.data.SearchEngine
 import com.portalremote.net.AdBlock
+import com.portalremote.net.CastState
+import com.portalremote.net.CastStatus
 import com.portalremote.net.FoundMedia
+import com.portalremote.net.Hls
 import com.portalremote.net.MediaSniffer
 import com.portalremote.net.Omnibox
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.launch
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** Blank 200 rather than a 404: some scripts retry on error, and a retry loop is
  *  worse than the ad would have been. */
@@ -108,14 +115,19 @@ private fun blockedResponse() =
     WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
 
 /** Reads every `<video>` on the page, including ones with a plain `src=` attribute
- *  that never generate a request the interceptor can see. */
+ *  that never generate a request the interceptor can see. `videoHeight` is the real
+ *  decoded size, so it beats anything guessable from the URL — it's 0 until the
+ *  metadata lands, which is why the sheet also takes a hint from the filename. */
 private const val FIND_VIDEOS_JS = """
     (function () {
       var out = [];
       var vids = document.querySelectorAll('video, video source');
       for (var i = 0; i < vids.length; i++) {
-        var s = vids[i].currentSrc || vids[i].src;
-        if (s) out.push(s);
+        var el = vids[i];
+        var s = el.currentSrc || el.src;
+        if (!s) continue;
+        var media = el.videoHeight ? el : el.parentElement;
+        out.push({ src: s, h: (media && media.videoHeight) || 0 });
       }
       return JSON.stringify(out);
     })()
@@ -132,7 +144,11 @@ private const val FIND_VIDEOS_JS = """
 @Composable
 fun BrowserScreen(
     session: BrowserSession,
+    cast: CastState?,
+    castStatus: CastStatus?,
+    castSeekable: Boolean,
     onCast: (url: String, title: String?) -> Unit,
+    onPlayer: (JSONObject) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -170,6 +186,25 @@ fun BrowserScreen(
     val siteAllowed = pageHost != null && pageHost in settings.allowedHosts
     val bookmarked = tab.url != null && bookmarks.any { it.url == tab.url }
 
+    // A master playlist is a menu, not a video: reading it turns one "HLS" row into the
+    // resolutions the site actually offers. Anything else — a media playlist, a CDN
+    // that won't serve it to us — falls back to the single entry we already had.
+    fun found(url: String, kind: String, title: String?, height: Int?) {
+        if (kind != "HLS" || !tab.expandedHls.add(url)) {
+            addFound(tab.found, url, kind, title, height)
+            return
+        }
+        scope.launch {
+            val cookie = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+            val variants = Hls.variants(url, cookie, tab.url)
+            if (variants.isEmpty()) {
+                addFound(tab.found, url, kind, title, height)
+            } else {
+                variants.forEach { (variant, h) -> addFound(tab.found, variant, kind, title, h) }
+            }
+        }
+    }
+
     fun go(input: String) {
         val url = Omnibox.resolve(input, settings.searchEngine) ?: return
         tab.resetPageState()
@@ -200,6 +235,10 @@ fun BrowserScreen(
                 onForward = { tab.webView?.goForward() },
                 onReload = { tab.webView?.reload() },
                 foundCount = tab.found.size,
+                // Casting doesn't end the browsing — the sheet stays reachable so the
+                // thing playing on the PC can be paused from the page that started it,
+                // even after navigating somewhere with nothing castable on it.
+                casting = cast != null,
                 onShowFound = { showFound = true },
                 tabCount = session.tabs.size,
                 onShowTabs = { showTabs = true },
@@ -237,37 +276,11 @@ fun BrowserScreen(
             // accessibility tree, which is exactly how that hid until the pixels were
             // looked at.
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                // Keyed on the tab so switching tabs swaps the whole WebView rather
-                // than reusing one and reloading into it.
-                key(tab.id) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = { ctx ->
-                            tab.webView ?: newWebView(
-                                ctx = ctx,
-                                tab = tab,
-                                adBlock = adBlock,
-                                background = pageBackground,
-                                settingsProvider = { settings },
-                                onTitle = { title ->
-                                    tab.title = title
-                                    val url = tab.url
-                                    if (!tab.incognito && url != null && settings.saveHistory) {
-                                        scope.launch {
-                                            store.recordVisit(url, title.orEmpty(), nowMillis())
-                                        }
-                                    }
-                                },
-                                onFullscreen = { view -> fullscreenView = view },
-                                openInNewTab = { url -> session.open(url, tab.incognito) },
-                            ).also { created ->
-                                tab.webView = created
-                                tab.url?.let { created.loadUrl(it) }
-                            }
-                        },
-                    )
-                }
-
+                // An empty tab gets no WebView at all. One with nothing loaded still
+                // paints its background over the address bar on the first frame — the
+                // bar is laid out and touchable but invisible, which is the whole
+                // "browser opens blank" bug. Nothing to show, so nothing to attach:
+                // `go` below sets tab.url, and the factory loads it on the way in.
                 if (tab.url == null) {
                     BrowserStartHint(
                         incognito = tab.incognito,
@@ -275,6 +288,38 @@ fun BrowserScreen(
                         onOpen = { url -> go(url) },
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
+                } else {
+                    // Keyed on the tab so switching tabs swaps the whole WebView rather
+                    // than reusing one and reloading into it.
+                    key(tab.id) {
+                        AndroidView(
+                            modifier = Modifier.fillMaxSize(),
+                            factory = { ctx ->
+                                tab.webView ?: newWebView(
+                                    ctx = ctx,
+                                    tab = tab,
+                                    adBlock = adBlock,
+                                    background = pageBackground,
+                                    settingsProvider = { settings },
+                                    onTitle = { title ->
+                                        tab.title = title
+                                        val url = tab.url
+                                        if (!tab.incognito && url != null && settings.saveHistory) {
+                                            scope.launch {
+                                                store.recordVisit(url, title.orEmpty(), nowMillis())
+                                            }
+                                        }
+                                    },
+                                    onFound = ::found,
+                                    onFullscreen = { view -> fullscreenView = view },
+                                    openInNewTab = { url -> session.open(url, tab.incognito) },
+                                ).also { created ->
+                                    tab.webView = created
+                                    tab.url?.let { created.loadUrl(it) }
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -310,10 +355,13 @@ fun BrowserScreen(
                 found = tab.found,
                 mediaHidden = tab.mediaHidden,
                 blocked = tab.blocked,
-                onCast = { media ->
-                    onCast(media.url, media.pageTitle ?: tab.title)
-                    showFound = false
-                },
+                cast = cast,
+                castStatus = castStatus,
+                castSeekable = castSeekable,
+                onPlayer = onPlayer,
+                // Casting a second thing while the sheet is open is a choice of what to
+                // watch, not a reason to close it — the transport above swaps to it.
+                onCast = { media -> onCast(media.url, media.pageTitle ?: tab.title) },
             )
         }
     }
@@ -413,6 +461,7 @@ private fun newWebView(
     background: Int,
     settingsProvider: () -> BrowserSettings,
     onTitle: (String?) -> Unit,
+    onFound: (url: String, kind: String, title: String?, height: Int?) -> Unit,
     onFullscreen: (View?) -> Unit,
     openInNewTab: (String) -> Unit,
 ): WebView = WebView(ctx).apply {
@@ -484,7 +533,7 @@ private fun newWebView(
             val kind = MediaSniffer.classify(url) ?: return null
             // Runs on a background thread; Compose state is not thread-safe, so hop
             // to the view's own thread before touching the list.
-            post { addFound(tab.found, url, kind, view.title) }
+            post { onFound(url, kind, view.title, null) }
             return null
         }
 
@@ -509,11 +558,11 @@ private fun newWebView(
             tab.canGoForward = view.canGoForward()
             onTitle(view.title)
             view.evaluateJavascript(FIND_VIDEOS_JS) { raw ->
-                decodeJsStringArray(raw).forEach { src ->
+                decodeFoundVideos(raw).forEach { (src, height) ->
                     if (MediaSniffer.isUnfetchable(src)) {
                         tab.mediaHidden = true
                     } else {
-                        addFound(tab.found, src, MediaSniffer.classify(src) ?: "Video", view.title)
+                        onFound(src, MediaSniffer.classify(src) ?: "Video", view.title, height)
                     }
                 }
             }
@@ -577,13 +626,15 @@ private fun newWebView(
 }
 
 /** `evaluateJavascript` hands back a JSON *string literal*, so it needs unwrapping twice. */
-private fun decodeJsStringArray(raw: String?): List<String> {
+private fun decodeFoundVideos(raw: String?): List<Pair<String, Int?>> {
     if (raw.isNullOrBlank() || raw == "null") return emptyList()
     val unquoted = raw.removeSurrounding("\"").replace("\\\"", "\"").replace("\\/", "/")
     val array = runCatching { JSONArray(unquoted) }.getOrNull() ?: return emptyList()
     return buildList {
         for (i in 0 until array.length()) {
-            array.optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
+            val item = array.optJSONObject(i) ?: continue
+            val src = item.optString("src").takeIf { it.isNotBlank() } ?: continue
+            add(src to item.optInt("h").takeIf { it > 0 })
         }
     }
 }
@@ -633,10 +684,18 @@ private fun addFound(
     url: String,
     kind: String,
     title: String?,
+    height: Int?,
 ) {
     if (found.any { it.url == url }) return
     if (found.size >= 20) return
-    found.add(FoundMedia(url = url, kind = kind, pageTitle = title))
+    found.add(
+        FoundMedia(
+            url = url,
+            kind = kind,
+            pageTitle = title,
+            height = height ?: MediaSniffer.heightHint(url),
+        ),
+    )
 }
 
 @Composable
@@ -651,6 +710,7 @@ private fun BrowserBar(
     onForward: () -> Unit,
     onReload: () -> Unit,
     foundCount: Int,
+    casting: Boolean,
     onShowFound: () -> Unit,
     tabCount: Int,
     onShowTabs: () -> Unit,
@@ -701,9 +761,24 @@ private fun BrowserBar(
                 keyboardActions = KeyboardActions(onGo = { onGo() }),
             )
 
+            // The whole point of the browser is what this button lights up for, so it
+            // says so rather than waiting to be noticed: filled icon, counted badge.
+            val lit = foundCount > 0 || casting
             BadgedBox(badge = { if (foundCount > 0) Badge { Text("$foundCount") } }) {
-                IconButton(onClick = onShowFound, enabled = foundCount > 0) {
-                    Icon(Icons.Filled.Cast, contentDescription = "Cast from this page")
+                IconButton(onClick = onShowFound, enabled = lit) {
+                    Icon(
+                        if (lit) Icons.Filled.CastConnected else Icons.Filled.Cast,
+                        contentDescription = when {
+                            casting -> "Playing on the PC — open the controls"
+                            foundCount > 0 -> "$foundCount videos ready to cast"
+                            else -> "Cast from this page"
+                        },
+                        tint = if (lit) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            LocalContentColor.current
+                        },
+                    )
                 }
             }
 
@@ -1009,9 +1084,30 @@ private fun FoundMediaSheet(
     found: List<FoundMedia>,
     mediaHidden: Boolean,
     blocked: Int,
+    cast: CastState?,
+    castStatus: CastStatus?,
+    castSeekable: Boolean,
+    onPlayer: (JSONObject) -> Unit,
     onCast: (FoundMedia) -> Unit,
 ) {
     Column(modifier = Modifier.padding(bottom = 24.dp)) {
+        // The same transport as the Media tab, so what's playing can be paused and
+        // scrubbed without leaving the page it came from.
+        cast?.let {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CastTransport(
+                    cast = it,
+                    status = castStatus,
+                    canSeek = castSeekable,
+                    onPlayer = onPlayer,
+                )
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        }
+
         Text(
             "Found on this page",
             style = MaterialTheme.typography.titleMedium,
@@ -1032,29 +1128,43 @@ private fun FoundMediaSheet(
             )
         }
 
+        // Best quality first, and unknown sizes after the known ones rather than above
+        // them — a row that can't say what it is shouldn't outrank a row that can.
+        val ranked = remember(found) { found.sortedByDescending { it.height ?: -1 } }
+
         LazyColumn {
-            items(found, key = { it.url }) { media ->
+            itemsIndexed(ranked, key = { _, media -> media.url }) { index, media ->
                 ListItem(
                     headlineContent = {
                         Text(media.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
                     supportingContent = {
                         Text(
-                            "${media.kind} · ${media.fileName}",
+                            listOfNotNull(
+                                media.quality,
+                                media.kind.takeIf { media.height != null },
+                                media.fileName,
+                            ).joinToString(" · "),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    },
+                    // Whole row casts; the badge only marks which one you get by default.
+                    leadingContent = if (index == 0 && media.height != null) {
+                        { AssistChip(onClick = { onCast(media) }, label = { Text("Best") }) }
+                    } else {
+                        null
                     },
                     trailingContent = {
                         IconButton(onClick = { onCast(media) }) {
                             Icon(
                                 Icons.Filled.Cast,
-                                contentDescription = "Cast ${media.label}",
+                                contentDescription = "Cast ${media.label} ${media.quality}",
                                 modifier = Modifier.size(24.dp),
                             )
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().clickable { onCast(media) },
                 )
             }
         }

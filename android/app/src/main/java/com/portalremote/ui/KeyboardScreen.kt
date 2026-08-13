@@ -1,5 +1,7 @@
 package com.portalremote.ui
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -31,12 +33,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -45,10 +49,6 @@ import com.portalremote.ui.theme.HapticPress
 
 /** Non-empty placeholder so the field always has something for backspace to delete. */
 private const val SENTINEL = " "
-
-/** Length at which the capture buffer is trimmed back to [SENTINEL]. Only about
- *  keeping the visible field short — nothing depends on the text that came before. */
-private const val MAX_CAPTURE_CHARS = 120
 
 /**
  * Captures soft-keyboard input and special keys, forwarding each as a protocol
@@ -61,6 +61,9 @@ fun KeyboardScreen(
     onText: (String) -> Unit,
     onTap: (key: String) -> Unit,
     onCombo: (keys: List<String>) -> Unit,
+    /** Fired after Enter goes out — the shell uses this to hand focus back to the
+     *  trackpad, since sending a line is usually the "I'm done typing" signal. */
+    onSubmit: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -68,7 +71,12 @@ fun KeyboardScreen(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        KeyCaptureField(onText = onText, onTap = onTap, modifier = Modifier.fillMaxWidth())
+        KeyCaptureField(
+            onText = onText,
+            onTap = onTap,
+            onSubmit = onSubmit,
+            modifier = Modifier.fillMaxWidth(),
+        )
         SpecialKeyRow(onTap = onTap, onCombo = onCombo)
         ArrowPad(onTap = onTap)
     }
@@ -86,6 +94,12 @@ fun KeyCaptureField(
     onTap: (key: String) -> Unit,
     modifier: Modifier = Modifier,
     label: String = "Tap to type",
+    /** Grabs focus (and the soft keyboard) as soon as this composes. Off for the
+     *  trackpad's own type bar, which exists to hand focus *away* to the Keyboard
+     *  tab rather than to open the IME in place. */
+    autoFocus: Boolean = true,
+    /** Fired after Enter goes out. */
+    onSubmit: () -> Unit = {},
 ) {
     var field by remember {
         mutableStateOf(TextFieldValue(SENTINEL, selection = TextRange(SENTINEL.length)))
@@ -110,9 +124,10 @@ fun KeyCaptureField(
 
             // Let the IME keep its own buffer — forcing the value back every keystroke
             // is what desynchronised it. Only re-arm the sentinel once the field is
-            // empty (so the next backspace still has something to delete) or the
-            // buffer has grown long enough to be worth trimming.
-            if (new.text.isEmpty() || new.text.length > MAX_CAPTURE_CHARS) {
+            // empty, so the next backspace still has something to delete; otherwise it
+            // keeps growing — the field is a scrollable text area now, not a one-line
+            // buffer that has to be trimmed to stay legible.
+            if (new.text.isEmpty()) {
                 field = TextFieldValue(SENTINEL, selection = TextRange(SENTINEL.length))
                 sent[0] = SENTINEL
             } else {
@@ -121,16 +136,19 @@ fun KeyCaptureField(
             }
         },
         label = { Text(label) },
-        singleLine = true,
+        // Grows with the text instead of scrolling sideways in one line; past
+        // maxLines the field scrolls internally rather than growing forever.
+        minLines = 1,
+        maxLines = 6,
         // The IME's own return key sends Enter to the PC. Without this it would be a
         // "done" button that closes the keyboard and types nothing, which is the one
         // key people reach for most after typing a line.
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-        keyboardActions = KeyboardActions(onSend = { onTap("enter") }),
+        keyboardActions = KeyboardActions(onSend = { onTap("enter"); onSubmit() }),
         modifier = modifier.focusRequester(focusRequester),
     )
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(autoFocus) { if (autoFocus) focusRequester.requestFocus() }
 }
 
 private data class SpecialKey(val label: String, val send: () -> Unit)
@@ -208,11 +226,23 @@ internal fun KeyButton(
     val pressed by interactionSource.collectIsPressedAsState()
     // Same source as the tint above, so the buzz and the highlight land together.
     HapticPress(interactionSource)
+    val latestOnClick = rememberUpdatedState(onClick)
     OutlinedButton(
-        onClick = onClick,
+        // The real action fires on press below — a key that only speaks on release
+        // reads a beat behind a physical one, felt most on the keys people tap fastest
+        // (backspace, arrows). Left as a no-op so the button's own clickable still
+        // drives `interactionSource` for the press tint above.
+        onClick = {},
         interactionSource = interactionSource,
         contentPadding = contentPadding,
-        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+        modifier = Modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    latestOnClick.value()
+                }
+            },
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = if (pressed) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
         ),

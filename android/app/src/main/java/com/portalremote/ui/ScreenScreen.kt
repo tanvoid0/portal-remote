@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -52,6 +53,8 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToDown
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.positionChange
@@ -100,13 +103,46 @@ enum class MirrorPreset(val label: String, val fps: Int, val width: Int, val qua
 /** Total movement (px) below which a touch counts as a tap rather than a drag. */
 private const val TAP_SLOP = 18f
 
-private enum class TouchMode { WAITING, POINT, DRAG, TWO_FINGER }
+private enum class TouchMode { WAITING, POINT, DRAG, TWO_FINGER, RAIL }
+
+/** Width of the right-edge scroll rail — same figure as the trackpad's, so a drag
+ *  there covers the same distance per notch on both surfaces. Only live once zoomed:
+ *  at 1x the same touch has to be free to click whatever's actually drawn at that
+ *  edge, and two fingers already scroll there without a rail. Zoomed in, 2-finger
+ *  is spent on panning, so scrolling needs a way in that isn't a finger count. */
+private val MIRROR_RAIL_WIDTH = 44.dp
 
 /** What a two-finger gesture turned out to mean, decided once and then held. */
-private enum class TwoFingerIntent { UNDECIDED, ZOOM, PAN, SCROLL }
+internal enum class TwoFingerIntent { UNDECIDED, ZOOM, PAN, SCROLL }
 
 /** Movement (px) a two-finger gesture needs before it commits to zoom/pan/scroll. */
 private const val GESTURE_INTENT_SLOP = 16f
+
+/**
+ * Decides what a two-finger gesture means from its accumulated travel so far. Pure
+ * and top-level so the decision can be checked without two simulated fingers — see
+ * `TwoFingerIntentTest`.
+ *
+ * Whichever of [pinchTravel]/[panTravel] crosses [GESTURE_INTENT_SLOP] *first* used
+ * to win outright — but a real vertical swipe still jitters the finger spread a
+ * little as it goes, enough to cross the slop on pinch before the deliberate
+ * pan/scroll signal did, locking the whole gesture into a zoom that never visibly
+ * moves (spread barely changed, so the target clamps back to ~1x and nothing looks
+ * like it happened). Comparing which total is *larger*, once either has crossed the
+ * slop, means noise can only win if it's actually the bigger signal.
+ */
+internal fun classifyTwoFingerIntent(
+    pinchTravel: Float,
+    panTravel: Float,
+    zoomed: Boolean,
+): TwoFingerIntent = when {
+    pinchTravel < GESTURE_INTENT_SLOP && panTravel < GESTURE_INTENT_SLOP -> TwoFingerIntent.UNDECIDED
+    pinchTravel > panTravel -> TwoFingerIntent.ZOOM
+    // Panning is only meaningful once there's content off screen; at 1x the same
+    // gesture scrolls the desktop.
+    zoomed -> TwoFingerIntent.PAN
+    else -> TwoFingerIntent.SCROLL
+}
 
 /** 4x is enough to hit a close button on a 3440px-wide desktop; beyond that the
  *  JPEG's own resolution runs out before the zoom does. */
@@ -176,11 +212,22 @@ fun ScreenScreen(
     // frame says so. One line, gone the moment a finger lands — see the same pattern
     // on the trackpad.
     var touched by remember { mutableStateOf(false) }
+    // Raw touch passthrough instead of the emulated cursor — see
+    // touchPassthroughGestures. Off by default: it's the PC's own touch-aware apps
+    // that make sense of the gesture in this mode, which most of what a mouse-driven
+    // desktop shows isn't.
+    var touchMode by remember { mutableStateOf(false) }
 
     // Held as MutableState rather than `by` delegates: the gesture handler runs
     // outside composition and needs the state objects themselves.
     val zoom = remember { mutableStateOf(1f) }
     val pan = remember { mutableStateOf(Offset.Zero) }
+
+    // Touch mode forwards fingers 1:1 — a leftover pinch-zoom from before the switch
+    // would offset every contact from where the finger actually is.
+    LaunchedEffect(touchMode) {
+        if (touchMode) { zoom.value = 1f; pan.value = Offset.Zero }
+    }
 
     LaunchedEffect(attempt) {
         runCatching { api.monitors(host) }.onSuccess { list ->
@@ -240,12 +287,18 @@ fun ScreenScreen(
                             // Keyed on naturalScroll too: the gesture loop reads it once,
                             // so without the key a scroll-direction change wouldn't take
                             // effect until the handler was restarted for some other reason.
-                            .pointerInput(monitor, settings.naturalScroll, haptics, settings.momentum) {
-                                mirrorGestures(
-                                    monitor, zoom, pan, haptics, wheel,
-                                    MomentumLevel.from(settings.momentum), send,
-                                ) {
-                                    touched = true
+                            .pointerInput(
+                                monitor, settings.naturalScroll, haptics, settings.momentum, touchMode,
+                            ) {
+                                if (touchMode) {
+                                    touchPassthroughGestures(monitor, send) { touched = true }
+                                } else {
+                                    mirrorGestures(
+                                        monitor, zoom, pan, haptics, wheel,
+                                        MomentumLevel.from(settings.momentum), send,
+                                    ) {
+                                        touched = true
+                                    }
                                 }
                             }
                             .graphicsLayer {
@@ -282,11 +335,13 @@ fun ScreenScreen(
                     preset = preset,
                     zoom = zoom.value,
                     typing = typing,
+                    touchMode = touchMode,
                     fullscreen = false,
                     onMonitor = { monitor = it },
                     onPreset = { preset = it; onPresetChange(it) },
                     onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
                     onToggleTyping = { typing = !typing },
+                    onToggleTouchMode = { touchMode = !touchMode },
                     onToggleFullscreen = { onFullscreen(true) },
                 )
             }
@@ -299,10 +354,12 @@ fun ScreenScreen(
                 preset = preset,
                 zoom = zoom.value,
                 typing = typing,
+                touchMode = touchMode,
                 onMonitor = { monitor = it },
                 onPreset = { preset = it; onPresetChange(it) },
                 onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
                 onToggleTyping = { typing = !typing },
+                onToggleTouchMode = { touchMode = !touchMode },
                 onExitFullscreen = { onFullscreen(false) },
             )
         }
@@ -326,10 +383,12 @@ private fun FloatingMirrorControls(
     preset: MirrorPreset,
     zoom: Float,
     typing: Boolean,
+    touchMode: Boolean,
     onMonitor: (Int?) -> Unit,
     onPreset: (MirrorPreset) -> Unit,
     onResetZoom: () -> Unit,
     onToggleTyping: () -> Unit,
+    onToggleTouchMode: () -> Unit,
     onExitFullscreen: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -367,11 +426,13 @@ private fun FloatingMirrorControls(
                     preset = preset,
                     zoom = zoom,
                     typing = typing,
+                    touchMode = touchMode,
                     fullscreen = true,
                     onMonitor = onMonitor,
                     onPreset = onPreset,
                     onResetZoom = onResetZoom,
                     onToggleTyping = onToggleTyping,
+                    onToggleTouchMode = onToggleTouchMode,
                     onToggleFullscreen = onExitFullscreen,
                 )
             }
@@ -384,7 +445,8 @@ private fun FloatingMirrorControls(
 @Composable
 private fun MirrorGestureHint() {
     Text(
-        "Pinch to zoom · two fingers to pan or scroll",
+        "Pinch to zoom · two fingers to pan or scroll\n" +
+            "Zoomed in, the right edge scrolls",
         style = MaterialTheme.typography.bodySmall,
         color = Color.White.copy(alpha = 0.7f),
         textAlign = TextAlign.Center,
@@ -430,13 +492,19 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
             send(Protocol.mouseMoveNorm(fraction.x, fraction.y, monitor))
         }
 
-        pointAt(down.position.x, down.position.y)
+        // The rail is decided by where the finger *landed*, once, same as the
+        // trackpad's — a drag that wanders out of the strip keeps scrolling, and one
+        // that wanders in stays whatever it already was.
+        val onRail = zoom.value > 1f && down.position.x >= area.width - MIRROR_RAIL_WIDTH.toPx()
+        var mode = if (onRail) TouchMode.RAIL else TouchMode.WAITING
+        // A rail touch isn't pointing at anything on the desktop — moving the cursor
+        // under it would drag the pointer to the edge of the screen for no reason.
+        if (!onRail) pointAt(down.position.x, down.position.y)
 
         var totalMove = 0f
         var pinchTravel = 0f
         var panTravel = 0f
         var twoFinger = TwoFingerIntent.UNDECIDED
-        var mode = TouchMode.WAITING
         var pointerCount = 1
 
         while (true) {
@@ -462,11 +530,24 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
             pointerCount = maxOf(pointerCount, pressed.size)
 
             if (pressed.isEmpty()) {
-                if (twoFinger == TwoFingerIntent.SCROLL) {
+                // Both fingers often lift in this very event rather than a prior
+                // move — each change's positionChange() is still valid here even
+                // though `pressed` just went false. Skipping it drops the last chunk
+                // of a fast flick from totalMove, and a real two-finger scroll can
+                // land under TAP_SLOP and fire a right-click instead — see the same
+                // fix in TrackpadScreen's gesture loop.
+                if (mode == TouchMode.TWO_FINGER) {
+                    totalMove += event.changes
+                        .map { it.positionChange().getDistance() }
+                        .average().toFloat()
+                }
+                if (mode == TouchMode.RAIL || twoFinger == TwoFingerIntent.SCROLL) {
                     val v = velocity.calculateVelocity()
                     wheel.fling(v.x, v.y, momentum)
                 }
                 when {
+                    // A tap on the rail is not a click — the strip is a scrollbar.
+                    mode == TouchMode.RAIL -> Unit
                     mode == TouchMode.DRAG -> {
                         haptics.tick()
                         send(Protocol.mouseClick("left", down = false))
@@ -483,9 +564,22 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                 break
             }
 
-            if (pointerCount >= 2 && mode != TouchMode.DRAG) mode = TouchMode.TWO_FINGER
+            if (pointerCount >= 2 && mode != TouchMode.DRAG && mode != TouchMode.RAIL) {
+                mode = TouchMode.TWO_FINGER
+            }
 
             when (mode) {
+                TouchMode.RAIL -> {
+                    val primary: PointerInputChange =
+                        event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+                    // Before consuming: positionChange() is defined to return Offset.Zero
+                    // once the change is consumed.
+                    val dy = primary.positionChange().y
+                    primary.consume()
+                    velocity.addPosition(primary.uptimeMillis, primary.position)
+                    wheel.by(dy = dy)
+                }
+
                 TouchMode.TWO_FINGER -> {
                     event.changes.forEach { it.consume() }
                     if (pressed.size < 2) continue
@@ -508,14 +602,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                     if (twoFinger == TwoFingerIntent.UNDECIDED) {
                         pinchTravel += kotlin.math.abs(spread - previousSpread)
                         panTravel += centroidShift.getDistance()
-                        twoFinger = when {
-                            pinchTravel > GESTURE_INTENT_SLOP -> TwoFingerIntent.ZOOM
-                            panTravel > GESTURE_INTENT_SLOP ->
-                                // Panning is only meaningful once there's content off
-                                // screen; at 1x the same gesture scrolls the desktop.
-                                if (zoom.value > 1f) TwoFingerIntent.PAN else TwoFingerIntent.SCROLL
-                            else -> TwoFingerIntent.UNDECIDED
-                        }
+                        twoFinger = classifyTwoFingerIntent(pinchTravel, panTravel, zoom.value > 1f)
                     }
 
                     when (twoFinger) {
@@ -564,6 +651,66 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
     }
 }
 
+/** Windows' real touch-injection API takes contact ids 0..9, owned by the caller for
+ *  a finger's whole contact; Android's own pointer ids are arbitrary and can repeat
+ *  across gestures, so they can't be forwarded as-is. */
+private const val MAX_TOUCH_CONTACTS = 10
+
+/**
+ * Raw multi-touch passthrough: every finger's down/move/up goes to Windows' actual
+ * touch digitizer (see `WinInput.Touch`), not the emulated cursor [mirrorGestures]
+ * drives. No tap/drag/pinch/scroll interpretation here — the PC's own touch-aware
+ * apps (Windows Ink, native pinch-zoom) are what get to interpret the gesture, which
+ * is the entire point of this mode. Assumes the caller has already pinned zoom at 1x:
+ * pinching the *view* while also forwarding the same two fingers as a real touch
+ * would have the phone and the PC fighting over what the gesture means.
+ */
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.touchPassthroughGestures(
+    monitor: Int?,
+    send: (JSONObject) -> Unit,
+    onTouch: () -> Unit,
+) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        onTouch()
+
+        val slots = mutableMapOf<Long, Int>()
+        val freeSlots = ArrayDeque((0 until MAX_TOUCH_CONTACTS).toList())
+
+        while (true) {
+            val event = awaitPointerEvent()
+            val contacts = mutableListOf<Protocol.TouchContact>()
+
+            for (change in event.changes) {
+                val down = change.changedToDown()
+                val up = change.changedToUp()
+                val key = change.id.value
+                val slot = when {
+                    down -> freeSlots.removeFirstOrNull()?.also { slots[key] = it }
+                    else -> slots[key]
+                    // Either a finger past the 10-contact ceiling, or a stray change
+                    // for a pointer this loop never saw arrive — both silently
+                    // dropped rather than sent with a made-up slot.
+                } ?: continue
+
+                change.consume()
+                contacts += Protocol.TouchContact(
+                    slot,
+                    (change.position.x / size.width).coerceIn(0f, 1f),
+                    (change.position.y / size.height).coerceIn(0f, 1f),
+                    if (down) Protocol.TouchPhase.DOWN
+                    else if (up) Protocol.TouchPhase.UP
+                    else Protocol.TouchPhase.MOVE,
+                )
+                if (up) { slots.remove(key); freeSlots.addLast(slot) }
+            }
+
+            if (contacts.isNotEmpty()) send(Protocol.touch(contacts, monitor))
+            if (event.changes.all { !it.pressed }) break
+        }
+    }
+}
+
 @Composable
 private fun MirrorMessage(message: String, onRetry: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -585,11 +732,13 @@ private fun MirrorControls(
     preset: MirrorPreset,
     zoom: Float,
     typing: Boolean,
+    touchMode: Boolean,
     fullscreen: Boolean,
     onMonitor: (Int?) -> Unit,
     onPreset: (MirrorPreset) -> Unit,
     onResetZoom: () -> Unit,
     onToggleTyping: () -> Unit,
+    onToggleTouchMode: () -> Unit,
     onToggleFullscreen: () -> Unit,
 ) {
     Row(
@@ -626,6 +775,12 @@ private fun MirrorControls(
             onClick = onToggleTyping,
             leadingIcon = { Icon(Icons.Filled.Keyboard, contentDescription = null) },
             label = { Text("Type") },
+        )
+        FilterChip(
+            selected = touchMode,
+            onClick = onToggleTouchMode,
+            leadingIcon = { Icon(Icons.Filled.TouchApp, contentDescription = null) },
+            label = { Text("Touch") },
         )
         FilterChip(
             selected = fullscreen,

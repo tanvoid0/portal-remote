@@ -6,12 +6,17 @@ data class FoundMedia(
     val kind: String,
     /** Page title when it was found — a better cast label than a CDN filename. */
     val pageTitle: String?,
+    /** Frame height, when anything told us one. Null means "we don't know", not "small". */
+    val height: Int? = null,
 ) {
     /** Last path segment, for when the page title is missing or useless. */
     val fileName: String
         get() = url.substringBefore('?').substringAfterLast('/').ifBlank { url }
 
     val label: String get() = pageTitle?.takeIf { it.isNotBlank() } ?: fileName
+
+    /** "1080p", or the kind alone when nothing knows the size. */
+    val quality: String get() = height?.let { "${it}p" } ?: kind
 }
 
 /**
@@ -52,4 +57,19 @@ object MediaSniffer {
      */
     fun isUnfetchable(url: String): Boolean =
         url.startsWith("blob:") || url.startsWith("data:") || url.startsWith("mediasource:")
+
+    private val HEIGHT_IN_URL = Regex("""(?:^|[^\d])(\d{3,4})(?:p\b|x(\d{3,4})\b)""")
+
+    /**
+     * The frame height a URL advertises — `/hls/1080p/index.m3u8`, `video_1280x720.mp4`.
+     * A guess from a filename, and only used when nothing better is available: the
+     * playlist's own RESOLUTION and the `<video>` element's videoHeight both win.
+     */
+    fun heightHint(url: String): Int? {
+        val match = HEIGHT_IN_URL.find(url.substringBefore('#')) ?: return null
+        val (first, second) = match.destructured
+        // `1280x720` names width first, so the second number is the height.
+        val height = second.toIntOrNull() ?: first.toIntOrNull() ?: return null
+        return height.takeIf { it in 144..4320 }
+    }
 }

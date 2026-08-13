@@ -110,4 +110,33 @@ object Protocol {
     fun playerVolume(level: Float) = player("volume").put("level", level.toDouble())
 
     fun playerMuted(muted: Boolean) = player("volume").put("muted", muted)
+
+    /** A finger's phase in a [touch] message. */
+    enum class TouchPhase { DOWN, MOVE, UP }
+
+    /** One finger for [touch]. [id] is a 0..9 slot the sender owns for that finger's
+     *  whole contact — the server hands it straight to Windows' real touch-injection
+     *  API, which identifies a contact by this id across down/move/up, not by
+     *  anything Android assigns its own pointers. */
+    data class TouchContact(val id: Int, val nx: Float, val ny: Float, val phase: TouchPhase)
+
+    /** Inject real touch input — Windows' touch-digitizer path, not the mouse cursor
+     *  every other message here drives. See ScreenScreen's touch-passthrough mode. */
+    fun touch(contacts: List<TouchContact>, monitor: Int? = null) = JSONObject().apply {
+        put("t", "touch")
+        if (monitor != null) put("mon", monitor)
+        put(
+            "contacts",
+            JSONArray(
+                contacts.map { c ->
+                    JSONObject().apply {
+                        put("id", c.id)
+                        put("nx", c.nx.coerceIn(0f, 1f).toDouble())
+                        put("ny", c.ny.coerceIn(0f, 1f).toDouble())
+                        put("phase", c.phase.name.lowercase())
+                    }
+                },
+            ),
+        )
+    }
 }
