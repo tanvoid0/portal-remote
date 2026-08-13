@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.portalremote.data.AppSettings
 import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
+import com.portalremote.net.AiState
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
 import com.portalremote.net.ConnectionState
@@ -79,6 +80,9 @@ private const val PLAYER_OK = "player_ok"
 /** What the receiver page reports it is doing, forwarded by the server. */
 private const val CAST_STATUS = "cast_status"
 
+/** Whether the assistant's backend is up, pushed by the PC. */
+private const val AI_STATE = "ai_state"
+
 /** Errors come back as `{"t":"error","detail":…}`; this is the one that means the
  *  receiver page has gone away since we last cast to it. */
 private const val ERROR = "error"
@@ -122,6 +126,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      *  Null when nothing is attached or it hasn't reported yet — which is what tells
      *  the transport to fall back to blind buttons rather than draw an empty bar. */
     val castStatus: StateFlow<CastStatus?> = _castStatus.asStateFlow()
+
+    private val _aiState = MutableStateFlow<AiState?>(null)
+
+    /** Whether the assistant's backend is answering. Null until the PC says — which it
+     *  does on connect, so the tab is right the moment it opens. */
+    val aiState: StateFlow<AiState?> = _aiState.asStateFlow()
 
     private var nextShareId = 0L
 
@@ -235,6 +245,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         _cast.value = null
                         _castStatus.value = null
                     }
+                    return@collect
+                }
+                if (json.optString("t") == AI_STATE) {
+                    _aiState.value = AiState.fromPush(json)
                     return@collect
                 }
                 if (json.optString("t") == CAST_STATUS) {
@@ -504,6 +518,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun send(json: JSONObject) = ws.send(json)
+
+    /** Ask the PC whether the assistant's backend is up. [retry] is a person pressing
+     *  the button, which is always allowed to skip the PC's backoff. */
+    fun probeAi(retry: Boolean) = send(JSONObject().put("t", AI_STATE).put("retry", retry))
 
     /**
      * Cast a file that lives on this phone — phase 4d of `docs/phase4-casting.md`.

@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using System.Windows.Forms;
+using PortalRemote.Ai;
 using PortalRemote.Auth;
 using PortalRemote.Cast;
 using PortalRemote.Config;
@@ -56,7 +57,16 @@ internal static class Program
         // mpv reports through the same hub, so the line above covers it too.
         MpvPlayer.Instance.ConfiguredPath = config.MpvPath;
 
-        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying);
+        // The assistant's backend is a separate app the user starts independently, so
+        // "not running" is the normal case and the phone is told rather than left to
+        // find out by failing a request — docs/phase7-assistant.md §4.
+        using var ai = new AiHealth(config.AgentPlatform);
+        ai.Changed += payload =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(payload);
+        };
+
+        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai);
 
         try
         {
@@ -108,7 +118,7 @@ internal static class Program
 
     private static WebApplication BuildApp(
         ServerConfig config, string[] args, ConnectionState connectionState, PairApproval approval, ShareHub share,
-        NowPlaying nowPlaying)
+        NowPlaying nowPlaying, AiHealth ai)
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -150,7 +160,7 @@ internal static class Program
                 : Results.Ok(new { token, name = Environment.MachineName, port = config.RunningPort });
         });
 
-        app.MapControlEndpoint(config, connectionState, share, nowPlaying);
+        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai);
         app.MapFilesEndpoints(config);
         app.MapScreenEndpoints(config);
         app.MapShareEndpoints(config, share);

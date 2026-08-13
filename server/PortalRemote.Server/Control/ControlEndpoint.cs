@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using PortalRemote.Ai;
 using PortalRemote.Auth;
 using PortalRemote.Config;
 using PortalRemote.Input;
@@ -26,7 +27,7 @@ public static class ControlEndpoint
 
     public static void MapControlEndpoint(
         this WebApplication app, ServerConfig config, ConnectionState connectionState, ShareHub shareHub,
-        NowPlaying nowPlaying)
+        NowPlaying nowPlaying, AiHealth ai)
     {
         app.Map("/control", async (HttpContext context, ILoggerFactory loggerFactory) =>
         {
@@ -67,7 +68,11 @@ public static class ControlEndpoint
                 // send it now rather than leaving the card blank until the next
                 // track change.
                 await client.SendJsonAsync(nowPlaying.Snapshot(), context.RequestAborted);
-                await PumpAsync(socket, client, nowPlaying, log, context.RequestAborted);
+                // Same reasoning for the assistant: its tab is correct the instant it
+                // opens, with no request of its own. Whatever we last learned — this
+                // does not probe, so a cold connect is never held up by a dead port.
+                await client.SendJsonAsync(ai.Snapshot(), context.RequestAborted);
+                await PumpAsync(socket, client, nowPlaying, ai, log, context.RequestAborted);
             }
             catch (OperationCanceledException)
             {
@@ -106,7 +111,8 @@ public static class ControlEndpoint
 
     /// <summary>Read messages until the client closes the socket.</summary>
     private static async Task PumpAsync(
-        WebSocket socket, ClientSocket client, NowPlaying nowPlaying, ILogger log, CancellationToken ct)
+        WebSocket socket, ClientSocket client, NowPlaying nowPlaying, AiHealth ai, ILogger log,
+        CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(ReceiveBufferBytes);
         var pending = new MemoryStream();
@@ -136,7 +142,7 @@ public static class ControlEndpoint
 
                 var text = Encoding.UTF8.GetString(pending.GetBuffer(), 0, (int)pending.Length);
                 pending.SetLength(0);
-                await HandleAsync(client, nowPlaying, text, log, ct);
+                await HandleAsync(client, nowPlaying, ai, text, log, ct);
             }
         }
         finally
@@ -147,7 +153,8 @@ public static class ControlEndpoint
     }
 
     private static async Task HandleAsync(
-        ClientSocket client, NowPlaying nowPlaying, string text, ILogger log, CancellationToken ct)
+        ClientSocket client, NowPlaying nowPlaying, AiHealth ai, string text, ILogger log,
+        CancellationToken ct)
     {
         JsonElement message;
         try
@@ -179,6 +186,16 @@ public static class ControlEndpoint
                 return;
             }
             await nowPlaying.SeekAsync(positionMs);
+            return;
+        }
+
+        // Also handled here rather than in InputActions, and for the same reason as
+        // seek: probing is an async call with a cancellation token, and Dispatch is
+        // neither. `retry` is a person pressing the button, which skips the backoff.
+        if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "ai_state")
+        {
+            var retry = message.TryGetProperty("retry", out var r) && r.ValueKind == JsonValueKind.True;
+            await client.SendJsonAsync(await ai.CheckAsync(retry, ct), ct);
             return;
         }
 

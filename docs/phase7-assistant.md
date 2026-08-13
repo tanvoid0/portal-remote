@@ -4,7 +4,7 @@ Design notes for putting a chatbot and an action-taking assistant into the Andro
 app, backed by the **agent-platform** API (`../../ai/agentic-ai/agent-platform`, the
 Rust `agent-platformd`).
 
-**Status:** design only. Nothing here is built.
+**Status:** 7a is built — see §13. Everything else here is design.
 
 The short version: agent-platform already has the exact primitive this needs, the phone
 must never talk to it directly, and the whole feature has to survive the platform being
@@ -368,6 +368,48 @@ loopback-only headless by decision, while this server must be LAN-reachable and
 QR-paired. Merging produces one binary with two contradictory security models.
 
 They stay separate and talk over the API, which is what this document specifies.
+
+## 13. What is built (7a)
+
+The availability model and nothing else, which is the order §10 asks for.
+
+**Server** — `Ai/AiHealth.cs` and an `AgentPlatform` block in `ServerConfig`
+(`BaseUrl`, `Token`, `ExePath`; no token in this repo, per §9). One state
+(`ready`/`unavailable`/`unconfigured`), one probe (`GET /health`, 1s timeout, the
+`X-Agent-Platform-Client` header), and the rules from §4.2: probe on demand and on
+transition rather than on a timer, cache a success for 5s, and open the circuit after
+three consecutive failures for 30s doubling to a 5-minute ceiling. Single-flight, so two
+phones opening the tab at once is one probe.
+
+**Wire** — `ai_state` on the existing control socket, pushed like `now_playing` and
+`cast_status`, and sent once on connect so the tab is right the instant it opens. The
+same message asked *for* answers with the same shape; `{"t":"ai_state","retry":true}` is
+a person pressing the button, which skips the backoff.
+
+**Phone** — `net/AiState.kt` and `ui/AssistantScreen.kt`, a sixth tab that is shown
+rather than hidden (§4.5) and says what is wrong and what would fix it. `canStart` is
+reported as false and no Start button exists: launching `agent-platformd` is 7g, and a
+button that can't is worse than none.
+
+**Verified** against the running server with `agent-platformd` *not* running, which is
+the case §4 says to design for:
+
+| Case | Result |
+|---|---|
+| On connect, before any probe | `unavailable`, `"Not probed yet"` — the connect is never held up by a dead port |
+| Probes 1–3 | ~1s each, `"…/health did not answer within a second"` |
+| Probes 4 and 5 | **0 ms** — answered from the open circuit, nothing dialled |
+| `retry:true` | ~1s — probed again, backoff skipped |
+| State change | pushed unprompted as well as returned; an unchanged state pushes nothing |
+
+**One thing this shook out.** §4.2 says "a refused connection is immediate". On this
+machine it is not: a raw TCP connect to `127.0.0.1:18410` with nothing listening took
+**2.0 s** before reporting `ConnectionRefused`. So the 1-second timeout is not a
+nicety — it is the only thing that stops "is the assistant up?" from blocking a control
+socket for two seconds, and the message the user sees is the timeout's, not the refusal's.
+Do not remove it on the grounds that refusals are fast.
+
+**Not built:** 7b onward. Nothing yet calls `/v1/chat/completions` or `/api/v1/decide`.
 
 ## Sources
 

@@ -33,6 +33,14 @@ public sealed class ServerConfig
     /// </summary>
     public string MpvPath { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Where agent-platform lives — <c>docs/phase7-assistant.md</c> §9. The phone never
+    /// talks to it directly: this PC already terminates the phone's connection and can
+    /// reach the daemon over loopback, where its wide-open local-dev auth is not a
+    /// problem. <b>No token belongs in the repo</b>; mint one on the machine that runs it.
+    /// </summary>
+    public AgentPlatformConfig AgentPlatform { get; set; } = new();
+
     /// <summary>Root directory exposed to the file browser. Nothing outside it is reachable.</summary>
     public string ShareRoot { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "PortalRemoteShare");
@@ -130,4 +138,19 @@ public sealed class ServerConfig
         Directory.CreateDirectory(path);
         return path;
     }
+}
+
+/// <summary>The assistant's backend — <c>docs/phase7-assistant.md</c> §9.</summary>
+public sealed class AgentPlatformConfig
+{
+    /// <summary>Its loopback address by default. Empty means the assistant is
+    /// "unconfigured", which the phone shows as a setup step rather than a failure.</summary>
+    public string BaseUrl { get; set; } = "http://127.0.0.1:18410";
+
+    /// <summary>Empty is legal and is the zero-setup path: with no master key set on
+    /// their side, auth is open on loopback.</summary>
+    public string Token { get; set; } = string.Empty;
+
+    /// <summary>Optional, and unused until 7g — the only step that starts a process.</summary>
+    public string ExePath { get; set; } = string.Empty;
 }

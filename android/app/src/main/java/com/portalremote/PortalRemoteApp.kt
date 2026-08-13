@@ -34,6 +34,7 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
             val nowPlaying by viewModel.nowPlaying.collectAsState()
             val cast by viewModel.cast.collectAsState()
             val castStatus by viewModel.castStatus.collectAsState()
+            val aiState by viewModel.aiState.collectAsState()
             var triedSavedHost by remember { mutableStateOf(false) }
             val haptics = rememberHaptics(settings.haptics)
 
@@ -102,6 +103,8 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             castStatus = castStatus,
                             shares = shares,
                             onCastFile = { viewModel.castLocalFile(it) },
+                            aiState = aiState,
+                            onProbeAi = { viewModel.probeAi(it) },
                             onShareText = { viewModel.shareText(it) },
                             onRetryShare = { viewModel.retryShare(it) },
                             onForget = { viewModel.forgetHost() },

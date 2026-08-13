@@ -35,6 +35,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Public
@@ -82,6 +83,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
+import com.portalremote.net.AiState
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
 import com.portalremote.net.NowPlaying
@@ -106,6 +108,7 @@ private enum class RemoteTab(val label: String, val icon: ImageVector) {
     SCREEN("Screen", Icons.Filled.ScreenShare),
     SHARE("Share", Icons.Filled.SwapVert),
     FILES("Files", Icons.Filled.Folder),
+    ASSISTANT("Assistant", Icons.Filled.AutoAwesome),
 }
 
 /**
@@ -131,6 +134,8 @@ fun RemoteScreen(
     castStatus: CastStatus?,
     shares: List<ShareEntry>,
     onCastFile: (Uri) -> String?,
+    aiState: AiState?,
+    onProbeAi: (retry: Boolean) -> Unit,
     onShareText: (String) -> Unit,
     onRetryShare: (Long) -> Unit,
     onForget: () -> Unit,
@@ -294,6 +299,10 @@ fun RemoteScreen(
                         RemoteTab.FILES -> FilesScreen(
                             host = host,
                             bottomInset = padding.calculateBottomPadding(),
+                        )
+                        RemoteTab.ASSISTANT -> AssistantScreen(
+                            state = aiState,
+                            onProbe = onProbeAi,
                         )
                     }
                 }
