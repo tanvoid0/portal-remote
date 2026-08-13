@@ -5,8 +5,9 @@ import org.json.JSONObject
 /**
  * One thing the assistant proposes doing to the PC.
  *
- * [summary] is written by the PC, not here: it is the side that knows what these actions
- * actually press, and two implementations of "what will this do" is one too many.
+ * [summary] and [verb] are written by the PC, not here: it is the side that knows what
+ * these actually press, and two implementations of "what will this do" is one too many
+ * when the answer is what somebody approves.
  */
 data class PlanAction(
     /** Position in the plan. **The unit of approval** — a plan can legitimately contain
@@ -14,72 +15,76 @@ data class PlanAction(
      *  to (`docs/phase7-assistant.md` §5). */
     val index: Int,
     val actionId: String,
+    /** The full sentence — "Press ctrl + s", "Power: shutdown". */
     val summary: String,
+    /** Two words at most, for a button face: "Mute", "Shut down". A one-action plan is
+     *  approved by pressing the thing it does, not by pressing "Run". */
+    val verb: String,
     /** Shutting down or restarting the PC. Gets a second confirmation (§7). */
     val destructive: Boolean = false,
 )
 
+/** What running one approved action did. */
+data class PlanResult(val index: Int, val ok: Boolean, val detail: String)
+
 /**
- * What the assistant proposes — step 7c of `docs/phase7-assistant.md`.
+ * What the assistant proposed, attached to the reply it came with.
  *
  * A plan is **not** an execution. agent-platform only ever decides; nothing happens until
- * the user approves a subset and this phone sends it back. That is why asking again is
- * always safe, and why it has to stay that way.
+ * somebody approves a subset. That is why asking again is always safe, and why it has to
+ * stay that way.
+ *
+ * [state] is what carries the card through its whole life in the transcript — proposed,
+ * run, declined — instead of a dialog that appears and vanishes leaving no record.
  */
 data class AiPlan(
-    val id: String,
     val thought: String,
+    val state: String,
+    val error: String?,
     val actions: List<PlanAction>,
-    /** The decision never happened. Distinct from an empty plan, which is the assistant
-     *  saying there is nothing to do. */
-    val error: String? = null,
+    val results: List<PlanResult>,
 ) {
+    /** Still a question. The only state that shows buttons. */
+    val pending: Boolean get() = state == PENDING
+
     companion object {
-        /** `{"t":"ai_plan","id":…,"thought":…,"actions":[…]}`, or the `error` form. */
-        fun fromPush(json: JSONObject): AiPlan {
+        const val PENDING = "pending"
+        const val RAN = "ran"
+        const val CANCELLED = "cancelled"
+
+        /** Held only in the PC's memory, and the PC restarted. Saying so beats a Run
+         *  button that fails. */
+        const val EXPIRED = "expired"
+
+        /** The decision itself failed; [error] names the cause. */
+        const val FAILED = "failed"
+
+        fun fromJson(json: JSONObject): AiPlan {
             val actions = json.optJSONArray("actions")
+            val results = json.optJSONArray("results")
             return AiPlan(
-                id = json.optString("id"),
                 thought = json.optString("thought"),
+                state = json.optString("state").ifBlank { PENDING },
                 error = json.optString("error").ifBlank { null },
                 actions = (0 until (actions?.length() ?: 0)).mapNotNull { i ->
                     val action = actions?.optJSONObject(i) ?: return@mapNotNull null
                     PlanAction(
                         index = action.optInt("index", i),
-                        actionId = action.optString("action_id"),
-                        summary = action.optString("summary").ifBlank { action.optString("action_id") },
+                        actionId = action.optString("actionId"),
+                        summary = action.optString("summary").ifBlank { action.optString("actionId") },
+                        verb = action.optString("verb").ifBlank { "Run" },
                         destructive = action.optBoolean("destructive"),
                     )
                 },
+                results = (0 until (results?.length() ?: 0)).mapNotNull { i ->
+                    val result = results?.optJSONObject(i) ?: return@mapNotNull null
+                    PlanResult(
+                        index = result.optInt("index", i),
+                        ok = result.optBoolean("ok"),
+                        detail = result.optString("detail"),
+                    )
+                },
             )
-        }
-
-        /**
-         * `{"t":"ai_result","id":…,"results":[…]}` as one line for the transcript.
-         *
-         * Failures are named individually and successes are counted: "it worked" needs no
-         * detail, and which one didn't is the only part worth reading.
-         */
-        fun describeResult(json: JSONObject): String {
-            json.optString("error").ifBlank { null }?.let { return it }
-
-            val results = json.optJSONArray("results")
-            val count = results?.length() ?: 0
-            if (count == 0) return "Nothing was run."
-
-            val done = mutableListOf<String>()
-            val failed = mutableListOf<String>()
-            for (i in 0 until count) {
-                val result = results?.optJSONObject(i) ?: continue
-                val detail = result.optString("detail").ifBlank { result.optString("action_id") }
-                if (result.optBoolean("ok")) done += detail else failed += detail
-            }
-
-            return when {
-                failed.isEmpty() -> "Done — ${done.joinToString("; ")}"
-                done.isEmpty() -> "Nothing worked — ${failed.joinToString("; ")}"
-                else -> "Done — ${done.joinToString("; ")}. Failed — ${failed.joinToString("; ")}"
-            }
         }
     }
 }

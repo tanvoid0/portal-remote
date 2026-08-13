@@ -17,6 +17,11 @@ android/captures/
 *.ap_
 *.dex
 
+# --- docs ---
+# generate.py --png output; the README uses the SVGs, these are a local convenience
+docs/assets/png/
+__pycache__/
+
 # --- IDE ---
 .idea/
 .vs/

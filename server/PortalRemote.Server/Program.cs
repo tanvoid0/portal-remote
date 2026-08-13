@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Windows.Forms;
 using PortalRemote.Ai;
+using PortalRemote.Audio;
 using PortalRemote.Auth;
 using PortalRemote.Cast;
 using PortalRemote.Config;
@@ -85,6 +86,27 @@ internal static class Program
         // yet, and a guaranteed-failed request every launch is not a registration.
         using var aiActions = new AiActions(config.AgentPlatform);
 
+        // One conversation, owned by this PC and shared by everything that shows it —
+        // the phone, the desktop window, a second phone. Every change goes out to all of
+        // them, which is what makes "the same chat on both devices" true rather than two
+        // chats that happen to talk to the same model.
+        using var assistant = new AiAssistant(config, ai, aiActions, () => nowPlaying.Snapshot());
+        assistant.Conversation.TurnChanged += turn =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(AiConversation.TurnMessage(turn));
+        };
+        // Streamed text is its own message: a reply is one turn growing a few hundred
+        // times, and re-sending the whole turn per token would put the transcript on the
+        // wire once per word.
+        assistant.Conversation.Delta += (id, text) =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(AiConversation.DeltaMessage(id, text));
+        };
+        assistant.Conversation.Reset += () =>
+        {
+            if (share.HasClients) _ = share.BroadcastAsync(assistant.Conversation.Snapshot());
+        };
+
         // Built before the app so the endpoints can be mapped against it; it doesn't
         // touch the network until Start().
         using var dlna = new DlnaRenderer(config);
@@ -96,7 +118,7 @@ internal static class Program
         // filter nothing.
         CastRouter.OwnRendererUuid = dlna.Uuid;
 
-        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, aiActions, dlna);
+        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, assistant, dlna);
 
         try
         {
@@ -136,7 +158,7 @@ internal static class Program
         // should appear whether or not this machine has one.
         _ = nowPlaying.StartAsync();
 
-        using var tray = new TrayIcon(config, connectionState, approval, share, onExit: Application.ExitThread);
+        using var tray = new TrayIcon(config, connectionState, approval, share, assistant, ai, onExit: Application.ExitThread);
 
         // Nothing has ever paired with this PC, so the QR code is the only useful
         // next step — show it rather than leaving a new user hunting the tray.
@@ -157,7 +179,7 @@ internal static class Program
 
     private static WebApplication BuildApp(
         ServerConfig config, string[] args, ConnectionState connectionState, PairApproval approval, ShareHub share,
-        NowPlaying nowPlaying, AiHealth ai, AiActions aiActions, DlnaRenderer dlna)
+        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, DlnaRenderer dlna)
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -199,14 +221,17 @@ internal static class Program
                 : Results.Ok(new { token, name = Environment.MachineName, port = config.RunningPort });
         });
 
-        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai, aiActions);
+        app.MapControlEndpoint(config, connectionState, share, nowPlaying, ai, assistant);
         app.MapFilesEndpoints(config);
         app.MapScreenEndpoints(config);
+        app.MapAudioEndpoints(config);
         app.MapShareEndpoints(config, share);
         app.MapCastEndpoints(config);
         app.MapMediaEndpoints(config, nowPlaying);
         app.MapDlnaEndpoints(config, dlna);
-        app.MapAiEndpoints(config, ai);
+        // No /ai/chat: the conversation is pushed on the control socket now, because two
+        // clients watch one transcript and an SSE response only ever reaches the one that
+        // asked for it. See AiChatClient.
         app.MapAiModelEndpoints(config, ai);
 
         return app;

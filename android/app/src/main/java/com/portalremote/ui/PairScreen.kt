@@ -14,9 +14,12 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -40,9 +43,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,6 +78,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -95,6 +105,8 @@ import com.portalremote.net.parsePairUrl
 import com.portalremote.net.requestPairing
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.portalCardBorder
+import com.portalremote.ui.theme.portalCardColors
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
@@ -334,8 +346,13 @@ private fun ScanSection(scanLocked: Boolean, scanError: String?, onScan: (String
         cameraPermission.status.shouldShowRationale -> {
             Text("Camera access is needed to scan the pairing code.", textAlign = TextAlign.Center)
             Button(onClick = { cameraPermission.launchPermissionRequest() }) {
-                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                Text("  Grant camera access")
+                Icon(
+                    Icons.Filled.QrCodeScanner,
+                    contentDescription = null,
+                    modifier = Modifier.size(ButtonDefaults.IconSize),
+                )
+                Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                Text("Grant camera access")
             }
         }
 
@@ -349,18 +366,32 @@ private fun ManualAddressSection(onConnect: (String, Int) -> Unit) {
     IpEntry(onConnect = onConnect)
 }
 
+/** The three ways in, minus whichever one you're already on. Each carries its icon:
+ *  these are the fallbacks someone reaches for when the easy path didn't work, and a
+ *  row of same-length blue words is the hardest thing on this screen to pick from at
+ *  a glance. */
 @Composable
 private fun ModeSwitch(mode: PairMode, onModeChange: (PairMode) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (mode != PairMode.Discover) {
-            TextButton(onClick = { onModeChange(PairMode.Discover) }) { Text("Search again") }
+            ModeButton(Icons.Filled.Search, "Search again") { onModeChange(PairMode.Discover) }
         }
         if (mode != PairMode.Scan) {
-            TextButton(onClick = { onModeChange(PairMode.Scan) }) { Text("Scan QR code") }
+            ModeButton(Icons.Filled.QrCodeScanner, "Scan QR code") { onModeChange(PairMode.Scan) }
         }
         if (mode != PairMode.Manual) {
-            TextButton(onClick = { onModeChange(PairMode.Manual) }) { Text("Type address") }
+            // A dialpad, not a keyboard: the address field really is digit boxes.
+            ModeButton(Icons.Filled.Dialpad, "Type address") { onModeChange(PairMode.Manual) }
         }
+    }
+}
+
+@Composable
+private fun ModeButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 10.dp)) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+        Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+        Text(label)
     }
 }
 
@@ -387,9 +418,8 @@ private fun LastDeviceCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = PortalRemoteTheme.extendedColors.surfaceRaised,
-        ),
+        colors = portalCardColors(),
+        border = portalCardBorder(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -409,13 +439,30 @@ private fun LastDeviceCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(onClick = onReconnect, enabled = !reconnecting) {
+                    Icon(
+                        Icons.Filled.Link,
+                        contentDescription = null,
+                        modifier = Modifier.size(ButtonDefaults.IconSize),
+                    )
+                    Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
                     Text(if (reconnecting) "Reconnecting…" else "Reconnect")
                 }
                 if (reconnecting) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = onForget) { Text("Forget") }
+                // Link/link-off as a pair, and the same LinkOff Settings and the
+                // dead-session dialog use — "this pairing goes away" is one idea and
+                // should look like one wherever it's offered.
+                TextButton(onClick = onForget) {
+                    Icon(
+                        Icons.Filled.LinkOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(ButtonDefaults.IconSize),
+                    )
+                    Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                    Text("Forget")
+                }
             }
             // Only once the PC has told us its MAC. Wake-on-LAN is the one thing that
             // works when it isn't answering, which is exactly when this card is what
@@ -437,6 +484,12 @@ private fun WakeButton(mac: String, peer: String, label: String) {
     val scope = rememberCoroutineScope()
 
     TextButton(onClick = { scope.launch { sent = WakeOnLan.wake(mac, peer) } }) {
+        Icon(
+            Icons.Filled.PowerSettingsNew,
+            contentDescription = null,
+            modifier = Modifier.size(ButtonDefaults.IconSize),
+        )
+        Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
         Text("Wake $label")
     }
     if (sent) {
@@ -455,9 +508,8 @@ private fun DeviceCard(title: String, subtitle: String, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = PortalRemoteTheme.extendedColors.surfaceRaised,
-        ),
+        colors = portalCardColors(),
+        border = portalCardBorder(),
     ) {
         Row(
             modifier = Modifier
@@ -489,9 +541,8 @@ private fun DeviceCard(title: String, subtitle: String, onClick: () -> Unit) {
 private fun WaitingForApprovalCard(label: String, onCancel: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = PortalRemoteTheme.extendedColors.surfaceRaised,
-        ),
+        colors = portalCardColors(),
+        border = portalCardBorder(),
     ) {
         Column(
             modifier = Modifier
@@ -613,9 +664,17 @@ private fun DigitBox(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
+    // The box has to say two things a stock field says for free: that it is a control at
+    // all (a filled `surface-raised` box edged in the hairline `border` token was white
+    // on white in light mode, at 1.2:1 — below WCAG 1.4.11's 3:1 for a control boundary),
+    // and which of the five has the caret. `borderStrong` answers the first, the accent
+    // edge the second.
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
+        interactionSource = interaction,
         singleLine = true,
         textStyle = MaterialTheme.typography.titleMedium.copy(
             color = colors.onSurface,
@@ -639,12 +698,12 @@ private fun DigitBox(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
-                        PortalRemoteTheme.extendedColors.surfaceRaised,
+                        PortalRemoteTheme.extendedColors.surfaceMuted,
                         RoundedCornerShape(8.dp),
                     )
                     .border(
-                        1.dp,
-                        PortalRemoteTheme.extendedColors.border,
+                        if (focused) 2.dp else 1.dp,
+                        if (focused) colors.primary else PortalRemoteTheme.extendedColors.borderStrong,
                         RoundedCornerShape(8.dp),
                     ),
                 contentAlignment = Alignment.Center,
@@ -744,10 +803,16 @@ private fun ErrorCard(message: String) {
     // "danger" has no extended-token slot of its own: it's mapped onto Material3's
     // error/onError, same as the rest of the app (PairScreen's inline error texts,
     // FilesScreen, etc.) — see ui/theme/Theme.kt.
+    //
+    // The fill was `error` at 12% and the text was `error` on top of it: a red on a wash
+    // of the same red, which measured 3.95:1 in light mode — under AA for body text, on
+    // the one card in this flow whose whole job is to be read. `errorContainer` is the
+    // token for exactly this and its `on-` pair is 8:1 in both themes.
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
         ),
     ) {
         Row(
@@ -756,8 +821,8 @@ private fun ErrorCard(message: String) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-            Text(message, modifier = Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.error)
+            Icon(Icons.Filled.Error, contentDescription = null)
+            Text(message, modifier = Modifier.padding(start = 12.dp))
         }
     }
 }

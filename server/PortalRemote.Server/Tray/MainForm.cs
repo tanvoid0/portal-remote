@@ -3,37 +3,66 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using PortalRemote.Ai;
 using PortalRemote.Config;
 using PortalRemote.Control;
+using PortalRemote.Files;
 using PortalRemote.Pairing;
+using PortalRemote.Share;
 using PortalRemote.Theme;
 
 namespace PortalRemote.Tray;
 
 /// <summary>
-/// The desktop app's one window: connection status, the pairing QR, and the
-/// handful of settings that used to require hand-editing config.json. Two columns
-/// — pairing on the left, everything about this PC on the right — so the whole
-/// app is legible without scrolling, per docs/design-system.md §1 ("calm and
-/// clarity, not motion") and §12.
+/// The desktop app's one window. Two columns — the conversation with the phone on
+/// the left, everything about this PC on the right — so the whole app is legible
+/// without scrolling, per docs/design-system.md §1 ("calm and clarity, not motion")
+/// and §12.
+///
+/// The left column is the share thread once anything has ever paired, and the
+/// pairing QR while nothing has: a paired PC whose main view is still "scan to
+/// pair" is answering a question the user already answered. Either half is one
+/// button from the other.
 /// </summary>
 public sealed class MainForm : Form
 {
     private const int FadeInMs = 180;
     private const int FadeInTickMs = 15;
 
+    /// <summary>Bubbles kept on screen. The hub only remembers 50, but this window
+    /// can outlive several of those over a long session.</summary>
+    private const int MaxBubbles = 60;
+
     private readonly ServerConfig _config;
     private readonly ConnectionState _connectionState;
+    private readonly ShareHub _share;
+    private readonly AiHealth _ai;
 
     private readonly Panel _header;
     private readonly Panel _statusCard;
+
+    // ---- left column, front: the share thread --------------------------------
+    private readonly Panel _sharePanel;
+    private readonly Panel _thread;
+    private readonly Label _shareHeading;
+    private readonly Label _threadEmpty;
+    private readonly TextBox _composer;
+    private readonly TokenButton _send;
+    private readonly TokenButton _attach;
+    private readonly Label _composerHint;
+    private readonly TokenButton _showPair;
+
+    // ---- left column, behind: pairing ----------------------------------------
+    private readonly Panel _pairPanel;
     private readonly PictureBox _qr;
     private readonly Panel _qrCard;
     private readonly Label _pairHeading;
     private readonly Label _address;
     private readonly Label _hint;
     private readonly TokenButton _copy;
+    private readonly TokenButton _showThread;
 
+    // ---- right column --------------------------------------------------------
     private readonly Label _settingsHeading;
     private readonly NumericUpDown _port;
     private readonly Label _portLabel;
@@ -46,6 +75,11 @@ public sealed class MainForm : Form
     private readonly TextBox _castBox;
     private readonly TokenButton _copyCast;
     private readonly TokenButton _openCast;
+    private readonly Label _aiLabel;
+    private readonly Label _aiState;
+    private readonly Label _aiDetail;
+    private readonly TokenButton _aiOpen;
+    private readonly TokenButton _aiCheck;
     private readonly CheckBox _startWithWindows;
     private readonly TokenButton _rotate;
     private readonly Label _rotateNote;
@@ -59,14 +93,20 @@ public sealed class MainForm : Form
     private DateTime _fadeStart;
     private PaletteColors _colors = SystemTheme.Colors;
 
-    public MainForm(ServerConfig config, ConnectionState connectionState)
+    /// <summary>Opens the assistant window. Set by the tray, which owns every window's
+    /// lifetime — this one only has to know that the button leads somewhere.</summary>
+    public Action? OpenAssistant { get; init; }
+
+    public MainForm(ServerConfig config, ConnectionState connectionState, ShareHub share, AiHealth ai)
     {
         _config = config;
         _connectionState = connectionState;
+        _share = share;
+        _ai = ai;
 
         Text = ServerInfo.Name;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(780, 620);
+        ClientSize = new Size(860, 640);
         MinimumSize = Size; // the layout below is sized to fit exactly this
         Padding = new Padding(20);
 
@@ -89,14 +129,73 @@ public sealed class MainForm : Form
         };
         _footer.Click += (_, _) => OpenPath(ServerConfig.ConfigDirectory);
 
-        // ---- left column: pairing -------------------------------------------------
-        _pairHeading = new Label
+        // ---- left column, front: the thread ---------------------------------------
+        _shareHeading = new Label { Text = "Shared with your phone", Font = Fonts.Heading, Dock = DockStyle.Fill };
+        _showPair = new TokenButton { Text = "Pair a phone", Glyph = Glyphs.QrCode, Secondary = true, Dock = DockStyle.Right, Width = 132 };
+        _showPair.Click += (_, _) => ShowPairing(true);
+
+        _thread = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        _threadEmpty = new Label
         {
-            Text = "Scan to pair a phone",
-            Font = Fonts.Heading,
-            Dock = DockStyle.Top,
-            Height = 28,
+            Dock = DockStyle.Fill,
+            Font = Fonts.Caption,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Text = "Nothing shared yet.\n\nType a note below, drop a file here, or press "
+                 + "Ctrl+Alt+V anywhere to send this PC's clipboard.",
         };
+
+        _composer = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            Font = Fonts.Body,
+            BorderStyle = BorderStyle.FixedSingle,
+            Margin = new Padding(0, 3, 8, 0),
+        };
+        // Enter sends. A text box whose Enter does nothing, next to a Send button, is
+        // the one thing every chat surface has trained people out of expecting.
+        _composer.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter || e.Shift) return;
+            e.SuppressKeyPress = true; // otherwise the box beeps at the unhandled Enter
+            SendComposerText();
+        };
+
+        _attach = new TokenButton { Text = "Attach", Glyph = Glyphs.Attach, Secondary = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
+        _attach.Click += (_, _) => PickAndSendFile();
+        _send = new TokenButton { Text = "Send", Glyph = Glyphs.Send, Dock = DockStyle.Fill };
+        _send.Click += (_, _) => SendComposerText();
+
+        _composerHint = new Label { Font = Fonts.Caption, Dock = DockStyle.Bottom, Height = 32, AutoSize = false };
+
+        var shareHeader = new Panel { Dock = DockStyle.Top, Height = 32 };
+        shareHeader.Controls.Add(_shareHeading);
+        shareHeader.Controls.Add(_showPair);
+
+        var composerRow = TrailingButtonRow();
+        composerRow.Dock = DockStyle.Bottom;
+        composerRow.Height = LogicalToDeviceUnits(34);
+        composerRow.Controls.Add(_composer, 0, 0);
+        composerRow.Controls.Add(_attach, 1, 0);
+        composerRow.Controls.Add(_send, 2, 0);
+
+        _sharePanel = new Panel { Dock = DockStyle.Fill };
+        // Docking is resolved in reverse order of addition — the control added last
+        // claims its edge first — so the two Fills go in first and the bottom stack is
+        // added upwards-last: the composer, then the hint that sits under it.
+        _sharePanel.Controls.Add(_thread);
+        _sharePanel.Controls.Add(_threadEmpty);
+        _sharePanel.Controls.Add(shareHeader);
+        _sharePanel.Controls.Add(composerRow);
+        _sharePanel.Controls.Add(_composerHint);
+
+        // ---- left column, behind: pairing -----------------------------------------
+        _pairHeading = new Label { Text = "Scan to pair a phone", Font = Fonts.Heading, Dock = DockStyle.Fill };
+        _showThread = new TokenButton { Text = "Messages", Glyph = Glyphs.Conversation, Secondary = true, Dock = DockStyle.Right, Width = 118 };
+        _showThread.Click += (_, _) => ShowPairing(false);
+
+        var pairHeader = new Panel { Dock = DockStyle.Top, Height = 32 };
+        pairHeader.Controls.Add(_pairHeading);
+        pairHeader.Controls.Add(_showThread);
 
         _qr = new PictureBox { SizeMode = PictureBoxSizeMode.Zoom, Dock = DockStyle.Fill };
         _qrCard = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
@@ -116,7 +215,9 @@ public sealed class MainForm : Form
         _hint = new Label
         {
             Dock = DockStyle.Bottom,
-            Height = 56,
+            // Four caption lines: at this column width the firewall sentence wraps to
+            // four, and the old 56 cut "networks." off the end of it.
+            Height = 76,
             Font = Fonts.Caption,
             TextAlign = ContentAlignment.MiddleCenter,
             Text = "Or pick this PC from the list on the phone — that way asks permission "
@@ -125,18 +226,19 @@ public sealed class MainForm : Form
                  + "Private networks.",
         };
 
-        _copy = new TokenButton { Text = "Copy address", Dock = DockStyle.Bottom, Height = 34 };
+        _copy = new TokenButton { Text = "Copy address", Glyph = Glyphs.Copy, Dock = DockStyle.Bottom, Height = 34 };
         _copy.Click += (_, _) => CopyAddress();
 
-        var pairColumn = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 12, 0) };
-        // Docking is resolved in reverse order of addition — the control added last
-        // claims its edge first — so the Fill goes in first and the bottom stack is
-        // added upwards-last: address, hint, then the button that sits lowest.
-        pairColumn.Controls.Add(_qrCard);
-        pairColumn.Controls.Add(_pairHeading);
-        pairColumn.Controls.Add(_address);
-        pairColumn.Controls.Add(_hint);
-        pairColumn.Controls.Add(_copy);
+        _pairPanel = new Panel { Dock = DockStyle.Fill, Visible = false };
+        _pairPanel.Controls.Add(_qrCard);
+        _pairPanel.Controls.Add(pairHeader);
+        _pairPanel.Controls.Add(_address);
+        _pairPanel.Controls.Add(_hint);
+        _pairPanel.Controls.Add(_copy);
+
+        var leftColumn = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 12, 0) };
+        leftColumn.Controls.Add(_sharePanel);
+        leftColumn.Controls.Add(_pairPanel);
 
         // ---- right column: status + settings -------------------------------------
         _statusCard = new Panel { Dock = DockStyle.Fill };
@@ -179,9 +281,9 @@ public sealed class MainForm : Form
             BorderStyle = BorderStyle.FixedSingle,
             Margin = new Padding(0, 3, 8, 0),
         };
-        _changeShare = new TokenButton { Text = "Change", Secondary = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
+        _changeShare = new TokenButton { Text = "Change", Glyph = Glyphs.Edit, Secondary = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
         _changeShare.Click += (_, _) => ChangeShareFolder();
-        _openShare = new TokenButton { Text = "Open", Secondary = true, Dock = DockStyle.Fill };
+        _openShare = new TokenButton { Text = "Open", Glyph = Glyphs.FolderOpen, Secondary = true, Dock = DockStyle.Fill };
         _openShare.Click += (_, _) => OpenPath(_config.ResolvedShareRoot());
 
         var shareRow = TrailingButtonRow();
@@ -201,17 +303,41 @@ public sealed class MainForm : Form
             BorderStyle = BorderStyle.FixedSingle,
             Margin = new Padding(0, 3, 8, 0),
         };
-        _copyCast = new TokenButton { Text = "Copy", Secondary = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
+        _copyCast = new TokenButton { Text = "Copy", Glyph = Glyphs.Copy, Secondary = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
         _copyCast.Click += (_, _) => CopyText(PairingService.ReceiverUrl(_config));
         // Opening it here makes *this* PC the cast target, which is the common case
         // and saves typing the address anywhere at all.
-        _openCast = new TokenButton { Text = "Open", Secondary = true, Dock = DockStyle.Fill };
+        _openCast = new TokenButton { Text = "Open", Glyph = Glyphs.OpenInNew, Secondary = true, Dock = DockStyle.Fill };
         _openCast.Click += (_, _) => OpenPath(PairingService.ReceiverUrl(_config));
 
         var castRow = TrailingButtonRow();
         castRow.Controls.Add(_castBox, 0, 0);
         castRow.Controls.Add(_copyCast, 1, 0);
         castRow.Controls.Add(_openCast, 2, 0);
+
+        // The assistant's backend is a separate app started on *this* PC, and until now
+        // this window said nothing about it: the phone was the only surface that could
+        // tell you it wasn't running, which is the wrong machine to find that out on.
+        // See docs/phase7-assistant.md §4.
+        _aiLabel = new Label { Text = "Assistant", Font = Fonts.Body, Dock = DockStyle.Fill };
+        _aiState = new Label { Font = Fonts.Body, Dock = DockStyle.Fill };
+        _aiCheck = new TokenButton { Text = "Check", Glyph = Glyphs.Refresh, Secondary = true, Dock = DockStyle.Fill };
+        _aiCheck.Click += (_, _) => CheckAi();
+        // The conversation is this PC's now, so it is reachable from this PC — the phone
+        // is no longer the only place it exists. See Tray/AssistantForm.cs.
+        _aiOpen = new TokenButton { Text = "Chat", Glyph = Glyphs.Assistant, Secondary = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
+        _aiOpen.Click += (_, _) => OpenAssistant?.Invoke();
+        _aiDetail = new Label { Font = Fonts.Caption, Dock = DockStyle.Fill, AutoSize = false };
+
+        var aiRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1 };
+        aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(80)));
+        aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(72)));
+        aiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(72)));
+        aiRow.Controls.Add(_aiLabel, 0, 0);
+        aiRow.Controls.Add(_aiState, 1, 0);
+        aiRow.Controls.Add(_aiOpen, 2, 0);
+        aiRow.Controls.Add(_aiCheck, 3, 0);
 
         _startWithWindows = new CheckBox
         {
@@ -223,7 +349,7 @@ public sealed class MainForm : Form
         // Wired after Checked is set so reading the current state doesn't write it back.
         _startWithWindows.CheckedChanged += (_, _) => SetStartWithWindows(_startWithWindows.Checked);
 
-        _rotate = new TokenButton { Text = "Rotate pairing token", Secondary = true, Dock = DockStyle.Left, Width = 180 };
+        _rotate = new TokenButton { Text = "Rotate pairing token", Glyph = Glyphs.Lock, Secondary = true, Dock = DockStyle.Left, Width = 198 };
         _rotate.Click += (_, _) => RotateToken();
         _rotateNote = new Label
         {
@@ -244,6 +370,8 @@ public sealed class MainForm : Form
         AddRow(settingsColumn, shareRow, 40);
         AddRow(settingsColumn, _castLabel, 26);
         AddRow(settingsColumn, castRow, 40);
+        AddRow(settingsColumn, aiRow, 40);
+        AddRow(settingsColumn, _aiDetail, 44); // three caption lines at this column width
         AddRow(settingsColumn, _startWithWindows, 34);
         AddRow(settingsColumn, _rotate, 40);
         AddRow(settingsColumn, _rotateNote, 28);
@@ -251,14 +379,18 @@ public sealed class MainForm : Form
         settingsColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
-        body.Controls.Add(pairColumn, 0, 0);
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
+        body.Controls.Add(leftColumn, 0, 0);
         body.Controls.Add(settingsColumn, 1, 0);
 
         Controls.Add(body);
         Controls.Add(_footer);
         Controls.Add(_header);
+
+        EnableFileDrop(_thread);
+        EnableFileDrop(_threadEmpty);
+        foreach (var entry in _share.History) Append(entry);
 
         _fadeTimer.Tick += (_, _) => TickFade();
         _rejectedRevertTimer.Tick += (_, _) =>
@@ -269,7 +401,12 @@ public sealed class MainForm : Form
         };
         _connectionState.Changed += OnConnectionChanged;
         _connectionState.AuthRejected += OnAuthRejected;
+        _share.Added += OnShareAdded;
+        _ai.Changed += OnAiChanged;
 
+        // Nothing has ever paired: the QR is the only useful thing this window can
+        // show, so it is the half that's up.
+        ShowPairing(!config.Paired);
         Refresh(config);
     }
 
@@ -298,9 +435,9 @@ public sealed class MainForm : Form
         table.Controls.Add(control, 0, table.RowStyles.Count - 1);
     }
 
-    /// <summary>The two-button trailing columns in the shared-folder and cast rows.
-    /// Absolute column styles need the same scaling as the rows above, or the buttons
-    /// keep their 96dpi width while their labels grow past it.</summary>
+    /// <summary>The two-button trailing columns in the composer, shared-folder and
+    /// cast rows. Absolute column styles need the same scaling as the rows above, or
+    /// the buttons keep their 96dpi width while their labels grow past it.</summary>
     private TableLayoutPanel TrailingButtonRow()
     {
         var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
@@ -308,6 +445,15 @@ public sealed class MainForm : Form
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(88)));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, LogicalToDeviceUnits(72)));
         return row;
+    }
+
+    /// <summary>Which half of the left column is up. Mutually exclusive rather than
+    /// stacked: both want the whole column, and a QR code beside a composer is two
+    /// primary actions on one surface.</summary>
+    private void ShowPairing(bool pairing)
+    {
+        _pairPanel.Visible = pairing;
+        _sharePanel.Visible = !pairing;
     }
 
     /// <summary>Re-render for the current address/token/settings, and re-apply the
@@ -327,50 +473,69 @@ public sealed class MainForm : Form
         // Carries the token, so it has to be re-read after a rotation like the QR does.
         _castBox.Text = PairingService.ReceiverUrl(config);
         _statusCard.Invalidate();
+        ApplyComposerState();
+
+        // Passive: honours AiHealth's backoff, so opening this window can never turn
+        // into a probe of a dead port every few seconds. Check is the button that
+        // skips it.
+        _ = ProbeAiAsync(userAsked: false);
     }
 
     private void ApplyTheme()
     {
         _colors = SystemTheme.Colors;
 
-        BackColor = _colors.Surface;
-        _header.BackColor = _colors.Surface;
+        // The window is the canvas (`bg`), the cards on it are `surface`/`surface-raised`.
+        // It used to paint itself `surface` — the same token as the cards it holds — so
+        // in light mode the QR card and the status card were white panels on a white
+        // window, separated by a hairline and nothing else.
+        BackColor = _colors.Bg;
+        _header.BackColor = _colors.Bg;
         _header.Invalidate();
 
-        foreach (var label in new[] { _pairHeading, _settingsHeading, _address, _portLabel, _shareLabel, _castLabel })
+        foreach (var label in new[]
+                 { _shareHeading, _pairHeading, _settingsHeading, _address, _portLabel, _shareLabel, _castLabel, _aiLabel })
         {
-            label.BackColor = _colors.Surface;
+            label.BackColor = _colors.Bg;
             label.ForeColor = _colors.TextPrimary;
         }
 
-        foreach (var caption in new[] { _hint, _portNote, _rotateNote, _footer })
+        foreach (var caption in new[]
+                 { _hint, _portNote, _rotateNote, _footer, _threadEmpty, _composerHint, _aiDetail })
         {
-            caption.BackColor = _colors.Surface;
+            caption.BackColor = _colors.Bg;
             caption.ForeColor = _colors.TextSecondary;
         }
 
-        _startWithWindows.BackColor = _colors.Surface;
+        _startWithWindows.BackColor = _colors.Bg;
         _startWithWindows.ForeColor = _colors.TextPrimary;
 
-        _port.BackColor = _colors.SurfaceRaised;
+        // Input faces, not card faces: `surface-muted` is the token that reads as a
+        // field on both themes (`surface-raised` was white-on-white here too).
+        _port.BackColor = _colors.SurfaceMuted;
         _port.ForeColor = _colors.TextPrimary;
-        _shareBox.BackColor = _colors.SurfaceRaised;
+        _composer.BackColor = _colors.SurfaceMuted;
+        _composer.ForeColor = _colors.TextPrimary;
+        _shareBox.BackColor = _colors.SurfaceMuted;
         _shareBox.ForeColor = _colors.TextSecondary;
-        _castBox.BackColor = _colors.SurfaceRaised;
+        _castBox.BackColor = _colors.SurfaceMuted;
         _castBox.ForeColor = _colors.TextSecondary;
 
         _qr.BackColor = _colors.SurfaceRaised;
         _qrCard.BackColor = _colors.SurfaceRaised;
         _qrCard.Invalidate();
-        _statusCard.BackColor = _colors.Surface;
+        _statusCard.BackColor = _colors.Bg;
         _statusCard.Invalidate();
+        _thread.BackColor = _colors.Bg;
+        _aiState.BackColor = _colors.Bg;
 
-        _copy.ApplyTheme(_colors);
-        _changeShare.ApplyTheme(_colors);
-        _openShare.ApplyTheme(_colors);
-        _copyCast.ApplyTheme(_colors);
-        _openCast.ApplyTheme(_colors);
-        _rotate.ApplyTheme(_colors);
+        foreach (var button in new[]
+                 { _copy, _send, _attach, _showPair, _showThread, _changeShare, _openShare, _copyCast, _openCast, _aiOpen, _aiCheck, _rotate })
+            button.ApplyTheme(_colors);
+
+        foreach (var bubble in _thread.Controls.OfType<Bubble>()) bubble.ApplyTheme(_colors);
+
+        RefreshAi();
 
         if (IsHandleCreated) ApplyTitleBarTheme();
     }
@@ -406,7 +571,11 @@ public sealed class MainForm : Form
     {
         // Raised from a Kestrel worker thread; hop back before touching the UI.
         if (!IsHandleCreated || IsDisposed) return;
-        BeginInvoke(new Action(() => _statusCard.Invalidate()));
+        BeginInvoke(new Action(() =>
+        {
+            _statusCard.Invalidate();
+            ApplyComposerState();
+        }));
     }
 
     /// <summary>A phone was turned away. Shown in the status card rather than as a
@@ -423,6 +592,210 @@ public sealed class MainForm : Form
             _rejectedRevertTimer.Start();
             _statusCard.Invalidate();
         }));
+    }
+
+    // ---- the thread ------------------------------------------------------------
+
+    private void OnShareAdded(ShareEntry entry)
+    {
+        // Raised on whichever thread did the sharing — a Kestrel one for anything the
+        // phone sent.
+        if (!IsHandleCreated || IsDisposed) return;
+        BeginInvoke(new Action(() => Append(entry)));
+    }
+
+    private void Append(ShareEntry entry)
+    {
+        // The same bubble the assistant window draws its turns with — a share and a
+        // chat turn are the same object on screen, so they are the same control.
+        var bubble = new Bubble(entry.Incoming) { Cursor = Cursors.Hand };
+        bubble.ApplyTheme(_colors);
+        bubble.Click += (_, _) => OpenEntry(entry);
+        EnableFileDrop(bubble);
+
+        _thread.Controls.Add(bubble);
+        // Docked children claim their edge in reverse index order, so index 0 is laid
+        // out last and lands lowest — where the newest message belongs.
+        _thread.Controls.SetChildIndex(bubble, 0);
+        bubble.SetText(ShareBody(entry.Item), $"{entry.Item.From} · {entry.Item.At:HH:mm}");
+
+        while (_thread.Controls.Count > MaxBubbles)
+        {
+            var oldest = _thread.Controls[_thread.Controls.Count - 1];
+            _thread.Controls.Remove(oldest);
+            oldest.Dispose();
+        }
+
+        _threadEmpty.Visible = false;
+        _thread.ScrollControlIntoView(bubble);
+    }
+
+    /// <summary>What a share bubble says. A file's payload is on disk, not in the
+    /// item, so its name and size are the message.</summary>
+    private static string ShareBody(ShareItem item) => item.Kind switch
+    {
+        ShareKind.Text or ShareKind.Link => item.Text ?? string.Empty,
+        _ => $"{item.FileName}  ({FileSize(item.Size)})",
+    };
+
+    private static string FileSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / (1024.0 * 1024.0):0.#} MB",
+    };
+
+    /// <summary>
+    /// Click a bubble to get the thing itself: a link opens, a note goes back on the
+    /// clipboard, a file is *revealed* in Explorer and never launched — a paired
+    /// phone can put any file in the Inbox, and one click in this window should not
+    /// be able to run it.
+    /// </summary>
+    private void OpenEntry(ShareEntry entry)
+    {
+        var item = entry.Item;
+
+        if (item.Kind == ShareKind.Link &&
+            Uri.TryCreate(item.Text?.Trim(), UriKind.Absolute, out var url) &&
+            (url.Scheme == Uri.UriSchemeHttp || url.Scheme == Uri.UriSchemeHttps))
+        {
+            Process.Start(new ProcessStartInfo { FileName = url.AbsoluteUri, UseShellExecute = true });
+            return;
+        }
+
+        if (item.Text is not null)
+        {
+            CopyText(item.Text);
+            return;
+        }
+
+        if (item.FileName is null) return;
+        var path = Path.Combine(_share.InboxPath(), FilePaths.SafeFileName(item.FileName));
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"/select,\"{path}\"",
+            UseShellExecute = true
+        });
+    }
+
+    /// <summary>Drop a file anywhere on the thread to send it — bubbles included,
+    /// since they cover the panel and would otherwise be dead zones.</summary>
+    private void EnableFileDrop(System.Windows.Forms.Control target)
+    {
+        target.AllowDrop = true;
+        target.DragEnter += (_, e) =>
+            e.Effect = _share.HasClients && e.Data?.GetDataPresent(DataFormats.FileDrop) == true
+                ? DragDropEffects.Copy
+                : DragDropEffects.None;
+        target.DragDrop += (_, e) =>
+        {
+            if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths) return;
+            foreach (var path in paths) _ = SendFileAsync(path);
+        };
+    }
+
+    private void SendComposerText()
+    {
+        var text = _composer.Text.Trim();
+        if (text.Length == 0 || !_share.HasClients) return;
+
+        _composer.Clear();
+        _ = _share.SendToPhonesAsync(new ShareItem(
+            ShareKind.ForText(text), text, null, text.Length, Environment.MachineName, DateTimeOffset.Now));
+    }
+
+    private void PickAndSendFile()
+    {
+        using var picker = new OpenFileDialog { Title = "Send a file to your phone", Multiselect = true };
+        if (picker.ShowDialog(this) != DialogResult.OK) return;
+        foreach (var path in picker.FileNames) _ = SendFileAsync(path);
+    }
+
+    /// <summary>
+    /// Copy into the Inbox, then tell the phone where to fetch it — an incoming file's
+    /// route in reverse, so the phone needs no second download path. Async because the
+    /// file is whatever the user picked: a video would freeze this window for the
+    /// length of the copy.
+    /// </summary>
+    private async Task SendFileAsync(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists) return; // a dropped folder, most likely
+
+            string saved;
+            await using (var stream = info.OpenRead())
+            {
+                saved = await _share.SaveToInboxAsync(info.Name, stream);
+            }
+
+            await _share.SendToPhonesAsync(new ShareItem(
+                ShareKind.ForFile(saved), null, saved, info.Length, Environment.MachineName, DateTimeOffset.Now));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            TokenDialog.Show(this, "That file could not be sent", ex.Message);
+        }
+    }
+
+    /// <summary>A composer that cannot deliver says so before the button is pressed,
+    /// rather than swallowing the message and looking like it worked.</summary>
+    private void ApplyComposerState()
+    {
+        var connected = _share.HasClients;
+        _send.Enabled = connected;
+        _attach.Enabled = connected;
+        _composerHint.Text = connected
+            ? "Enter sends. Drop a file on the thread, or press Ctrl+Alt+V anywhere to send the clipboard."
+            : "No phone connected — open Portal Remote on your phone to send anything.";
+    }
+
+    // ---- the assistant ---------------------------------------------------------
+
+    private void OnAiChanged(object _)
+    {
+        if (!IsHandleCreated || IsDisposed) return;
+        BeginInvoke(new Action(RefreshAi));
+    }
+
+    private void RefreshAi()
+    {
+        var (state, color) = _ai.State switch
+        {
+            AiHealth.Ready => ("Ready", _colors.Success),
+            AiHealth.Unconfigured => ("Not set up", _colors.TextSecondary),
+            _ => ("Not running", _colors.Warning),
+        };
+
+        _aiState.Text = state;
+        _aiState.ForeColor = color;
+        // Ready carries no detail, and the useful thing to say then is which model the
+        // phone's Assistant tab is about to be talking to.
+        _aiDetail.Text = _ai.Detail
+            ?? $"Answering as {_config.AgentPlatform.Model}. One conversation, shared by this PC and the phone.";
+    }
+
+    private void CheckAi() => _ = ProbeAiAsync(userAsked: true);
+
+    private async Task ProbeAiAsync(bool userAsked)
+    {
+        _aiCheck.Enabled = false;
+        try
+        {
+            await _ai.CheckAsync(userAsked);
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                _aiCheck.Enabled = true;
+                // CheckAsync only raises Changed on a transition, so a probe that
+                // confirmed what we already knew still has to repaint the row.
+                RefreshAi();
+            }
+        }
     }
 
     /// <summary>Mark + wordmark, left-aligned, with the version trailing it — see
@@ -481,8 +854,12 @@ public sealed class MainForm : Form
             g.FillEllipse(dot, card.X + 16, card.Y + card.Height / 2 - 5, 10, 10);
         }
 
+        // "Waiting for a phone" is only true before anything has ever paired. After
+        // that the phone is a known device that is currently away, and saying so is
+        // the difference between "set this up" and "wake it up".
         var headline = rejected is not null ? "A phone was refused"
             : connected ? "Phone connected"
+            : _config.Paired ? "Phone not connected"
             : "Waiting for a phone";
         // Named, not guessed: the socket knows the address it accepted, which is the
         // only thing this PC actually knows about the phone. This line used to be
@@ -490,6 +867,7 @@ public sealed class MainForm : Form
         // phone.
         var detail = rejected is not null ? $"{rejected} — its pairing token is not valid here"
             : connected ? _connectionState.Peer ?? "Connected"
+            : _config.Paired ? "Open Portal Remote on your phone to reconnect"
             : "Scan the code to pair one";
 
         using var primary = new SolidBrush(rejected is not null ? _colors.Danger : _colors.TextPrimary);
@@ -559,6 +937,9 @@ public sealed class MainForm : Form
 
         _config.RotateToken();
         Refresh(_config);
+        // Nothing can reach this PC until a phone scans the new code, so put the code
+        // in front of the user rather than leaving them on a thread that cannot send.
+        ShowPairing(true);
     }
 
     private static void OpenPath(string path) =>
@@ -633,6 +1014,8 @@ public sealed class MainForm : Form
         {
             _connectionState.Changed -= OnConnectionChanged;
             _connectionState.AuthRejected -= OnAuthRejected;
+            _share.Added -= OnShareAdded;
+            _ai.Changed -= OnAiChanged;
             _fadeTimer.Dispose();
             _rejectedRevertTimer.Dispose();
             _qr.Image?.Dispose();

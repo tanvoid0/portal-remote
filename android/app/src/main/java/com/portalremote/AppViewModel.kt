@@ -15,13 +15,10 @@ import com.portalremote.data.AppSettings
 import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
 import com.portalremote.net.AiCatalog
-import com.portalremote.net.AiChat
-import com.portalremote.net.AiChatException
 import com.portalremote.net.AiModels
 import com.portalremote.net.AiModelsException
-import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
-import com.portalremote.net.ChatEvent
+import com.portalremote.net.AiTranscript
 import com.portalremote.net.ChatTurn
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
@@ -97,13 +94,23 @@ private const val CAST_TARGETS = "cast_targets"
 /** Whether the assistant's backend is up, pushed by the PC. */
 private const val AI_STATE = "ai_state"
 
-/** A goal for the assistant to plan, and the plan that comes back — step 7c. */
-private const val AI_ACT = "ai_act"
-private const val AI_PLAN = "ai_plan"
+/** Something typed, on this phone or on the PC. One message for both, because the PC
+ *  decides on its own whether it is a question or something to do — there is no longer a
+ *  second button here saying which. */
+private const val AI_ASK = "ai_ask"
+private const val AI_REGENERATE = "ai_regenerate"
+private const val AI_STOP = "ai_stop"
+private const val AI_CLEAR = "ai_clear"
 
-/** The subset of a plan the user approved, and what running it did. */
+/** The conversation, pushed by the PC that owns it: the whole thing, one turn, or more
+ *  text for a turn already on screen. */
+private const val AI_CHAT = "ai_chat"
+private const val AI_TURN = "ai_turn"
+private const val AI_DELTA = "ai_delta"
+
+/** The subset of a plan the user approved, or a plan dismissed without running it. */
 private const val AI_CONFIRM = "ai_confirm"
-private const val AI_RESULT = "ai_result"
+private const val AI_CANCEL = "ai_cancel"
 
 /** Errors come back as `{"t":"error","detail":…}`; this is the one that means the
  *  receiver page has gone away since we last cast to it. */
@@ -174,7 +181,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      *  does on connect, so the tab is right the moment it opens. */
     val aiState: StateFlow<AiState?> = _aiState.asStateFlow()
 
-    private val aiChat = AiChat()
     private val aiModels = AiModels()
 
     private val _aiCatalog = MutableStateFlow<AiCatalog?>(null)
@@ -194,40 +200,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _chat = MutableStateFlow<List<ChatTurn>>(emptyList())
 
-    /** The conversation, in memory only. Persisting it is an open decision
-     *  (`docs/phase7-assistant.md` §11.5) and not something to start doing by accident. */
+    /**
+     * The conversation. **Held by the PC, mirrored here** — it is persisted over there,
+     * pushed in full on connect, and updated by push after that. A reply to something
+     * typed in the PC's own assistant window lands in this list exactly like one typed
+     * here, which is what makes the two surfaces one assistant rather than two chats.
+     */
     val chat: StateFlow<List<ChatTurn>> = _chat.asStateFlow()
 
-    private val _chatError = MutableStateFlow<String?>(null)
-
-    /** Why the last turn never started. A stream that *stopped* is not this — that leaves
-     *  a partial reply on screen instead. */
-    val chatError: StateFlow<String?> = _chatError.asStateFlow()
-
-    /** The in-flight reply, so a second Send can't start one on top of it. */
-    private var chatJob: Job? = null
-
-    private val _chatStreaming = MutableStateFlow(false)
-
-    val chatStreaming: StateFlow<Boolean> = _chatStreaming.asStateFlow()
-
-    private val _plan = MutableStateFlow<AiPlan?>(null)
-
-    /** The plan waiting to be confirmed, or null. **Nothing runs while this is set** —
-     *  the sheet it drives is the confirmation, not a preview of something already
-     *  happening (`docs/phase7-assistant.md` §7). */
-    val plan: StateFlow<AiPlan?> = _plan.asStateFlow()
-
-    private val _deciding = MutableStateFlow(false)
-
-    /** A goal is with the model. A local one takes tens of seconds to think, so this is
-     *  the difference between a slow answer and a tap that did nothing. */
-    val deciding: StateFlow<Boolean> = _deciding.asStateFlow()
-
-    /** Names each goal so the plan and its result can be tied back to it. The PC refuses
-     *  to run one id twice, which is what stops a reconnect-and-resend doing the same
-     *  thing to the PC a second time (§4.4). */
-    private var goalId = 0L
+    /**
+     * The assistant is busy — a reply still arriving, or a decision still running after
+     * the text finished. Read off the transcript rather than tracked separately: the PC
+     * owns that fact, and a second copy of it here could disagree.
+     *
+     * Deciding counts. The PC takes one ask at a time and drops a second, so a Send button
+     * still enabled while a local model spends thirty seconds on the tool prompt is a
+     * button that silently throws the message away.
+     */
+    val chatStreaming: StateFlow<Boolean> =
+        _chat.map { turns -> turns.any { it.streaming || it.deciding } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private var nextShareId = 0L
 
@@ -361,15 +353,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     _aiState.value = AiState.fromPush(json)
                     return@collect
                 }
-                if (json.optString("t") == AI_PLAN) {
-                    onPlan(AiPlan.fromPush(json))
+                // The conversation lives on the PC. Everything below is this phone being
+                // told what it now says — including replies to something typed on the
+                // desktop, which is what makes the two surfaces one assistant.
+                if (json.optString("t") == AI_CHAT) {
+                    _chat.value = AiTranscript.snapshot(json)
                     return@collect
                 }
-                if (json.optString("t") == AI_RESULT) {
-                    // What happened goes in the transcript rather than a toast: it is the
-                    // record of something this app did to the PC, and it is worth being
-                    // able to scroll back to.
-                    _chat.value += ChatTurn(ChatTurn.ASSISTANT, AiPlan.describeResult(json))
+                if (json.optString("t") == AI_TURN) {
+                    json.optJSONObject("turn")?.let {
+                        _chat.value = AiTranscript.upsert(_chat.value, ChatTurn.fromJson(it))
+                    }
+                    return@collect
+                }
+                if (json.optString("t") == AI_DELTA) {
+                    _chat.value = AiTranscript.delta(
+                        _chat.value, json.optString("id"), json.optString("text"),
+                    )
                     return@collect
                 }
                 if (json.optString("t") == CAST_STATUS) {
@@ -691,28 +691,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Send [text] and stream the reply — step 7b of `docs/phase7-assistant.md`. */
+    /**
+     * Say something to the assistant.
+     *
+     * **One button, and the PC decides what it was.** There used to be two — Send and a
+     * wand — because asking a question and asking for this PC to be touched are different
+     * acts and guessing which was meant is a guess that presses keys when it is wrong. It
+     * still is: the PC now asks *both* halves at once, streams the reply and works out
+     * whether the same sentence maps onto an action, and anything it finds comes back as a
+     * card with its own buttons. Nothing runs until somebody presses one of them, so there
+     * is no wrong guess left to make.
+     *
+     * Nothing is added to the transcript here. The PC appends the turn and pushes it back,
+     * so this phone and the PC's own window show the same message in the same order.
+     */
     fun sendChat(text: String) {
         val message = text.trim()
-        if (message.isEmpty() || chatJob != null) return
-        _chat.value += ChatTurn(ChatTurn.USER, message)
-        runChat()
-    }
-
-    /**
-     * Ask the assistant to *do* something — step 7c.
-     *
-     * Deliberately a different button from Send. Asking a question and asking for the PC
-     * to be touched are different acts, and inferring which one was meant from the wording
-     * is a guess this app does not have to make.
-     */
-    fun askAssistant(goal: String) {
-        val text = goal.trim()
-        if (text.isEmpty() || _deciding.value || _plan.value != null) return
-        _chatError.value = null
-        _chat.value += ChatTurn(ChatTurn.USER, text)
-        _deciding.value = true
-        send(JSONObject().put("t", AI_ACT).put("goal", text).put("id", "goal-${goalId++}"))
+        if (message.isEmpty()) return
+        send(JSONObject().put("t", AI_ASK).put("text", message))
     }
 
     /**
@@ -721,49 +717,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * The subset is the point: a plan is not all-or-nothing, and approving "pause it" does
      * not have to mean approving "and shut down the PC" (§5).
      */
-    fun confirmPlan(approved: List<Int>) {
-        val plan = _plan.value ?: return
-        _plan.value = null
-        if (approved.isEmpty()) {
-            _chat.value += ChatTurn(ChatTurn.ASSISTANT, "Nothing was run.")
-            return
-        }
-        send(
-            JSONObject()
-                .put("t", AI_CONFIRM)
-                .put("id", plan.id)
-                .put("approved", JSONArray(approved)),
-        )
-    }
+    fun confirmPlan(turnId: String, approved: List<Int>) = send(
+        JSONObject()
+            .put("t", AI_CONFIRM)
+            .put("id", turnId)
+            .put("approved", JSONArray(approved)),
+    )
 
-    /** Dismiss without running anything. Says so in the transcript, because a plan that
-     *  simply vanished reads as one that quietly went ahead. */
-    fun cancelPlan() {
-        if (_plan.value == null) return
-        _plan.value = null
-        _chat.value += ChatTurn(ChatTurn.ASSISTANT, "Cancelled — nothing was run.")
-    }
-
-    /**
-     * A plan arrived.
-     *
-     * Three endings, and only one of them is a sheet: a decision that failed, an assistant
-     * that had nothing to do, and an actual proposal. The first two belong in the
-     * transcript — putting an empty confirmation sheet on screen would be asking the user
-     * to approve nothing.
-     */
-    private fun onPlan(plan: AiPlan) {
-        _deciding.value = false
-        when {
-            plan.error != null -> _chatError.value = plan.error
-            plan.actions.isEmpty() ->
-                _chat.value += ChatTurn(
-                    ChatTurn.ASSISTANT,
-                    plan.thought.ifBlank { "Nothing I can do on the PC covers that." },
-                )
-            else -> _plan.value = plan
-        }
-    }
+    /** Dismiss without running anything. The card stays in the transcript saying it was
+     *  declined, because one that simply vanished reads as one that quietly went ahead. */
+    fun cancelPlan(turnId: String) = send(JSONObject().put("t", AI_CANCEL).put("id", turnId))
 
     /**
      * Ask again for the last reply.
@@ -772,90 +735,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * *that* was wrong or cut off, and two attempts at the same question stacked on top
      * of each other is a transcript nobody wants to read.
      */
-    fun regenerateChat() {
-        if (chatJob != null) return
-        val history = _chat.value.dropLastWhile { !it.fromUser }
-        if (history.isEmpty()) return
-        _chat.value = history
-        runChat()
-    }
+    fun regenerateChat() = send(JSONObject().put("t", AI_REGENERATE))
 
     /** Stop the reply where it is. A deliberate stop is not a failure, so what arrived
      *  is kept as a whole answer rather than flagged as cut off. */
-    fun stopChat() {
-        chatJob?.cancel()
-        chatJob = null
-        _chatStreaming.value = false
-    }
+    fun stopChat() = send(JSONObject().put("t", AI_STOP))
 
-    fun clearChat() {
-        stopChat()
-        _plan.value = null
-        _deciding.value = false
-        _chat.value = emptyList()
-        _chatError.value = null
-    }
-
-    /**
-     * Stream one reply onto the end of the conversation.
-     *
-     * The reply turn is appended empty and grown in place, so tokens appear as they
-     * arrive. **A stream that ends without saying `Done` is a cut-off reply** — that is
-     * the only way to tell one from a finished one, since both look like a flow
-     * completing — and it keeps what arrived with Regenerate beside it (§4.4). The flag
-     * is set at the end rather than held during the stream, or every reply would render
-     * as cut off until its last token landed.
-     */
-    private fun runChat() {
-        val host = currentHost ?: run {
-            _chatError.value = "Not connected to a PC"
-            return
-        }
-        _chatError.value = null
-        val history = _chat.value
-
-        chatJob = viewModelScope.launch {
-            _chatStreaming.value = true
-            _chat.value += ChatTurn(ChatTurn.ASSISTANT, "")
-            var done = false
-            try {
-                aiChat.stream(host, history).collect { event ->
-                    when (event) {
-                        is ChatEvent.Delta -> appendToReply(event.text)
-                        ChatEvent.Done -> done = true
-                        ChatEvent.Ignore -> {}
-                    }
-                }
-                if (!done) markCutOff()
-            } catch (ex: AiChatException) {
-                // Refused outright: nothing was ever shown, so the empty turn is noise.
-                _chat.value = _chat.value.dropLast(1)
-                _chatError.value = ex.message
-            } catch (ex: CancellationException) {
-                // A deliberate Stop. What arrived stands as the answer.
-                throw ex
-            } catch (ex: Exception) {
-                // The stream died mid-reply. Whatever arrived stays on screen, flagged.
-                markCutOff()
-                _chatError.value = ex.message ?: "The connection dropped"
-            } finally {
-                _chatStreaming.value = false
-                chatJob = null
-            }
-        }
-    }
-
-    private fun appendToReply(text: String) {
-        val turns = _chat.value
-        val last = turns.lastOrNull() ?: return
-        _chat.value = turns.dropLast(1) + last.copy(text = last.text + text)
-    }
-
-    private fun markCutOff() {
-        val turns = _chat.value
-        val last = turns.lastOrNull() ?: return
-        _chat.value = turns.dropLast(1) + last.copy(incomplete = true)
-    }
+    /** Wipe it everywhere — this phone, the PC's window, the file on the PC — since there
+     *  is only one conversation to wipe now (§7). */
+    fun clearChat() = send(JSONObject().put("t", AI_CLEAR))
 
     /**
      * Cast a file that lives on this phone — phase 4d of `docs/phase4-casting.md`.

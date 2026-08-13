@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,13 +22,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Hd
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Monitor
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
@@ -83,14 +94,22 @@ import org.json.JSONObject
  * setting that's right for both "watch a video play" and "read a line of code", so
  * this exposes the ends rather than a pile of sliders.
  */
-enum class MirrorPreset(val label: String, val fps: Int, val width: Int, val quality: Int) {
-    SMOOTH("Smooth", fps = 15, width = 960, quality = 50),
-    SHARP("Sharp", fps = 8, width = 1600, quality = 78),
+/** [icon] rides along on the enum so the preset reads the same on the mirror's chip
+ *  row and in Settings — one trade (frames against detail), one set of glyphs. */
+enum class MirrorPreset(
+    val label: String,
+    val icon: ImageVector,
+    val fps: Int,
+    val width: Int,
+    val quality: Int,
+) {
+    SMOOTH("Smooth", Icons.Filled.Speed, fps = 15, width = 960, quality = 50),
+    SHARP("Sharp", Icons.Filled.Hd, fps = 8, width = 1600, quality = 78),
 
     /** Everything the server will give: its own ceilings are 30fps and 3840px. What
      *  actually arrives is lower — BitBlt + JPEG of a wide monitor runs ~55ms, so the
      *  PC's capture cost caps this near 18fps regardless of what's asked for. */
-    MAX("Max", fps = 30, width = 1920, quality = 85),
+    MAX("Max", Icons.Filled.HighQuality, fps = 30, width = 1920, quality = 85),
     ;
 
     companion object {
@@ -720,7 +739,15 @@ private fun MirrorMessage(message: String, onRetry: () -> Unit) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 24.dp),
         )
-        TextButton(onClick = onRetry) { Text("Retry") }
+        TextButton(onClick = onRetry) {
+            Icon(
+                Icons.Filled.Refresh,
+                contentDescription = null,
+                modifier = Modifier.size(ButtonDefaults.IconSize),
+            )
+            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+            Text("Retry")
+        }
     }
 }
 
@@ -749,17 +776,22 @@ private fun MirrorControls(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Three unrelated groups of chips share this one scrolling row — which monitor,
+        // how good it looks, and what a touch does. Every chip carries its group's
+        // glyph so the row reads as three runs rather than as nine similar pills.
         if (monitors.size > 1) {
             monitors.forEach { display ->
                 FilterChip(
                     selected = monitor == display.index,
                     onClick = { onMonitor(display.index) },
+                    leadingIcon = { ChipIcon(Icons.Filled.Monitor) },
                     label = { Text(display.label) },
                 )
             }
             FilterChip(
                 selected = monitor == ALL_MONITORS,
                 onClick = { onMonitor(ALL_MONITORS) },
+                leadingIcon = { ChipIcon(Icons.Filled.SelectAll) },
                 label = { Text("All") },
             )
         }
@@ -767,29 +799,27 @@ private fun MirrorControls(
             FilterChip(
                 selected = preset == option,
                 onClick = { onPreset(option) },
+                leadingIcon = { ChipIcon(option.icon) },
                 label = { Text(option.label) },
             )
         }
         FilterChip(
             selected = typing,
             onClick = onToggleTyping,
-            leadingIcon = { Icon(Icons.Filled.Keyboard, contentDescription = null) },
+            leadingIcon = { ChipIcon(Icons.Filled.Keyboard) },
             label = { Text("Type") },
         )
         FilterChip(
             selected = touchMode,
             onClick = onToggleTouchMode,
-            leadingIcon = { Icon(Icons.Filled.TouchApp, contentDescription = null) },
+            leadingIcon = { ChipIcon(Icons.Filled.TouchApp) },
             label = { Text("Touch") },
         )
         FilterChip(
             selected = fullscreen,
             onClick = onToggleFullscreen,
             leadingIcon = {
-                Icon(
-                    if (fullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
-                    contentDescription = null,
-                )
+                ChipIcon(if (fullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen)
             },
             label = { Text(if (fullscreen) "Exit" else "Full screen") },
         )
@@ -799,10 +829,24 @@ private fun MirrorControls(
             FilterChip(
                 selected = false,
                 onClick = onResetZoom,
+                leadingIcon = { ChipIcon(Icons.Filled.FitScreen) },
                 label = { Text("${"%.1f".format(zoom)}× · reset") },
             )
         }
     }
+}
+
+/** Chip leading icons at Material3's own 18dp, which `Icon`'s 24dp default overshoots
+ *  — nine chips on one scrolling row can't spend 6dp each on nothing. Shared with
+ *  Share and Settings (same arrangement as `FilesScreen`'s `EmptyState`) so every chip
+ *  in the app measures its glyph the same way. */
+@Composable
+internal fun ChipIcon(icon: ImageVector) {
+    Icon(
+        icon,
+        contentDescription = null,
+        modifier = Modifier.size(FilterChipDefaults.IconSize),
+    )
 }
 
 /** The server reads any negative monitor index as "the whole virtual desktop". */

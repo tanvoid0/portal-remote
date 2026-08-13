@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using PortalRemote.Ai;
 using PortalRemote.Config;
 using PortalRemote.Control;
 using PortalRemote.Files;
@@ -27,6 +28,8 @@ public sealed class TrayIcon : IDisposable
     private readonly ConnectionState _connectionState;
     private readonly PairApproval _approval;
     private readonly ShareHub _share;
+    private readonly AiAssistant _assistant;
+    private readonly AiHealth _ai;
     private readonly Action _onExit;
     private readonly NotifyIcon _icon;
     private Icon _idleIcon;
@@ -49,18 +52,23 @@ public sealed class TrayIcon : IDisposable
     private readonly System.Windows.Forms.Timer _errorRevertTimer = new() { Interval = 3000 };
 
     private MainForm? _window;
+    private AssistantForm? _assistantWindow;
 
     public TrayIcon(
         ServerConfig config,
         ConnectionState connectionState,
         PairApproval approval,
         ShareHub share,
+        AiAssistant assistant,
+        AiHealth ai,
         Action onExit)
     {
         _config = config;
         _connectionState = connectionState;
         _approval = approval;
         _share = share;
+        _assistant = assistant;
+        _ai = ai;
         _onExit = onExit;
 
         // The tray owns the only window, so it's the only thing that can put an
@@ -92,18 +100,45 @@ public sealed class TrayIcon : IDisposable
             Hotkey.ModControl | Hotkey.ModAlt, VkV, () => _sync.BeginInvoke(new Action(SendClipboardToPhone)));
 
         var menu = new ContextMenuStrip();
+        // Every item carries a glyph or none of them would (docs/design-system.md §11
+        // rule 2): a tray menu is a column of same-length phrases read at a glance from
+        // a right-click, which is the case the icon is for. Rendered against the menu's
+        // own fore colour and at its own scaling size, so this follows a Windows theme
+        // switch and a 150% display without a second code path.
+        var glyphPx = menu.ImageScalingSize.Width;
+        var glyphInk = SystemTheme.Colors.TextPrimary;
+        Image? Glyph(string code) => Glyphs.Render(code, glyphPx, glyphInk);
+
+        static Image MarkImage(int px, Color color)
+        {
+            var bmp = new Bitmap(px, px);
+            using var g = Graphics.FromImage(bmp);
+            BrandMark.Draw(g, new RectangleF(0, 0, px, px), color);
+            return bmp;
+        }
+
         // Pairing, settings and status all live in the window now, so the menu is
         // just the two things worth doing without opening it, plus Exit.
-        var open = menu.Items.Add("Open Portal Remote", null, (_, _) => ShowWindow());
+        // The brand mark, not a generic "home": this item opens *this app*, and the mark
+        // is already what the user is right-clicking to get here.
+        var open = menu.Items.Add("Open Portal Remote", MarkImage(glyphPx, glyphInk), (_, _) => ShowWindow());
         open.Font = new Font(menu.Font, FontStyle.Bold); // the double-click default
-        var sendClipboard = menu.Items.Add("Send clipboard to phone", null, (_, _) => SendClipboardToPhone());
+        // Its own window rather than a panel in the main one: the main window is a
+        // two-column inventory you open, read and close, and a conversation is neither.
+        menu.Items.Add("Assistant", Glyph(Glyphs.Assistant), (_, _) => ShowAssistant());
+        // Send, not a clipboard glyph: at 16px the clipboard is two stacked rectangles
+        // and so is Copy directly below it, and two menu items that look the same are
+        // worse than two with no icons at all. This is the same send the window's
+        // composer button uses, which is also what it does.
+        var sendClipboard = menu.Items.Add(
+            "Send clipboard to phone", Glyph(Glyphs.Send), (_, _) => SendClipboardToPhone());
         if (_shareHotkey.Registered) sendClipboard.Text += $"   ({ShareHotkeyLabel})";
-        menu.Items.Add("Copy address", null, (_, _) => CopyAddress());
-        menu.Items.Add("Open shared folder", null, (_, _) => OpenShareFolder());
-        menu.Items.Add("Fix network access…", null, (_, _) => FixNetworkAccess());
-        menu.Items.Add("Check for updates…", null, async (_, _) => await CheckForUpdates());
+        menu.Items.Add("Copy address", Glyph(Glyphs.Copy), (_, _) => CopyAddress());
+        menu.Items.Add("Open shared folder", Glyph(Glyphs.FolderOpen), (_, _) => OpenShareFolder());
+        menu.Items.Add("Fix network access…", Glyph(Glyphs.Wrench), (_, _) => FixNetworkAccess());
+        menu.Items.Add("Check for updates…", Glyph(Glyphs.Sync), async (_, _) => await CheckForUpdates());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => _onExit());
+        menu.Items.Add("Exit", Glyph(Glyphs.Power), (_, _) => _onExit());
 
         _icon = new NotifyIcon
         {
@@ -181,12 +216,13 @@ public sealed class TrayIcon : IDisposable
         oldError.Dispose();
 
         if (_window is { IsDisposed: false }) _window.Refresh(_config);
+        if (_assistantWindow is { IsDisposed: false }) _assistantWindow.RefreshTheme();
     }
 
     public void ShowWindow()
     {
         if (_window is null || _window.IsDisposed)
-            _window = new MainForm(_config, _connectionState);
+            _window = new MainForm(_config, _connectionState, _share, _ai) { OpenAssistant = ShowAssistant };
         else
             _window.Refresh(_config);
 
@@ -194,6 +230,26 @@ public sealed class TrayIcon : IDisposable
         _window.WindowState = FormWindowState.Normal;
         _window.BringToFront();
         _window.Activate();
+    }
+
+    /// <summary>
+    /// The assistant, in its own window — the same conversation the phone is showing.
+    ///
+    /// Separate from <see cref="MainForm"/> rather than a panel inside it: that window is
+    /// an inventory you open, read and close, and a conversation is a thing you keep open
+    /// beside whatever you are doing.
+    /// </summary>
+    public void ShowAssistant()
+    {
+        if (_assistantWindow is null || _assistantWindow.IsDisposed)
+            _assistantWindow = new AssistantForm(_assistant, _ai);
+        else
+            _assistantWindow.RefreshTheme();
+
+        _assistantWindow.ShowAnimated();
+        _assistantWindow.WindowState = FormWindowState.Normal;
+        _assistantWindow.BringToFront();
+        _assistantWindow.Activate();
     }
 
     /// <summary>
@@ -514,6 +570,7 @@ public sealed class TrayIcon : IDisposable
         _icon.Visible = false;
         _icon.Dispose();
         _window?.Dispose();
+        _assistantWindow?.Dispose();
         _idleIcon.Dispose();
         _connectedIcon.Dispose();
         _errorIcon.Dispose();

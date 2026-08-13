@@ -57,8 +57,11 @@ class AiModelsException(message: String) : Exception(message)
 
 /**
  * Client for the PC's `GET /ai/models` and `POST /ai/model` — lets the phone see and
- * change which provider/model answers [AiChat], instead of the two being fixed at
+ * change which provider/model answers the assistant, instead of the two being fixed at
  * whatever was hand-edited into the PC's config file (`docs/phase7-assistant.md` §11.2).
+ *
+ * The last HTTP the assistant needs. The conversation itself moved onto the control socket
+ * when the PC became the thing that owns it — see [AiTranscript].
  */
 class AiModels(private val client: OkHttpClient = OkHttpClient()) {
 
@@ -66,7 +69,7 @@ class AiModels(private val client: OkHttpClient = OkHttpClient()) {
         val request = authedRequest(host, "${host.httpBase}/ai/models").build()
         client.newCall(request).execute().use { response ->
             val body = response.body?.string()
-            if (!response.isSuccessful) throw AiModelsException(AiChat.describe(response.code, body))
+            if (!response.isSuccessful) throw AiModelsException(describe(response.code, body))
             AiCatalog.parse(JSONObject(body ?: "{}"))
         }
     }
@@ -82,11 +85,26 @@ class AiModels(private val client: OkHttpClient = OkHttpClient()) {
             .build()
         client.newCall(request).execute().use { response ->
             val body = response.body?.string()
-            if (!response.isSuccessful) throw AiModelsException(AiChat.describe(response.code, body))
+            if (!response.isSuccessful) throw AiModelsException(describe(response.code, body))
         }
     }
 
     companion object {
         private val JSON = "application/json".toMediaType()
+
+        /**
+         * Human-readable failure, preferring whatever the PC said over the status code.
+         *
+         * A 503 from us is the availability model talking, and its `detail` is the sentence
+         * written for exactly this moment — "agent-platform isn't running" is a better
+         * answer to "why can't I pick a model" than a number.
+         */
+        fun describe(code: Int, body: String?): String {
+            val json = runCatching { JSONObject(body ?: "") }.getOrNull()
+                ?: return "The PC answered HTTP $code."
+            json.optString("detail").ifBlank { null }?.let { return it }
+            json.optString("error").ifBlank { null }?.let { return it }
+            return "The PC answered HTTP $code."
+        }
     }
 }

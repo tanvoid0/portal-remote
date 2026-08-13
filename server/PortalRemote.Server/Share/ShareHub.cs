@@ -56,6 +56,10 @@ public sealed record ShareItem(
     }
 }
 
+/// <summary>One share and which way it went. Only the desktop needs the direction —
+/// a phone already knows which end of the wire it is.</summary>
+public sealed record ShareEntry(ShareItem Item, bool Incoming);
+
 /// <summary>
 /// A `/control` socket with its sends serialized. WebSockets allow exactly one
 /// send at a time, and this one has two writers — the request pump answering a
@@ -91,7 +95,9 @@ public sealed class ClientSocket(WebSocket socket) : IDisposable
 ///
 /// Deliberately not durable — a share is a hand-off between two devices in front
 /// of you, not a mailbox. Anything the phone missed while disconnected is still
-/// on the PC (clipboard, Inbox folder).
+/// on the PC (clipboard, Inbox folder). The last <see cref="HistoryLimit"/> are
+/// kept in memory so the desktop window can show the same thread the phone does;
+/// nothing is written to disk and it all goes with the process.
 /// </summary>
 public sealed class ShareHub(ServerConfig config)
 {
@@ -100,11 +106,27 @@ public sealed class ShareHub(ServerConfig config)
     /// folder, not a scavenger hunt.</summary>
     public const string InboxFolder = "Inbox";
 
+    /// <summary>Same 50 the phone keeps, for the same reason: a thread you can
+    /// scroll back through, not an archive.</summary>
+    private const int HistoryLimit = 50;
+
     private readonly ConcurrentDictionary<ClientSocket, byte> _clients = new();
+    private readonly List<ShareEntry> _history = [];
 
     /// <summary>Raised on a Kestrel thread when a phone shares something to this
     /// PC. Subscribers must marshal to the UI thread themselves.</summary>
     public event Action<ShareItem>? Received;
+
+    /// <summary>Raised for shares in *both* directions — what the window's thread
+    /// appends to. Same threading caveat as <see cref="Received"/>.</summary>
+    public event Action<ShareEntry>? Added;
+
+    /// <summary>The thread so far, oldest first. A window opened after the fact has
+    /// to draw this before it can start appending.</summary>
+    public IReadOnlyList<ShareEntry> History
+    {
+        get { lock (_history) return _history.ToArray(); }
+    }
 
     public bool HasClients => !_clients.IsEmpty;
 
@@ -120,11 +142,31 @@ public sealed class ShareHub(ServerConfig config)
         return path;
     }
 
-    public void Publish(ShareItem item) => Received?.Invoke(item);
+    public void Publish(ShareItem item)
+    {
+        Record(item, incoming: true);
+        Received?.Invoke(item);
+    }
+
+    private void Record(ShareItem item, bool incoming)
+    {
+        var entry = new ShareEntry(item, incoming);
+        lock (_history)
+        {
+            _history.Add(entry);
+            if (_history.Count > HistoryLimit) _history.RemoveAt(0);
+        }
+        Added?.Invoke(entry);
+    }
 
     /// <summary>Push a share to every connected phone.</summary>
     public async Task SendToPhonesAsync(ShareItem item)
     {
+        // Recorded whether or not anyone is listening: the window has to show what
+        // you sent, and "sent to nothing" is a state the composer warns about before
+        // you press the button rather than one this method invents afterwards.
+        Record(item, incoming: false);
+
         await BroadcastAsync(new
         {
             t = "share",

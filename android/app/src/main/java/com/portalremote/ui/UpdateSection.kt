@@ -6,8 +6,13 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -101,7 +106,18 @@ fun UpdateSection(currentVersion: String) {
                 )
             }
         }) {
-            Text(if (available == null) "Check for updates" else "Install ${available.release.version}")
+            // The icon carries the same switch the label does — "look for one" versus
+            // "fetch this one" is the whole state of this section, and an arrow says it
+            // before the version number is read.
+            Icon(
+                if (available == null) Icons.Filled.Refresh else Icons.Filled.Download,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                if (available == null) "Check for updates" else "Install ${available.release.version}",
+                modifier = Modifier.padding(start = 8.dp),
+            )
         }
     }
 }

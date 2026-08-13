@@ -1,7 +1,9 @@
 package com.portalremote.ui
 
+import android.Manifest
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,12 +38,16 @@ import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
@@ -50,10 +56,12 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -66,10 +74,16 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import com.portalremote.audio.SpeakerService
+import com.portalremote.audio.SpeakerState
 import com.portalremote.data.SavedHost
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
@@ -80,6 +94,8 @@ import com.portalremote.net.NowPlaying
 import com.portalremote.net.Playhead
 import com.portalremote.net.Protocol
 import com.portalremote.ui.theme.HapticPress
+import com.portalremote.ui.theme.portalCardBorder
+import com.portalremote.ui.theme.portalCardColors
 import com.portalremote.ui.theme.rememberPressScale
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -189,6 +205,92 @@ fun MediaScreen(
             TransportButton(Icons.AutoMirrored.Filled.VolumeOff, "Mute", onClick = { onMedia("mute") })
             TransportButton(Icons.AutoMirrored.Filled.VolumeDown, "Volume down", onClick = { onMedia("vol_down") })
             TransportButton(Icons.AutoMirrored.Filled.VolumeUp, "Volume up", onClick = { onMedia("vol_up") })
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        SpeakerCard(host)
+    }
+}
+
+/**
+ * Turn this phone into the PC's speaker.
+ *
+ * It sits under the volume controls rather than beside the cast picker because it is the
+ * same kind of decision as those buttons — where the PC's sound comes out — and the
+ * opposite direction from casting, which sends something from here to there.
+ *
+ * The switch starts a foreground service, so the audio survives leaving this screen; the
+ * subtitle carries the one thing that will otherwise surprise people, which is that this
+ * *copies* the PC's output rather than replacing it. Doing better than that needs a
+ * signed audio driver on Windows — docs/phase8-audio.md.
+ */
+@OptIn(ExperimentalPermissionsApi::class)
+@Composable
+private fun SpeakerCard(host: SavedHost) {
+    val context = LocalContext.current
+    val state by SpeakerService.speaker.collectAsState()
+    // A failed service has already stopped, so the switch has to read as off even
+    // though the state is still carrying the reason it stopped.
+    val on = state !is SpeakerState.Off && state !is SpeakerState.Failed
+
+    // Asked for only when the switch goes on, and not blocking on the answer: the
+    // notification is the Stop button for when the app is closed, so it is worth having
+    // — but refusing it is not a reason to refuse to play.
+    val notifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        rememberPermissionState(Manifest.permission.POST_NOTIFICATIONS)
+    } else {
+        null
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = portalCardColors(),
+        border = portalCardBorder(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Speaker,
+                contentDescription = null,
+                tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(modifier = Modifier.padding(horizontal = 12.dp).weight(1f)) {
+                Text("Play the PC's sound here", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when (val current = state) {
+                        is SpeakerState.Off ->
+                            "The PC's speakers keep playing too — mute them there"
+                        is SpeakerState.Connecting -> "Connecting…"
+                        is SpeakerState.Playing ->
+                            "Playing · ${current.sampleRate / 1000}kHz " +
+                                if (current.channels == 1) "mono" else "stereo"
+                        is SpeakerState.Reconnecting -> "${current.reason} · retrying"
+                        is SpeakerState.Failed -> current.reason
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state is SpeakerState.Failed) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            Switch(
+                checked = on,
+                onCheckedChange = { wanted ->
+                    if (wanted) {
+                        if (notifications?.status?.isGranted == false) notifications.launchPermissionRequest()
+                        SpeakerService.start(context, host)
+                    } else {
+                        SpeakerService.stop(context)
+                    }
+                },
+            )
         }
     }
 }
@@ -437,7 +539,15 @@ private fun CastTargets(
                 modifier = Modifier.padding(top = 12.dp),
             )
         } else {
-            TextButton(onClick = onScan) { Text("Scan again") }
+            TextButton(onClick = onScan) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(ButtonDefaults.IconSize),
+                )
+                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                Text("Scan again")
+            }
         }
     }
 }

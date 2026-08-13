@@ -16,6 +16,16 @@
          itself. The user still confirms the install, and on API 26+ still has to
          grant this app the "install unknown apps" toggle. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Playing the PC's sound here outlives the screen that started it — a speaker that
+         stops when the phone locks is not a speaker — so it runs as a foreground service
+         and the system is told what kind. Android 14+ requires the typed permission as
+         well as the generic one. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Wi-Fi power save parks the radio between packets with the screen off, which on a
+         constant-rate audio stream is audible as dropouts. WifiLock is what holds it
+         open; the lock is taken only while something is playing. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
@@ -55,6 +65,14 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!-- Not exported: it is started by this app's own Media tab and by the Stop
+             action on its own notification, and nothing else has any business making
+             this phone play a stranger's PC. -->
+        <service
+            android:name=".audio.SpeakerService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Only the update APK goes through here (see @xml/file_paths): the installer
              is a different process, so it needs a content:// URI it has been granted

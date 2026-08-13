@@ -47,10 +47,13 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -205,8 +208,18 @@ private fun ViewSwitch(library: Boolean, onChange: (Boolean) -> Unit) {
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        FilterChip(selected = !library, onClick = { onChange(false) }, label = { Text("Chat") })
-        FilterChip(selected = library, onClick = { onChange(true) }, label = { Text("Library") })
+        FilterChip(
+            selected = !library,
+            onClick = { onChange(false) },
+            leadingIcon = { ChipIcon(Icons.Filled.Forum) },
+            label = { Text("Chat") },
+        )
+        FilterChip(
+            selected = library,
+            onClick = { onChange(true) },
+            leadingIcon = { ChipIcon(Icons.Filled.GridView) },
+            label = { Text("Library") },
+        )
     }
 }
 
@@ -565,6 +578,11 @@ private fun ShareLibrary(
                 FilterChip(
                     selected = kind == value,
                     onClick = { kind = value },
+                    // The same glyph the rows below carry, so the filter and what it
+                    // filters to are one thing rather than two vocabularies.
+                    leadingIcon = {
+                        ChipIcon(value?.let { iconForShare(it) } ?: Icons.Filled.SelectAll)
+                    },
                     label = { Text(label) },
                 )
             }
@@ -575,10 +593,8 @@ private fun ShareLibrary(
                 onClick = { newestFirst = !newestFirst },
                 label = { Text(if (newestFirst) "Newest" else "Oldest") },
                 leadingIcon = {
-                    Icon(
+                    ChipIcon(
                         if (newestFirst) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
                     )
                 },
             )

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,10 +19,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardReturn
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardTab
+import androidx.compose.material.icons.filled.SpaceBar
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Window
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextRange
@@ -46,6 +57,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.portalremote.ui.theme.HapticPress
+import com.portalremote.ui.theme.PortalRemoteTheme
 
 /** Non-empty placeholder so the field always has something for backspace to delete. */
 private const val SENTINEL = " "
@@ -136,6 +148,10 @@ fun KeyCaptureField(
             }
         },
         label = { Text(label) },
+        // The one field in the app that types onto the *other* machine. The glyph is
+        // what separates it at a glance from the browser's address bar and Share's
+        // composer, which look the same and go somewhere else entirely.
+        leadingIcon = { Icon(Icons.Filled.Keyboard, contentDescription = null) },
         // Grows with the text instead of scrolling sideways in one line; past
         // maxLines the field scrolls internally rather than growing forever.
         minLines = 1,
@@ -151,23 +167,30 @@ fun KeyCaptureField(
     LaunchedEffect(autoFocus) { if (autoFocus) focusRequester.requestFocus() }
 }
 
-private data class SpecialKey(val label: String, val send: () -> Unit)
+private data class SpecialKey(val label: String, val icon: ImageVector, val send: () -> Unit)
 
+/**
+ * Ten keys, each with the glyph a physical keyboard (or the app it drives) already
+ * prints on it — ⇥, ↵, ⌫ — and for the three combos, the icon of what they *do*
+ * rather than of the keys they press. `Ctrl+C` is the most-tapped thing on this row
+ * and "copy" is a shape everyone knows; the label stays so the shortcut is still
+ * learnable from here.
+ */
 @OptIn(ExperimentalLayoutApi::class) // FlowRow
 @Composable
 private fun SpecialKeyRow(onTap: (String) -> Unit, onCombo: (List<String>) -> Unit) {
     val keys = remember {
         listOf(
-            SpecialKey("Esc") { onTap("esc") },
-            SpecialKey("Tab") { onTap("tab") },
-            SpecialKey("Enter") { onTap("enter") },
-            SpecialKey("Space") { onTap("space") },
-            SpecialKey("Backspace") { onTap("backspace") },
-            SpecialKey("Win") { onTap("win") },
-            SpecialKey("Alt+Tab") { onCombo(listOf("alt", "tab")) },
-            SpecialKey("Ctrl+C") { onCombo(listOf("ctrl", "c")) },
-            SpecialKey("Ctrl+V") { onCombo(listOf("ctrl", "v")) },
-            SpecialKey("Ctrl+Z") { onCombo(listOf("ctrl", "z")) },
+            SpecialKey("Esc", Icons.Filled.Cancel) { onTap("esc") },
+            SpecialKey("Tab", Icons.Filled.KeyboardTab) { onTap("tab") },
+            SpecialKey("Enter", Icons.AutoMirrored.Filled.KeyboardReturn) { onTap("enter") },
+            SpecialKey("Space", Icons.Filled.SpaceBar) { onTap("space") },
+            SpecialKey("Backspace", Icons.AutoMirrored.Filled.Backspace) { onTap("backspace") },
+            SpecialKey("Win", Icons.Filled.Window) { onTap("win") },
+            SpecialKey("Alt+Tab", Icons.Filled.SwapHoriz) { onCombo(listOf("alt", "tab")) },
+            SpecialKey("Ctrl+C", Icons.Filled.ContentCopy) { onCombo(listOf("ctrl", "c")) },
+            SpecialKey("Ctrl+V", Icons.Filled.ContentPaste) { onCombo(listOf("ctrl", "v")) },
+            SpecialKey("Ctrl+Z", Icons.AutoMirrored.Filled.Undo) { onCombo(listOf("ctrl", "z")) },
         )
     }
     // Wraps rather than scrolls. As a LazyRow about half of these were off the right
@@ -180,8 +203,11 @@ private fun SpecialKeyRow(onTap: (String) -> Unit, onCombo: (List<String>) -> Un
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         keys.forEach { key ->
-            KeyButton(onClick = key.send, contentPadding = PaddingValues(horizontal = 16.dp)) {
-                Text(key.label)
+            // 12dp rather than 16dp of side padding: the glyph costs each key ~24dp of
+            // width, and this row has to keep fitting on two lines above the arrow pad.
+            KeyButton(onClick = key.send, contentPadding = PaddingValues(horizontal = 12.dp)) {
+                Icon(key.icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text(key.label, modifier = Modifier.padding(start = 6.dp))
             }
         }
     }
@@ -243,8 +269,19 @@ internal fun KeyButton(
                     latestOnClick.value()
                 }
             },
+        // A key has a face. Transparent-on-transparent left every key in the app defined
+        // by its 1px outline alone — which in light mode was a near-white hairline on
+        // white, i.e. nothing — so the fill is `surface-muted` and the outline is the
+        // 3:1 `borderStrong` Material takes from `outline` (§3). The press tint sits on
+        // top of the face rather than replacing it, so a held key reads as lit, not as
+        // suddenly existing.
         colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = if (pressed) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
+            containerColor = if (pressed) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            } else {
+                PortalRemoteTheme.extendedColors.surfaceMuted
+            },
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ),
         content = content,
     )

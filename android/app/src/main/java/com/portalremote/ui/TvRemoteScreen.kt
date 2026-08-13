@@ -27,14 +27,18 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.DesktopAccessDisabled
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
@@ -75,14 +79,22 @@ import kotlinx.coroutines.launch
  * [wire] values are the modes `Input/Power.cs` accepts; pinned by `PowerModeTest`,
  * because a rename on either side fails silently at the far end of a socket.
  */
-internal enum class PowerMode(val wire: String, val label: String, val destructive: Boolean) {
+/** [icon] is doing real work in the picker: five near-synonyms in a column ("Lock",
+ *  "Sleep", "Shut down") are exactly the list a couch user has to read twice, and this
+ *  is the one menu in the app where picking the wrong line costs unsaved work. */
+internal enum class PowerMode(
+    val wire: String,
+    val label: String,
+    val icon: ImageVector,
+    val destructive: Boolean,
+) {
     // Cheapest of the five and the one a couch actually wants: the PC keeps playing,
     // the monitor stops lighting a dark room. Any input on the PC undoes it.
-    SCREEN_OFF("screen_off", "Screen off", false),
-    LOCK("lock", "Lock", false),
-    SLEEP("sleep", "Sleep", false),
-    RESTART("restart", "Restart", true),
-    SHUTDOWN("shutdown", "Shut down", true),
+    SCREEN_OFF("screen_off", "Screen off", Icons.Filled.DesktopAccessDisabled, false),
+    LOCK("lock", "Lock", Icons.Filled.Lock, false),
+    SLEEP("sleep", "Sleep", Icons.Filled.Bedtime, false),
+    RESTART("restart", "Restart", Icons.Filled.RestartAlt, true),
+    SHUTDOWN("shutdown", "Shut down", Icons.Filled.PowerSettingsNew, true),
 }
 
 /** How long a D-pad arrow must be held before it starts repeating — Windows' own
@@ -205,6 +217,7 @@ fun TvRemoteScreen(
     if (powerOpen) {
         AlertDialog(
             onDismissRequest = { powerOpen = false },
+            icon = { Icon(Icons.Filled.PowerSettingsNew, contentDescription = null) },
             title = { Text("Power") },
             text = {
                 Column {
@@ -219,11 +232,20 @@ fun TvRemoteScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
+                            val tint = if (mode.destructive) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.primary
+                            Icon(
+                                mode.icon,
+                                contentDescription = null,
+                                tint = tint,
+                                modifier = Modifier.size(ButtonDefaults.IconSize),
+                            )
                             Text(
                                 mode.label,
-                                modifier = Modifier.fillMaxWidth(),
-                                color = if (mode.destructive) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(start = ButtonDefaults.IconSpacing)
+                                    .fillMaxWidth(),
+                                color = tint,
                             )
                         }
                     }
@@ -238,6 +260,13 @@ fun TvRemoteScreen(
     confirming?.let { mode ->
         AlertDialog(
             onDismissRequest = { confirming = null },
+            icon = {
+                Icon(
+                    mode.icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
             title = { Text("${mode.label} the PC?") },
             text = { Text("Anything unsaved on the PC will be lost.") },
             confirmButton = {

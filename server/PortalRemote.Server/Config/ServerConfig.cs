@@ -27,6 +27,17 @@ public sealed class ServerConfig
     public string Token { get; set; } = NewToken();
 
     /// <summary>
+    /// Some phone has connected with a valid token at least once — set by
+    /// <c>ControlEndpoint</c> on the first authorized socket, not by handing the token
+    /// out, since a phone that scans the QR never asks this PC for anything first.
+    ///
+    /// The window leads with the share thread once this is true and with the QR code
+    /// while it is false: a paired PC whose main view is still "scan to pair" is
+    /// answering a question nobody has any more.
+    /// </summary>
+    public bool Paired { get; set; }
+
+    /// <summary>
     /// Where mpv lives, if it isn't next to our own exe or on PATH. Empty is the
     /// normal case — detect, do not bundle (<c>docs/phase4-casting.md</c> §6) — and a
     /// cast falls back to the desktop's default handler when nothing is found.
@@ -188,9 +199,19 @@ public sealed class AgentPlatformConfig
     /// Prepended to every conversation. Kept in config rather than in code because the
     /// useful version of it names this PC and what the phone can ask for, and that is a
     /// per-install fact.
+    ///
+    /// It tells the model to answer in one line when it is asked to <i>do</i> something,
+    /// because it is no longer the only thing answering: every message also goes to
+    /// <c>/decide</c>, and the buttons that come back are the real reply. A paragraph
+    /// explaining how it would pause the music, printed above a Pause button, is the one
+    /// way this reads badly (<see cref="Ai.AiAssistant"/>).
     /// </summary>
     public string SystemPrompt { get; set; } =
         "You are the assistant inside Portal Remote, an app that remote-controls a Windows PC "
-        + "from an Android phone. Be brief: answers are read on a phone screen. If asked to do "
-        + "something on the PC or the phone, say plainly that acting on it is not wired up yet.";
+        + "from an Android phone. Be brief: answers are read on a phone screen. You can act on "
+        + "the PC — media keys, keyboard shortcuts, typing, playing a link, and power — and the "
+        + "app asks the user to approve each action separately, so you never need to ask for "
+        + "permission yourself. When the user asks you to do something on the PC, acknowledge it "
+        + "in one short line and stop; the app is already offering them the buttons. Answer "
+        + "questions normally.";
 }

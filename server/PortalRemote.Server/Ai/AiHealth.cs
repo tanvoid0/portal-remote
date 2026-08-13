@@ -14,12 +14,12 @@ namespace PortalRemote.Ai;
 public sealed class AiHealth : IDisposable
 {
     /// <summary>Configured, not answering yet. Carries the reason.</summary>
-    private const string Unavailable = "unavailable";
+    public const string Unavailable = "unavailable";
 
     /// <summary>No base URL. A setup problem rather than a failure — say where to fix it.</summary>
-    private const string Unconfigured = "unconfigured";
+    public const string Unconfigured = "unconfigured";
 
-    private const string Ready = "ready";
+    public const string Ready = "ready";
 
     /// <summary>A refused connection is instant. Slower than this isn't "down", it's
     /// "busy", and those need different words on screen.</summary>
@@ -61,6 +61,14 @@ public sealed class AiHealth : IDisposable
     public event Action<object>? Changed;
 
     private bool Configured => !string.IsNullOrWhiteSpace(config.BaseUrl);
+
+    /// <summary>The last answer, for callers that act on it or render it rather than
+    /// forward it — <see cref="AiAssistant"/> checks this before dialling
+    /// agent-platform twice, and the desktop window draws it as a row.</summary>
+    public string State => state;
+
+    /// <summary>Why, in words meant for whoever has to fix it. Null when ready.</summary>
+    public string? Detail => detail;
 
     /// <summary>
     /// The current answer. <c>canStart</c> is always false for now: launching

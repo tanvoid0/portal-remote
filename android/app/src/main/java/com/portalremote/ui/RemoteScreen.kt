@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,7 +67,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
@@ -86,7 +88,6 @@ import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
 import com.portalremote.net.AiCatalog
-import com.portalremote.net.AiPlan
 import com.portalremote.net.AiState
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
@@ -99,6 +100,7 @@ import com.portalremote.net.ShareEntry
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.accentGlow
 import com.portalremote.ui.theme.rememberPressScale
 import kotlin.math.absoluteValue
 import org.json.JSONObject
@@ -149,17 +151,13 @@ fun RemoteScreen(
     aiState: AiState?,
     chat: List<ChatTurn>,
     chatStreaming: Boolean,
-    chatError: String?,
-    plan: AiPlan?,
-    deciding: Boolean,
     aiCatalog: AiCatalog?,
     aiCatalogLoading: Boolean,
     aiCatalogError: String?,
     onProbeAi: (retry: Boolean) -> Unit,
     onSendChat: (String) -> Unit,
-    onAct: (String) -> Unit,
-    onConfirmPlan: (List<Int>) -> Unit,
-    onCancelPlan: () -> Unit,
+    onConfirmPlan: (turnId: String, approved: List<Int>) -> Unit,
+    onCancelPlan: (turnId: String) -> Unit,
     onRegenerateChat: () -> Unit,
     onStopChat: () -> Unit,
     onClearChat: () -> Unit,
@@ -358,15 +356,11 @@ fun RemoteScreen(
                             state = aiState,
                             chat = chat,
                             streaming = chatStreaming,
-                            error = chatError,
-                            plan = plan,
-                            deciding = deciding,
                             catalog = aiCatalog,
                             catalogLoading = aiCatalogLoading,
                             catalogError = aiCatalogError,
                             onProbe = onProbeAi,
                             onSend = onSendChat,
-                            onAct = onAct,
                             onConfirm = onConfirmPlan,
                             onCancelPlan = onCancelPlan,
                             onRegenerate = onRegenerateChat,
@@ -501,8 +495,15 @@ private fun RemoteNavBar(
             // glass as glass.
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .height(60.dp)
-            .shadow(12.dp, capsule)
-            .clip(capsule),
+            // Accent-tinted rather than black (see Modifier.accentGlow): a black shadow
+            // under a near-black bar in dark mode is nothing at all, and the capsule is
+            // the one piece of chrome that should read as floating over the content
+            // rather than sitting in it.
+            .accentGlow(accent.copy(alpha = 0.55f), capsule, 14.dp)
+            .clip(capsule)
+            // A white capsule on a white list has no edge of its own; the hairline is
+            // what keeps the shape from dissolving in light mode.
+            .border(1.dp, PortalRemoteTheme.extendedColors.border, capsule),
     ) {
         if (backdrop != null) {
             // The frost is its own node so the blur lands on the copied content and
@@ -629,8 +630,24 @@ private fun RemoteTitleBar(
         animationSpec = spec,
         label = "status-dot",
     )
+    val borderColor = PortalRemoteTheme.extendedColors.border
 
-    Surface(color = PortalRemoteTheme.extendedColors.surfaceRaised) {
+    // The hairline is the only thing separating this row from the screen under it in
+    // light mode, where both are white.
+    Surface(
+        color = PortalRemoteTheme.extendedColors.surfaceRaised,
+        // drawWithContent, not drawBehind: a modifier passed to Surface wraps its own
+        // background, so anything drawn behind here would be painted straight over.
+        modifier = Modifier.drawWithContent {
+            drawContent()
+            val line = 1.dp.toPx()
+            drawRect(
+                color = borderColor,
+                topLeft = Offset(0f, size.height - line),
+                size = Size(size.width, line),
+            )
+        },
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

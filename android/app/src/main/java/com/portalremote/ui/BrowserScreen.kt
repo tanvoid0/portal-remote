@@ -45,14 +45,22 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Tab
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -84,6 +92,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -370,6 +379,7 @@ fun BrowserScreen(
         ModalBottomSheet(onDismissRequest = { showBookmarks = false }) {
             LinkListSheet(
                 title = "Bookmarks",
+                icon = Icons.Filled.Bookmark,
                 empty = "Star a page and it'll be here.",
                 entries = bookmarks.map { it.title to it.url },
                 onOpen = { url -> go(url); showBookmarks = false },
@@ -382,6 +392,7 @@ fun BrowserScreen(
         ModalBottomSheet(onDismissRequest = { showHistory = false }) {
             LinkListSheet(
                 title = "History",
+                icon = Icons.Filled.History,
                 empty = "Nothing here yet.",
                 entries = history.map { it.title.ifBlank { it.url } to it.url },
                 onOpen = { url -> go(url); showHistory = false },
@@ -799,6 +810,7 @@ private fun BrowserBar(
                     )
                     DropdownMenuItem(
                         text = { Text("Tabs ($tabCount)") },
+                        leadingIcon = { Icon(Icons.Filled.Tab, null) },
                         onClick = { menuOpen = false; onShowTabs() },
                     )
                     HorizontalDivider()
@@ -814,6 +826,7 @@ private fun BrowserBar(
                     )
                     DropdownMenuItem(
                         text = { Text("Bookmarks") },
+                        leadingIcon = { Icon(Icons.Filled.Bookmarks, null) },
                         onClick = { menuOpen = false; onShowBookmarks() },
                     )
                     DropdownMenuItem(
@@ -834,6 +847,7 @@ private fun BrowserBar(
                     )
                     DropdownMenuItem(
                         text = { Text("Privacy & blocking") },
+                        leadingIcon = { Icon(Icons.Filled.PrivacyTip, null) },
                         onClick = { menuOpen = false; onOpenMenu() },
                     )
                 }
@@ -856,8 +870,18 @@ private fun TabSwitcher(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Tabs", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            AssistChip(onClick = { onNew(false) }, label = { Text("New") })
-            AssistChip(onClick = { onNew(true) }, label = { Text("Private") })
+            AssistChip(
+                onClick = { onNew(false) },
+                leadingIcon = { AssistChipIcon(Icons.Filled.Add) },
+                label = { Text("New") },
+            )
+            AssistChip(
+                onClick = { onNew(true) },
+                // The same glyph a private tab's own row carries below, so "this makes
+                // one of those" needs no reading.
+                leadingIcon = { AssistChipIcon(Icons.Filled.VisibilityOff) },
+                label = { Text("Private") },
+            )
         }
 
         LazyColumn {
@@ -873,10 +897,14 @@ private fun TabSwitcher(
                             overflow = TextOverflow.Ellipsis,
                         )
                     },
-                    leadingContent = if (tab.incognito) {
-                        { Icon(Icons.Filled.VisibilityOff, contentDescription = null) }
-                    } else {
-                        null
+                    // Every tab gets one, not only the private ones: a row with a glyph
+                    // beside rows without reads as an odd one out rather than as a kind.
+                    leadingContent = {
+                        Icon(
+                            if (tab.incognito) Icons.Filled.VisibilityOff else Icons.Filled.Public,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     },
                     trailingContent = {
                         IconButton(onClick = { onClose(tab) }) {
@@ -931,6 +959,7 @@ private fun BrowserStartHint(
                 items(bookmarks) { mark ->
                     AssistChip(
                         onClick = { onOpen(mark.url) },
+                        leadingIcon = { AssistChipIcon(Icons.Filled.Bookmark) },
                         label = {
                             Text(mark.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         },
@@ -941,9 +970,24 @@ private fun BrowserStartHint(
     }
 }
 
+/** Assist-chip leading icons at Material3's 18dp, which `Icon`'s 24dp default
+ *  overshoots — see `ChipIcon` in ScreenScreen.kt, the filter-chip twin of this. */
+@Composable
+private fun AssistChipIcon(icon: ImageVector) {
+    Icon(
+        icon,
+        contentDescription = null,
+        modifier = Modifier.size(AssistChipDefaults.IconSize),
+    )
+}
+
 @Composable
 private fun LinkListSheet(
     title: String,
+    /** What kind of list this is. Two sheets of identical title-over-url rows open
+     *  from two entries in the same menu, and the glyph is the only thing that says
+     *  which one is up once the title has scrolled past. */
+    icon: ImageVector,
     empty: String,
     entries: List<Pair<String, String>>,
     onOpen: (String) -> Unit,
@@ -955,9 +999,19 @@ private fun LinkListSheet(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 8.dp).size(20.dp),
+            )
             Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             if (onClearAll != null && entries.isNotEmpty()) {
-                AssistChip(onClick = onClearAll, label = { Text("Clear") })
+                AssistChip(
+                    onClick = onClearAll,
+                    leadingIcon = { AssistChipIcon(Icons.Filled.DeleteSweep) },
+                    label = { Text("Clear") },
+                )
             }
         }
 
@@ -975,6 +1029,14 @@ private fun LinkListSheet(
                 ListItem(
                     headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingContent = {
+                        Icon(
+                            icon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
                     trailingContent = onRemove?.let { remove ->
                         {
                             IconButton(onClick = { remove(url) }) {
@@ -1035,10 +1097,17 @@ private fun BrowserSettingsSheet(
                 AssistChip(
                     onClick = { onChange(settings.copy(searchEngine = engine)) },
                     label = { Text(engine.label) },
-                    leadingIcon = if (engine == settings.searchEngine) {
-                        { Icon(Icons.Filled.Shield, contentDescription = "Selected") }
-                    } else {
-                        null
+                    // A tick for the one in use, a magnifier for the rest — the shield
+                    // that used to mark the selection said "protected", which is a claim
+                    // about the engine rather than about which one is on.
+                    leadingIcon = {
+                        AssistChipIcon(
+                            if (engine == settings.searchEngine) {
+                                Icons.Filled.Check
+                            } else {
+                                Icons.Filled.Search
+                            },
+                        )
                     },
                 )
             }
@@ -1056,6 +1125,13 @@ private fun BrowserSettingsSheet(
         ListItem(
             headlineContent = { Text("Clear browsing data") },
             supportingContent = { Text("Cookies, cached files, site storage and history") },
+            leadingContent = {
+                Icon(
+                    Icons.Filled.DeleteSweep,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
             trailingContent = {
                 IconButton(onClick = onClearData) {
                     Icon(Icons.Filled.Delete, contentDescription = "Clear browsing data")

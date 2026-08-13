@@ -40,9 +40,6 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
             val aiState by viewModel.aiState.collectAsState()
             val chat by viewModel.chat.collectAsState()
             val chatStreaming by viewModel.chatStreaming.collectAsState()
-            val chatError by viewModel.chatError.collectAsState()
-            val plan by viewModel.plan.collectAsState()
-            val deciding by viewModel.deciding.collectAsState()
             val aiCatalog by viewModel.aiCatalog.collectAsState()
             val aiCatalogLoading by viewModel.aiCatalogLoading.collectAsState()
             val aiCatalogError by viewModel.aiCatalogError.collectAsState()
@@ -122,17 +119,13 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             aiState = aiState,
                             chat = chat,
                             chatStreaming = chatStreaming,
-                            chatError = chatError,
-                            plan = plan,
-                            deciding = deciding,
                             aiCatalog = aiCatalog,
                             aiCatalogLoading = aiCatalogLoading,
                             aiCatalogError = aiCatalogError,
                             onProbeAi = { viewModel.probeAi(it) },
                             onSendChat = { viewModel.sendChat(it) },
-                            onAct = { viewModel.askAssistant(it) },
-                            onConfirmPlan = { viewModel.confirmPlan(it) },
-                            onCancelPlan = { viewModel.cancelPlan() },
+                            onConfirmPlan = { turnId, approved -> viewModel.confirmPlan(turnId, approved) },
+                            onCancelPlan = { viewModel.cancelPlan(it) },
                             onRegenerateChat = { viewModel.regenerateChat() },
                             onStopChat = { viewModel.stopChat() },
                             onClearChat = { viewModel.clearChat() },

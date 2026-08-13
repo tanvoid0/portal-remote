@@ -12,8 +12,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.DisplaySettings
+import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Mouse
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -35,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
@@ -88,7 +97,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
-            SectionHeader("Pointer")
+            SectionHeader(Icons.Filled.Mouse, "Pointer")
 
             SettingRow(
                 title = "Pointer speed",
@@ -140,14 +149,14 @@ fun SettingsScreen(
             // Reference, not a control — but this is where someone looks for "what can
             // this thing do", and the pad's own legend is deliberately gone after the
             // first touch. Everything past two fingers was otherwise undiscoverable.
-            SectionHeader("Trackpad gestures")
+            SectionHeader(Icons.Filled.Gesture, "Trackpad gestures")
 
             TrackpadGestures.forEach { (gesture, effect) ->
                 GestureRow(gesture, effect)
             }
 
             HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
-            SectionHeader("Feel")
+            SectionHeader(Icons.Filled.Vibration, "Feel")
 
             // Fires the real thing on the way *on*, since the ambient Haptics is still
             // the old (possibly silent) one at the moment of the tap — and "what does
@@ -165,7 +174,7 @@ fun SettingsScreen(
             )
 
             HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
-            SectionHeader("Screen")
+            SectionHeader(Icons.Filled.DisplaySettings, "Screen")
 
             SwitchRow(
                 title = "Keep the phone awake",
@@ -184,6 +193,9 @@ fun SettingsScreen(
                         FilterChip(
                             selected = settings.mirrorPreset == option.name,
                             onClick = { onSettingsChange { it.copy(mirrorPreset = option.name) } },
+                            // Same glyph the mirror's own chip carries, so the default
+                            // set here is recognisably the thing changed over there.
+                            leadingIcon = { ChipIcon(option.icon) },
                             label = { Text(option.label) },
                         )
                     }
@@ -191,7 +203,7 @@ fun SettingsScreen(
             }
 
             HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
-            SectionHeader("This PC")
+            SectionHeader(Icons.Filled.Computer, "This PC")
 
             InfoRow("Name", hello.name)
             InfoRow("Address", "${host.host}:${host.port}")
@@ -200,7 +212,7 @@ fun SettingsScreen(
             InfoRow("App version", appVersion())
 
             HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
-            SectionHeader("Updates")
+            SectionHeader(Icons.Filled.SystemUpdate, "Updates")
 
             UpdateSection(currentVersion = appVersion())
 
@@ -208,7 +220,17 @@ fun SettingsScreen(
                 onClick = { confirmForget = true },
                 modifier = Modifier.padding(horizontal = 8.dp),
             ) {
-                Text("Forget this PC", color = MaterialTheme.colorScheme.error)
+                Icon(
+                    Icons.Filled.LinkOff,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    "Forget this PC",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
             }
         }
     }
@@ -218,6 +240,7 @@ fun SettingsScreen(
     if (confirmForget) {
         AlertDialog(
             onDismissRequest = { confirmForget = false },
+            icon = { Icon(Icons.Filled.LinkOff, contentDescription = null) },
             title = { Text("Forget ${hello.name}?") },
             text = { Text("You will need to scan its pairing QR code again to reconnect.") },
             confirmButton = {
@@ -232,14 +255,28 @@ fun SettingsScreen(
     }
 }
 
+/** Icon + title. This screen is one long scroll of similar-looking rows, and the
+ *  headers are the only thing breaking it into parts — an 18dp glyph is what makes
+ *  them findable on a flick rather than read one by one (§11 rule 1: recognition). */
 @Composable
-private fun SectionHeader(title: String) {
-    Text(
-        title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
+private fun SectionHeader(icon: ImageVector, title: String) {
+    Row(
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp),
-    )
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 8.dp),
+        )
+    }
 }
 
 /** Title + explanation with a control underneath — for anything wider than a switch. */

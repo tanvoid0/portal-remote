@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -66,6 +67,7 @@ import com.portalremote.data.AppSettings
 import com.portalremote.ui.theme.Haptics
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
+import com.portalremote.ui.theme.PortalRemoteTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -398,6 +400,15 @@ private fun TrackpadSurface(
             .clip(RoundedCornerShape(20.dp))
             .graphicsLayer { scaleX = tapScale.value; scaleY = tapScale.value }
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            // The pad is the largest control in the app and had no edge at all: in light
+            // mode its fill and the screen behind it were both white, so the surface a
+            // finger is supposed to aim at was defined by nothing. `borderStrong` is the
+            // 3:1 control boundary WCAG 1.4.11 asks for (§3).
+            .border(
+                1.dp,
+                PortalRemoteTheme.extendedColors.borderStrong,
+                RoundedCornerShape(20.dp),
+            )
             // Above the surface, below the rail and the echo. Radius and alpha only —
             // no layout, nothing to invalidate but this one draw.
             .drawWithContent {

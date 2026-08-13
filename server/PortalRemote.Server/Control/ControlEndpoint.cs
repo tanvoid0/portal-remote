@@ -27,7 +27,7 @@ public static class ControlEndpoint
 
     public static void MapControlEndpoint(
         this WebApplication app, ServerConfig config, ConnectionState connectionState, ShareHub shareHub,
-        NowPlaying nowPlaying, AiHealth ai, AiActions aiActions)
+        NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant)
     {
         app.Map("/control", async (HttpContext context, ILoggerFactory loggerFactory) =>
         {
@@ -51,6 +51,16 @@ public static class ControlEndpoint
                 return;
             }
 
+            // The first phone through the door. Recorded here rather than where the
+            // token is handed out: a phone that scanned the QR took the token off the
+            // screen and never asked this PC for it, so this socket is the earliest
+            // point the PC can honestly say it is paired with anything.
+            if (!config.Paired)
+            {
+                config.Paired = true;
+                config.Save();
+            }
+
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
             log.LogInformation("Client connected: {Peer}", peer);
             connectionState.OnConnected(peer);
@@ -72,7 +82,11 @@ public static class ControlEndpoint
                 // opens, with no request of its own. Whatever we last learned — this
                 // does not probe, so a cold connect is never held up by a dead port.
                 await client.SendJsonAsync(ai.Snapshot(), context.RequestAborted);
-                await PumpAsync(socket, client, nowPlaying, ai, aiActions, log, context.RequestAborted);
+                // The conversation lives on this PC now, so a client that has never seen
+                // it — a reinstalled phone, the desktop window on its first open — is
+                // handed the whole thing rather than starting an empty second chat.
+                await client.SendJsonAsync(assistant.Conversation.Snapshot(), context.RequestAborted);
+                await PumpAsync(socket, client, nowPlaying, ai, assistant, log, context.RequestAborted);
             }
             catch (OperationCanceledException)
             {
@@ -111,7 +125,7 @@ public static class ControlEndpoint
 
     /// <summary>Read messages until the client closes the socket.</summary>
     private static async Task PumpAsync(
-        WebSocket socket, ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiActions aiActions,
+        WebSocket socket, ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant,
         ILogger log, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(ReceiveBufferBytes);
@@ -142,7 +156,7 @@ public static class ControlEndpoint
 
                 var text = Encoding.UTF8.GetString(pending.GetBuffer(), 0, (int)pending.Length);
                 pending.SetLength(0);
-                await HandleAsync(client, nowPlaying, ai, aiActions, text, log, ct);
+                await HandleAsync(client, nowPlaying, ai, assistant, text, log, ct);
             }
         }
         finally
@@ -153,7 +167,7 @@ public static class ControlEndpoint
     }
 
     private static async Task HandleAsync(
-        ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiActions aiActions, string text, ILogger log,
+        ClientSocket client, NowPlaying nowPlaying, AiHealth ai, AiAssistant assistant, string text, ILogger log,
         CancellationToken ct)
     {
         JsonElement message;
@@ -199,44 +213,56 @@ public static class ControlEndpoint
             return;
         }
 
-        // Deciding takes as long as a local model takes to think — tens of seconds is
-        // normal. Awaited here it would hold the pump, and this is the socket carrying
-        // mouse movement, so it runs on its own and answers when it has an answer.
-        if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "ai_act")
+        // Everything the assistant does answers on the *broadcast*, not to the client that
+        // asked: the transcript lives on this PC and the phone and the desktop window are
+        // both watching it. A reply typed on one appears on the other as it arrives.
+        //
+        // None of these are awaited into an answer here. Deciding takes as long as a local
+        // model takes to think — tens of seconds is normal — and this is the socket
+        // carrying mouse movement.
+        if (kind.ValueKind == JsonValueKind.String && kind.GetString() is { } assistantMessage &&
+            assistantMessage.StartsWith("ai_", StringComparison.Ordinal))
         {
-            var id = Id(message);
-            var goal = message.TryGetProperty("goal", out var g) && g.ValueKind == JsonValueKind.String
-                ? g.GetString() ?? string.Empty
-                : string.Empty;
-            var context = nowPlaying.Snapshot();
-            _ = Task.Run(async () =>
+            switch (assistantMessage)
             {
-                try
-                {
-                    await client.SendJsonAsync(await aiActions.DecideAsync(id, goal, context, ct), ct);
-                }
-                catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException
-                                               or OperationCanceledException or InvalidOperationException)
-                {
-                    // The phone left while the model was thinking. Nothing ran, so
-                    // there is nothing to report and nothing to undo.
-                }
-            }, ct);
-            return;
-        }
+                case "ai_ask":
+                    assistant.Ask(Text(message));
+                    return;
 
-        // Executed inline: these are the same key presses the buttons send, and they are
-        // as fast. A plan runs once — AiActions holds that, not this.
-        if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "ai_confirm")
-        {
-            var approved = new List<int>();
-            if (message.TryGetProperty("approved", out var list) && list.ValueKind == JsonValueKind.Array)
-                foreach (var index in list.EnumerateArray())
-                    if (index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out var value))
-                        approved.Add(value);
+                case "ai_regenerate":
+                    assistant.Regenerate();
+                    return;
 
-            await client.SendJsonAsync(aiActions.Confirm(Id(message), approved), ct);
-            return;
+                case "ai_stop":
+                    assistant.Stop();
+                    return;
+
+                case "ai_clear":
+                    assistant.Clear();
+                    return;
+
+                // A client that lost its place — a reconnect, a process restart — rather
+                // than one that just connected, which is handed the transcript unasked.
+                case "ai_history":
+                    await client.SendJsonAsync(assistant.Conversation.Snapshot(), ct);
+                    return;
+
+                case "ai_confirm":
+                {
+                    var approved = new List<int>();
+                    if (message.TryGetProperty("approved", out var list) && list.ValueKind == JsonValueKind.Array)
+                        foreach (var index in list.EnumerateArray())
+                            if (index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out var value))
+                                approved.Add(value);
+
+                    assistant.Confirm(Id(message), approved);
+                    return;
+                }
+
+                case "ai_cancel":
+                    assistant.Cancel(Id(message));
+                    return;
+            }
         }
 
         try
@@ -257,7 +283,14 @@ public static class ControlEndpoint
         }
     }
 
-    /// <summary>The phone's id for this exchange, echoed back on every message about it.</summary>
+    /// <summary>What was typed, on whichever device typed it.</summary>
+    private static string Text(JsonElement message) =>
+        message.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String
+            ? text.GetString() ?? string.Empty
+            : string.Empty;
+
+    /// <summary>The turn a message is about. Server-minted now — the transcript is the
+    /// PC's, so two clients cannot disagree about what a plan is called.</summary>
     private static string Id(JsonElement message) =>
         message.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String
             ? id.GetString() ?? string.Empty

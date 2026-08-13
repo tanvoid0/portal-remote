@@ -3,10 +3,21 @@ package com.portalremote.ui
 import android.net.Uri
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Mouse
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
@@ -16,7 +27,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
 import com.portalremote.net.CastState
@@ -32,11 +46,11 @@ import org.json.JSONObject
  * you point at a thing, then type into it, then turn the volume down — and paying a
  * bottom-nav trip for each of those was making the phone feel like four apps.
  */
-internal enum class ControlMode(val label: String) {
-    TRACKPAD("Trackpad"),
-    KEYBOARD("Keyboard"),
-    MEDIA("Media"),
-    REMOTE("Remote"),
+internal enum class ControlMode(val label: String, val icon: ImageVector) {
+    TRACKPAD("Trackpad", Icons.Filled.Mouse),
+    KEYBOARD("Keyboard", Icons.Filled.Keyboard),
+    MEDIA("Media", Icons.Filled.PlayCircle),
+    REMOTE("Remote", Icons.Filled.SettingsRemote),
 }
 
 /**
@@ -81,11 +95,37 @@ fun ControlScreen(
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
             ControlMode.entries.forEach { entry ->
+                // Hand-rolled content rather than `Tab(text =, icon =)`: the stock pair
+                // stacks the icon *above* the label and takes the row from 48dp to 72dp,
+                // which is 24dp of chrome (§13) for the same two pieces of information.
+                // Icon beside label at labelMedium fits the four widest labels on a
+                // 320dp phone; the unselected tint matches the nav bar's idle grey, so
+                // the four look like one family with the bar below them.
                 Tab(
                     selected = mode == entry,
                     onClick = { if (mode != entry) haptics.tick(); mode = entry },
-                    text = { Text(entry.label, style = MaterialTheme.typography.labelLarge) },
-                )
+                    modifier = Modifier.height(48.dp),
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            entry.icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            entry.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
+                }
             }
         }
 

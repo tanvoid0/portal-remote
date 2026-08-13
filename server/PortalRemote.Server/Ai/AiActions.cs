@@ -191,13 +191,13 @@ public sealed class AiActions : IDisposable
     }
 
     /// <summary>
-    /// Ask for a plan. Never throws: a phone waiting on a confirmation sheet needs an
-    /// answer either way, so a failure comes back as an <c>ai_plan</c> carrying
-    /// <c>error</c> rather than as a dropped message.
+    /// Ask for a plan. Never throws: the turn this belongs to is already on screen on
+    /// every connected client, so a failure comes back as a decision carrying
+    /// <see cref="PlanDecision.Error"/> rather than as a dropped message.
     /// </summary>
-    public async Task<object> DecideAsync(string id, string goal, object? context, CancellationToken ct)
+    public async Task<PlanDecision> DecideAsync(string id, string goal, object? context, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(goal)) return Failed(id, "Nothing was asked.");
+        if (string.IsNullOrWhiteSpace(goal)) return Failed("Nothing was asked.");
 
         try
         {
@@ -215,7 +215,7 @@ public sealed class AiActions : IDisposable
                 Url("/api/v1/decide"), new StringContent(body, Encoding.UTF8, "application/json"), ct);
             var text = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
-                return Failed(id, $"agent-platform answered {(int)response.StatusCode}: {Trim(text)}");
+                return Failed(AiChatClient.Describe((int)response.StatusCode, text));
 
             using var document = JsonDocument.Parse(text);
             var root = document.RootElement;
@@ -227,29 +227,26 @@ public sealed class AiActions : IDisposable
             // beginning "Error during decision: " with an empty action list, and that
             // sentence names the real cause far better than we could (§4.4).
             if (thought.StartsWith("Error during decision:", StringComparison.Ordinal))
-                return Failed(id, thought);
+                return Failed(thought);
 
             var actions = Validate(root);
             Remember(id, actions);
 
-            return new
-            {
-                t = "ai_plan",
-                id,
+            return new PlanDecision(
                 thought,
-                actions = actions.Select((a, index) => new
+                actions.Select((a, index) => new ChatPlanAction
                 {
-                    index,
-                    action_id = a.ActionId,
-                    summary = a.Summary,
-                    destructive = a.Destructive,
-                    parameters = a.Parameters
-                })
-            };
+                    Index = index,
+                    ActionId = a.ActionId,
+                    Summary = a.Summary,
+                    Verb = a.Verb,
+                    Destructive = a.Destructive
+                }).ToList(),
+                null);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
-            return Failed(id, ex is TaskCanceledException && !ct.IsCancellationRequested
+            return Failed(ex is TaskCanceledException && !ct.IsCancellationRequested
                 ? "The assistant took too long to decide."
                 : ex.Message);
         }
@@ -266,19 +263,19 @@ public sealed class AiActions : IDisposable
     /// A plan runs <b>once</b>. The phone dropping between confirm and result means the
     /// actions already happened, so a resend on reconnect must not do them again (§4.4).
     /// </summary>
-    public object Confirm(string id, IReadOnlyList<int> approved)
+    public ConfirmOutcome Confirm(string id, IReadOnlyList<int> approved)
     {
         if (!plans.TryGetValue(id, out var plan))
-            return new { t = "ai_result", id, error = "That plan is no longer held. Ask again." };
+            return new ConfirmOutcome([], "That plan is no longer held. Ask again.");
 
         lock (plan)
         {
             if (plan.Executed)
-                return new { t = "ai_result", id, error = "Already run." };
+                return new ConfirmOutcome([], "Already run.");
             plan.Executed = true;
         }
 
-        var results = new List<object>();
+        var results = new List<ChatPlanResult>();
         foreach (var index in approved.Distinct())
         {
             if (index < 0 || index >= plan.Actions.Count) continue;
@@ -289,7 +286,7 @@ public sealed class AiActions : IDisposable
                 // also the thing that validates the parameters properly — an unknown key
                 // name or media action throws here rather than being pressed.
                 InputActions.Dispatch(JsonSerializer.SerializeToElement(ToMessage(action)));
-                results.Add(new { index, action_id = action.ActionId, ok = true, detail = action.Summary });
+                results.Add(new ChatPlanResult { Index = index, Ok = true, Detail = action.Summary });
             }
             catch (Exception ex) when (ex is UnknownMessageException or ArgumentException
                                            or InvalidOperationException
@@ -297,11 +294,11 @@ public sealed class AiActions : IDisposable
             {
                 // One action failing is not the plan failing — the rest were approved
                 // separately and are still worth running.
-                results.Add(new { index, action_id = action.ActionId, ok = false, detail = ex.Message });
+                results.Add(new ChatPlanResult { Index = index, Ok = false, Detail = ex.Message });
             }
         }
 
-        return new { t = "ai_result", id, results };
+        return new ConfirmOutcome(results, null);
     }
 
     /// <summary>
@@ -377,7 +374,8 @@ public sealed class AiActions : IDisposable
             if (parameters.ValueKind != JsonValueKind.Object) continue;
             if (!parameters.TryGetProperty(required, out var value) || value.ValueKind is JsonValueKind.Null) continue;
 
-            kept.Add(new PlanAction(id, Describe(id, parameters), IsDestructive(id, parameters), parameters.Clone()));
+            kept.Add(new PlanAction(
+                id, Describe(id, parameters), Verb(id, parameters), IsDestructive(id, parameters), parameters.Clone()));
         }
 
         return kept;
@@ -397,6 +395,54 @@ public sealed class AiActions : IDisposable
         "player_transport" => $"Cast: {Str(p, "action")}",
         "power" => $"Power: {Str(p, "mode")}",
         _ => id
+    };
+
+    /// <summary>
+    /// The same thing in two words, for a button face.
+    ///
+    /// A plan with one action in it should be approved by pressing the thing it does —
+    /// "Mute", "Shut down", "Play" — not by pressing a generic Run beside a sentence. It is
+    /// written here for the same reason <see cref="Describe"/> is: the PC is the side that
+    /// knows what these press, and a button labelled by the client is a second opinion
+    /// about what is about to happen to this machine.
+    /// </summary>
+    private static string Verb(string id, JsonElement p) => id switch
+    {
+        "media_control" => Str(p, "action") switch
+        {
+            "play_pause" => "Play/pause",
+            "next" => "Next track",
+            "prev" => "Previous",
+            "stop" => "Stop",
+            "mute" => "Mute",
+            "vol_up" => "Volume up",
+            "vol_down" => "Volume down",
+            _ => "Press"
+        },
+        "press_keys" => "Press",
+        "type_text" => "Type",
+        "cast_url" => "Play",
+        "player_transport" => Str(p, "action") switch
+        {
+            "play" => "Play",
+            "pause" => "Pause",
+            "toggle" => "Play/pause",
+            "stop" => "Stop",
+            "seek" => "Seek",
+            "volume" => "Set volume",
+            _ => "Control"
+        },
+        "power" => Str(p, "mode") switch
+        {
+            "lock" => "Lock",
+            "sleep" => "Sleep",
+            "hibernate" => "Hibernate",
+            "shutdown" => "Shut down",
+            "restart" => "Restart",
+            "logoff" => "Sign out",
+            _ => "Power"
+        },
+        _ => "Run"
     };
 
     private static bool IsDestructive(string id, JsonElement p) =>
@@ -453,7 +499,7 @@ public sealed class AiActions : IDisposable
 
     private string Url(string path) => $"{config.BaseUrl.TrimEnd('/')}{path}";
 
-    private static object Failed(string id, string error) => new { t = "ai_plan", id, error };
+    private static PlanDecision Failed(string error) => new(string.Empty, [], error);
 
     private static string Str(JsonElement p, string name) =>
         p.ValueKind == JsonValueKind.Object && p.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
@@ -491,7 +537,8 @@ public sealed class AiActions : IDisposable
     }
 
     /// <summary>One action of a plan, after validation.</summary>
-    public sealed record PlanAction(string ActionId, string Summary, bool Destructive, JsonElement Parameters);
+    public sealed record PlanAction(
+        string ActionId, string Summary, string Verb, bool Destructive, JsonElement Parameters);
 
     private sealed class Plan(List<PlanAction> actions)
     {
@@ -502,3 +549,16 @@ public sealed class AiActions : IDisposable
         public bool Executed { get; set; }
     }
 }
+
+/// <summary>
+/// What <c>/decide</c> came back with, already validated and already worded for a person.
+///
+/// An empty action list with no <paramref name="Error"/> is the assistant saying there is
+/// nothing on this PC to do about the question — an answer, not a failure, and the
+/// difference is what stops a confirmation card appearing over a plain conversation.
+/// </summary>
+public sealed record PlanDecision(string Thought, List<ChatPlanAction> Actions, string? Error);
+
+/// <summary>What running the approved subset did. <paramref name="Error"/> is the plan
+/// never running at all — expired, or already run once.</summary>
+public sealed record ConfirmOutcome(List<ChatPlanResult> Results, string? Error);

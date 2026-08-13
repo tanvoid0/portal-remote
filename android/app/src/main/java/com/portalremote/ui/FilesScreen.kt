@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -23,18 +24,23 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -182,7 +188,17 @@ fun FilesScreen(host: SavedHost, bottomInset: Dp = 0.dp) {
                     title = "Couldn't load this folder",
                     detail = error ?: "",
                     tint = MaterialTheme.colorScheme.error,
-                    action = { Button(onClick = { reload() }) { Text("Try again") } },
+                    action = {
+                        Button(onClick = { reload() }) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(ButtonDefaults.IconSize),
+                            )
+                            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                            Text("Try again")
+                        }
+                    },
                 )
                 else -> PullToRefreshBox(
                     isRefreshing = refreshing,
@@ -229,6 +245,10 @@ fun FilesScreen(host: SavedHost, bottomInset: Dp = 0.dp) {
     }
 }
 
+/** Home glyph, then a chevron per level. The separator was a literal " / " between
+ *  words, which at a couple of levels deep reads as one long path rather than as a
+ *  row of places you can tap back to; a chevron is the shape every file browser uses
+ *  for exactly this, and it points the way the folders nest. */
 @Composable
 private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit) {
     val segments = if (path.isEmpty()) emptyList() else path.split('/')
@@ -237,14 +257,32 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit) {
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "Home",
+        val homeTint = if (segments.isEmpty()) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            MaterialTheme.colorScheme.primary
+        }
+        Row(
             modifier = Modifier.clickable { onNavigate("") },
-            color = if (segments.isEmpty()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Home,
+                contentDescription = null,
+                tint = homeTint,
+                modifier = Modifier.size(18.dp),
+            )
+            Text("Home", color = homeTint, modifier = Modifier.padding(start = 4.dp))
+        }
         segments.forEachIndexed { index, name ->
-            Text(" / ")
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
             val isLast = index == segments.lastIndex
             Text(
                 name,
@@ -367,6 +405,17 @@ private fun FileRow(entry: RemoteFileEntry, onClick: () -> Unit) {
                 contentDescription = null,
                 modifier = Modifier.size(28.dp),
                 tint = if (entry.isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        // What the tap does, which the row otherwise doesn't say: a folder opens, a
+        // file leaves for the phone's Downloads. Worth a glyph because the two look
+        // identical until one of them has silently started a download.
+        trailingContent = {
+            Icon(
+                if (entry.isDir) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.Download,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
