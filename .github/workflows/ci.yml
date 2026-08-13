@@ -18,6 +18,14 @@ jobs:
           dotnet-version: '8.0.x'
       - run: dotnet test server/PortalRemote.sln -c Release --nologo
 
+  docs:
+    # The README's mockups are generated; this fails if an SVG was hand-edited or the
+    # generator changed without re-running it. Stdlib only — no pip install needed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 docs/assets/generate.py --check
+
   android:
     runs-on: ubuntu-latest
     steps:

@@ -17,10 +17,11 @@ which is deliberately *not* built — see §6 for why that order.
 
 | From | To | How you trigger it | What happens on arrival |
 |---|---|---|---|
-| Phone | PC | System share sheet, from any app | Lands on the PC's clipboard; tray balloon says what arrived |
+| Phone | PC | System share sheet, from any app | Lands on the PC's clipboard; tray balloon says what arrived, and it appears in the desktop window's thread |
 | Phone | PC | Share tab → "Send clipboard" | Same |
 | PC | Phone | `Ctrl+Alt+V` anywhere | Lands on the phone's clipboard; heads-up notification |
 | PC | Phone | Tray → "Send clipboard to phone" | Same |
+| PC | Phone | Desktop window → type a note, Attach, or drop a file on the thread | Same |
 
 Text, links, images and files all work in both directions. Links are told apart from
 plain text so the useful action is *open* rather than *paste* — the one place a
@@ -43,6 +44,12 @@ free — the same route `FilesScreen` already uses).
   inside whatever app you just copied from.
 - `Tray/TrayIcon.cs` — clipboard write + balloon on arrival, clipboard read + push on
   the hotkey.
+- `Tray/MainForm.cs`, `Theme/Bubble.cs` — the thread and its composer, i.e. the half
+  of this feature the PC did not have. `ShareHub` keeps the last 50 in memory with
+  which way each went, and raises `Added` for both directions; the window draws them
+  in the same bubbles the phone does. Sending from here is the phone's route in
+  reverse: the file is copied into the Inbox and the phone is told the relative path,
+  so nothing new had to be added to the protocol below.
 
 **Phone** (`android/`)
 
@@ -98,7 +105,15 @@ free — the same route `FilesScreen` already uses).
 - **Balloon clicks reveal files, never launch them.** A paired phone can put any file
   in the Inbox; one click of a notification should not be able to run it. Explorer
   opens with the file *selected* (`explorer /select,`), and only `http`/`https` links
-  are ever handed to `ShellExecute`.
+  are ever handed to `ShellExecute`. Clicking a bubble in the desktop thread goes
+  through the same rule, for the same reason.
+- **The PC kept the history it was already throwing away.** Both sides had the same
+  transport from day one, but only the phone had a thread: on the PC a share was a
+  balloon, and a balloon you missed took the whole event with it. `ShareHub` now keeps
+  the same 50 the phone does — still in memory, still gone with the process, still no
+  mailbox for a phone that isn't connected (the point below stands). What changed is
+  that "what did my phone just send me" is a window rather than an Explorer window
+  full of files with no order to them.
 - **`Ctrl+Alt+V`, not `Ctrl+Shift+V`.** The latter is paste-as-plain-text in most
   apps. If another program already owns the combination, `RegisterHotKey` fails, the
   tray menu quietly drops the shortcut hint, and the menu item still works — a

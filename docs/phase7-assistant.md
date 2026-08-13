@@ -636,6 +636,124 @@ call `GET /v1/capabilities` or `GET /v1/models` against, so the picker's sheet, 
 and the rollback-on-refusal path have not been driven on a device or against a real
 backend.
 
+## 17. What is built (one input, one conversation, two devices)
+
+Three changes that turned out to be one change: the two send buttons became one, the
+confirmation dialog became an inline card, and the transcript moved off the phone. The
+third is what made the first two possible.
+
+### The transcript is the PC's
+
+`Ai/AiConversation.cs` owns it, persists it to `%APPDATA%\portal-remote\chat.json` beside
+the pairing token, and raises three events — a turn added or changed, more text for a turn,
+and a full reset. `Program` forwards all three to every connected client and the desktop
+window subscribes to the same three.
+
+**This answers §11.5** ("chat history retention — how long, and wiped on unpair or not?"):
+it is kept, capped at 200 turns, and wiped by one action from either device. §7's rule
+that it *stays on the PC and is not synced anywhere* is unchanged — it is still only on
+that machine — but "nothing writes a chat log to disk on either machine", the §14 default,
+is now deliberately false. It was the right default to hold until somebody decided
+otherwise; this is that decision.
+
+Nothing survives a restart still in flight. On load a streaming turn becomes an incomplete
+one, `deciding` clears, and a `pending` plan becomes `expired` — the actions only ever
+existed in `AiActions`' memory, and a Run button that cannot run is worse than a sentence
+saying so.
+
+### One input, and no guess
+
+§15 defended two send buttons: *"asking a question and asking for this PC to be touched are
+different acts, and inferring which was meant from the wording is a guess that presses keys
+when it is wrong."* The premise is still true. The conclusion no longer follows, because
+`AiAssistant` does not infer — it asks **both** halves at once. `/v1/chat/completions`
+streams the reply while `/api/v1/decide` works out whether the same sentence maps onto
+something this PC can do; whichever has an answer says so.
+
+The safety property is untouched and is why this is allowed: **a decision is not an
+execution**. `/decide` still only proposes, so the extra call per turn is a call that
+already had to be safe to retry (§4.4), and the wrong "guess" now costs a card nobody
+presses rather than a key press.
+
+Two consequences worth knowing:
+
+- **The default `SystemPrompt` had to change.** It used to tell the model to say that
+  acting was not wired up. A paragraph explaining how it *would* pause the music, printed
+  above a working Pause button, is the one way the parallel shape reads badly — so it now
+  says the app can act, that every action is approved separately, and to acknowledge in one
+  line rather than explain.
+- **A decision failure is shown, quietly.** If agent-platform refuses `/decide` it appears
+  as a muted line on the turn rather than as a banner: the prose reply above it is usually
+  still a real answer.
+
+### The plan is a card in the transcript, not a dialog
+
+`ChatTurn` carries both halves of one answer — the prose and the plan — because they answer
+one question, and a card detached from the sentence it belongs to reads as a second,
+unrelated event. The card shows the model's reasoning, one tickable row per action with an
+icon derived from the `action_id`, and a primary button labelled with the **action's own
+verb** when exactly one is ticked: you approve a one-action plan by pressing "Mute" or
+"Shut down", not by pressing "Run" beside a sentence that already said it. The verb is
+written by the PC for the same reason the summary is (§15).
+
+Afterwards the card stays where it was, with a ✓ or ✕ per action. `PlanState` —
+`pending` / `ran` / `cancelled` / `expired` / `failed` — is what carries it through, so
+declining is recorded rather than erased: a card that simply vanished reads as one that
+quietly went ahead.
+
+Everything §7 required is intact: nothing auto-runs, approval is per index, and
+`shutdown`/`restart` take a second confirmation on **both** clients.
+
+### The desktop half
+
+`Tray/AssistantForm.cs` — a second window, opened from the tray menu or the "Chat" button
+in the main window's Assistant row. It reuses `Theme/Bubble`, the control the share thread
+already uses, since a hand-off between two devices and a turn of conversation are the same
+shape. It can send, approve, cancel and clear; type on either device and it appears on the
+other as it streams.
+
+### Wire
+
+`/ai/chat` is gone. The phone no longer streams SSE from the PC, because an SSE response
+only ever reaches the client that asked for it and two clients now watch one transcript.
+`/ai/models` and `/ai/model` stay on HTTP — they are one-shot requests about
+configuration, not about the conversation.
+
+```
+-> {"t":"ai_ask","text":"pause it and lock the PC"}
+<- {"t":"ai_turn","turn":{"id":"t7","role":"user","text":"pause it and lock the PC",…}}
+<- {"t":"ai_turn","turn":{"id":"t8","role":"assistant","text":"","streaming":true,"deciding":true}}
+<- {"t":"ai_delta","id":"t8","text":"Pausing and locking."}
+<- {"t":"ai_turn","turn":{"id":"t8","…":"…","plan":{"state":"pending","actions":[…]}}}
+-> {"t":"ai_confirm","id":"t8","approved":[0,1]}
+<- {"t":"ai_turn","turn":{"id":"t8","…":"…","plan":{"state":"ran","results":[…]}}}
+```
+
+Also: `ai_cancel`, `ai_stop`, `ai_regenerate`, `ai_clear`, and `ai_history` for a client
+that lost its place. A snapshot (`ai_chat`) is pushed unasked on connect.
+
+**Deltas share the control socket, which §7b said a token stream had no business doing.**
+They are coalesced to one message per 80ms rather than one per token, which turns a few
+hundred frames per reply into a few dozen — the same order as the `now_playing` and cast
+position pushes that socket already carries. The alternative was a second push channel for
+the desktop's benefit, which is more machinery than the problem is worth.
+
+**One overload bug worth recording**, because it was invisible and the test found it:
+`Append(id, text)` for deltas and `Append(role, text)` for a new turn were overloads, and
+C# resolves a two-argument call to the signature with no optional parameters to fill — so
+every user message went into a turn id that did not exist and vanished. The delta method is
+`AppendDelta` now. Overloads that differ only in what their string parameters *mean* are a
+trap; name them apart.
+
+**Verified:** server builds clean, 86 xunit tests pass (12 new, over SSE frame parsing, the
+failure sentences, and the transcript's persistence/restart/regenerate/history behaviour);
+the phone compiles clean and its JVM tests pass, with `AiChatTest` rewritten from SSE
+parsing to transcript reducing and `AiPlanTest` to the new plan shape.
+
+**Not verified:** anything live. No running `agent-platformd` here, so the parallel
+ask, the streaming into two clients at once, and the desktop window's layout have not been
+driven end to end on a device.
+
 ## Sources
 
 - `../../ai/agentic-ai/agent-platform/docs/CLIENT_INTEGRATION.md` — tokens, workspaces, the client contract

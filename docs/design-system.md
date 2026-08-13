@@ -68,30 +68,48 @@ build a full scale around it instead of introducing a new palette.
 |---|---|---|---|
 | `accent` | `#2563EB` | `#60A5FA` | primary actions, active nav item, focus ring |
 | `accent-pressed` | `#1D4ED8` | `#3B82F6` | pressed/active state |
-| `bg` | `#FAFAFA` | `#0F1420` | screen background (dark already defined) |
-| `surface` | `#FFFFFF` | `#161B27` | cards, sheets, the QR panel |
-| `surface-raised` | `#FFFFFF` + shadow-sm | `#1E2534` | nav bar, top bar |
-| `border` | `#E4E4E7` | `#262D3D` | dividers, input outlines |
-| `text-primary` | `#18181B` | `#F4F4F5` | |
-| `text-secondary` | `#71717A` | `#A1A1AA` | hints, timestamps |
-| `success` (connected) | `#16A34A` | `#4ADE80` | connection status |
+| `bg` | `#EAEEF6` | `#080C18` | screen background / window canvas |
+| `surface` | `#FFFFFF` | `#101725` | cards, sheets, the QR panel |
+| `surface-raised` | `#FFFFFF` + shadow-sm | `#18202F` | nav bar, top bar |
+| `surface-muted` | `#DDE4F0` | `#1F2839` | **sunken** fills: key faces, the trackpad, input boxes, the PC's chat bubble |
+| `border` | `#D2DAE8` | `#2A3446` | dividers, card edges — decorative hairlines |
+| `border-strong` | `#74809A` | `#64748B` | the boundary of a *control*: inputs, outlined buttons, the trackpad |
+| `text-primary` | `#0E1524` | `#EEF2F8` | |
+| `text-secondary` | `#55607A` | `#9AA7BD` | hints, timestamps |
+| `success` (connected) | `#166534` | `#4ADE80` | connection status |
 | `danger` (disconnected/error) | `#DC2626` | `#F87171` | connection status, destructive actions |
-| `warning` | `#D97706` | `#FBBF24` | graphical only in light mode — icons/dots, not text; see note below |
+| `warning` | `#92400E` | `#FBBF24` | reconnecting / "wait" states |
+| `violet` (`tertiary`) | `#6D28D9` | `#A78BFA` | the one non-accent hue — badges, accent illustration |
 
 Status color is a first-class token, not an afterthought — connection state (paired /
 connecting / disconnected) is the one piece of state the user checks constantly on
 both the tray icon and the Android top bar, so it needs one consistent color pair used
 identically in both codebases.
 
-**`warning` note (added after the §9 contrast audit):** this table originally
-suggested `warning` for the QrForm "same Wi-Fi required" hint. Implemented as
-`text-secondary` instead — light-mode `warning` (`#D97706`) measures 3.05:1 against
-`bg`/`surface`, clearing WCAG AA's 3:1 graphical/large-text threshold but failing
-the 4.5:1 threshold that small body/caption text needs. `warning` is correct for
-graphical uses (icons, dots, large/bold text) but not for the kind of small hint
-text this suggestion was written for. It's currently unused in both codebases —
-reach for it when a graphical (non-text) warning indicator comes up, not for
-running text, unless paired with a darker text-safe shade introduced at that point.
+**The neutrals carry the accent's hue.** Every grey above is a blue-tinted slate at
+3–8% saturation rather than a pure/zinc grey. A neutral ramp with no hue in it next to
+a saturated blue accent reads as two unrelated palettes stacked, which is the specific
+thing "plain" describes. The `tertiary` violet exists for the same reason: a palette
+with exactly one hue has nowhere to go. It is deliberately *not* wired to chips or the
+nav pill — "selected" is one color across the app, and that color is the accent.
+
+**Three revisions this table has been through, and why (keep them):**
+
+1. **Light mode had one surface value, not four.** `surface`, `surface-raised` and
+   every Material `surfaceContainer*` slot were all `#FFFFFF` on a `#FAFAFA` page. Cards,
+   the trackpad, key faces, selected chips and outlined buttons were therefore white
+   shapes on white, distinguishable only by a `#E4E4E7` hairline at 1.2:1 — the
+   user-visible fault this revision fixes. `bg` is a step deeper and tinted, and
+   `surface-muted` is the sunken fill that was simply missing.
+2. **`border` split in two.** One token was doing two jobs with opposite requirements: a
+   divider wants to be quiet, a control boundary has to clear WCAG 1.4.11's 3:1 or the
+   control has no visible extent. They map onto Material's existing `outlineVariant`
+   (divider) / `outline` (control) pair, which already means exactly this.
+3. **Light `success` and `warning` are 800-weight now** (`#166534` / `#92400E`, from
+   `#16A34A` / `#D97706`). The old values measured 3.0–3.3:1 on light surfaces, which
+   §9 had to write a standing "never set small text in these" constraint around —
+   inevitably violated the first time someone needed a green line of text. Both clear
+   4.5:1 on every light surface now and the constraint is gone.
 
 ---
 
@@ -119,6 +137,25 @@ running text, unless paired with a darker text-safe shade introduced at that poi
 - **Elevation**: 2-step shadow scale (`shadow-sm` for resting cards, `shadow-md` for
   anything overlaying content — QR panel, modals). Bigger surface = stronger shadow,
   per Apple's materials guidance.
+
+**Every component has a face and an edge.** One step on the neutral ramp is a step a
+phone screen in daylight — or a cheap monitor at 40% brightness — loses completely, so
+nothing in this app is distinguished by fill alone:
+
+| Component | Fill | Edge |
+|---|---|---|
+| Card, panel, sheet | `surface-raised` | `border` hairline |
+| Input, key face, the trackpad | `surface-muted` | `border-strong` (3:1) |
+| Input, focused | `surface-muted` | `accent`, 2dp |
+| Primary button, selected chip | `accent` / `accent`-tinted container | none — the fill *is* the contrast |
+
+On Android the first row is `portalCardColors()` + `portalCardBorder()` from
+`ui/theme/Surfaces.kt`, so a card can't be built with only half of it. The same file
+has `Modifier.accentGlow`: a drop shadow tinted with the accent instead of black,
+because black shadow on a near-black surface is nothing at all — which is why dark UIs
+usually abandon elevation and lose the depth cue with it. Reserved for surfaces that
+are *doing* something (the nav capsule); on anything at rest it's the ornament §2 rule
+5 argues against.
 
 ---
 
@@ -210,8 +247,10 @@ Rules:
     own at three digits (or on a typed `.`) the way an OTP field does, backspace on an
     empty box stepping back. Hand-rolled on `BasicTextField` — the stock
     `OutlinedTextField`'s minimum width and internal padding are both wider than a
-    three-digit box and neither is settable — at 56dp tall, 8px radius, `border` +
-    `surface-raised` per §5. Validity gates the Connect button instead of an error
+    three-digit box and neither is settable — at 56dp tall, 8px radius, `surface-muted`
+    + `border-strong` per §5, going to a 2dp `accent` edge on focus. It has to say two
+    things a stock field says for free: that it is a control at all, and which of the
+    five boxes has the caret. Validity gates the Connect button instead of an error
     message.
   - **Waiting for approval** — tapping a discovered PC asks it for a token, which
     someone has to allow on the PC. That pause gets a card that names the PC and says
@@ -225,7 +264,9 @@ Rules:
     its selection indicator fades out on the old item and in on the new one rather than
     moving between them — two blinks where the eye expects one movement.
   - **It floats**: 12dp side margins, 10dp above the bottom edge, radius = half its
-    height, `shadow-md`. The margin is chrome §13 has to pay for, and it buys the
+    height, and a `shadow-md` tinted with the accent (`Modifier.accentGlow`, §5) plus a
+    `border` hairline — a white capsule over a white list has no edge of its own, and a
+    black shadow under it in dark mode has nothing to darken. The margin is chrome §13 has to pay for, and it buys the
     shape — a capsule flush with the bottom edge is just a rectangle with two rounded
     corners — plus content passing *beside* it, which is what sells the glass below as
     glass rather than as a grey band.
@@ -294,7 +335,10 @@ Rules:
   identically; the mode is `rememberSaveable` (the shell's own tab is not) because
   losing your place on rotation matters more one level in.
 - **TrackpadScreen** — direct-manipulation surface; tap = click feedback (100ms scale
-  pulse), drag = 1:1, no animation on the move events themselves. The gesture legend
+  pulse), drag = 1:1, no animation on the move events themselves. `surface-muted` face
+  with a `border-strong` edge per §5: it is the largest control in the app and used to
+  have no boundary at all, which in light mode meant the surface a finger is supposed to
+  aim at was defined by nothing. The gesture legend
   in the middle of the pad is onboarding, not chrome: it disappears on the first touch
   and does not come back for the life of the composition.
   - **Scroll rail** — a 44dp strip down the right edge, because two-finger scroll is
@@ -395,6 +439,11 @@ Rules:
     pairing spring and the status morph.
 - **KeyboardScreen** — key press = instant visual state (background tint on
   `pointerInput` down, not on click, so it matches physical key latency) + release.
+  - **A key has a face** (§5): `surface-muted` under a `border-strong` outline. It was
+    transparent-on-transparent, i.e. every key in the app — here and on the TV remote,
+    which shares `KeyButton` — was defined by a hairline that in light mode was white on
+    white. The press tint now sits *on top of* the face rather than replacing it, so a
+    held key reads as lit rather than as suddenly existing.
   - **The special-key row wraps, it does not scroll.** As a `LazyRow` about half of the
     ten keys sat off the right edge with nothing on screen admitting it — no gradient,
     no guaranteed half-item — so Ctrl+C/V/Z did not exist for anyone who never happened
@@ -414,6 +463,15 @@ Rules:
   The "Opening on the PC" line under the cast box is an acknowledgement and expires
   after 4s: it used to clear only when the field was typed in again, so it sat there
   claiming to describe the present long after it stopped doing so.
+  - **Speaker card** — a `Switch` in a standard §5 card at the bottom of the screen,
+    under the volume buttons rather than up beside the cast picker: it answers the same
+    question those buttons do (where the PC's sound comes out), and it is the opposite
+    direction from casting, which sends something from here to there. Its subtitle is
+    the whole design: it carries the one fact that will otherwise surprise people —
+    that this *copies* the PC's output instead of replacing it — and then becomes a
+    live status line ("Playing · 48kHz stereo", or the reason it is retrying). No
+    animation, no meter: audio playing is not something this screen needs to also
+    draw, and a level meter on a screen whose job is input is exactly §1's ornament.
 - **TvRemoteScreen** — the couch mode: a D-pad on a 240dp circle with OK in the
   middle, power/back/Start/menu above it, transport + volume below, then chip rows
   for the odds and ends (Esc, Alt+Tab, Task view, Close…) and F1–F12. Everything
@@ -612,8 +670,13 @@ Rules:
 - Add `Motion.kt` alongside the existing `Theme.kt` with named `spring<Float>()` /
   duration constants from §6, so screens reference `Motion.pressSpring` etc. instead
   of inlining numbers.
-- Extend `Theme.kt`'s color scheme with the full token table in §3 (currently only
-  `primary`/`secondary`/`background`/`surface` are set).
+- **Every Material3 `ColorScheme` slot must be set explicitly**, not just the ones §3
+  names. `lightColorScheme()`/`darkColorScheme()` default each unspecified slot to
+  Material's own baseline palette — a fixed purple with no relation to the `primary`
+  passed in — so an unset slot doesn't inherit the accent, it silently ships an
+  off-brand hue that no token table covers and no contrast audit checks. That is what
+  the chat bubble (`primaryContainer`), the Snackbar (`inverseSurface`) and the TV
+  remote's power button (`errorContainer`) each drew as until they were filled in.
 - Use `Modifier.pointerInput` + `VelocityTracker` for the trackpad, not
   `draggable()`'s default — need raw velocity for any future flick-to-scroll gesture.
 
@@ -643,27 +706,30 @@ Rules:
 
 ### Audit results (post-implementation)
 
-Contrast ratios computed against the actual §3 hex values (WCAG 2.1 relative
-luminance formula):
+**The audit is a test now, not a table.** `ContrastTest`
+(`app/src/test/java/com/portalremote/ui/ContrastTest.kt`) computes WCAG 2.1 relative
+luminance over the actual token values in `Theme.kt` and asserts every pair the app
+can draw: body text on all four surface tokens, each `on-` color against its own
+container, accent and status colors as text, and `outline`/`border-strong` at the 3:1
+floor 1.4.11 sets for a control's boundary. It also asserts that surfaces are
+*distinguishable from each other* — which is not a WCAG rule (1.4.11 exempts a
+boundary that isn't needed to identify the component) but is precisely the defect the
+§3 revision fixed.
 
-| Pair | Ratio | AA text (4.5:1) | AA large/graphical (3:1) |
-|---|---|---|---|
-| `success` dark on `bg` dark (`#4ADE80`/`#0F1420`) | 10.56:1 | Pass | Pass |
-| `danger` dark on `bg` dark (`#F87171`/`#0F1420`) | 6.65:1 | Pass | Pass |
-| `danger` light on `bg`/`surface` light | 4.63–4.83:1 | Pass | Pass |
-| `success` light on `bg`/`surface` light (`#16A34A`) | 3.16–3.30:1 | **Fail** | Pass |
-| `warning` light on `bg` light (`#D97706`) | 3.05:1 | **Fail** | Pass |
-| `accent`, `text-primary`, `text-secondary` (both themes) | 4.63:1+ | Pass | Pass |
+Hand-computed ratios in a document are correct on the day they're written and silently
+wrong two palette revisions later; a token drifts by one hex digit and no screenshot
+review notices. Running it is `./gradlew :app:testDebugUnitTest --tests
+"com.portalremote.ui.ContrastTest"`. Two of the current values were *chosen* by it —
+light `success` and `warning` each failed at 700-weight against the newly tinted `bg`
+and went to 800.
 
-The dark `success`/`danger` pair this section originally flagged as unverified
-clears AA comfortably. Two pairs the original table didn't flag turned out to
-matter: **light-mode `success` and `warning` fail the 4.5:1 text-contrast
-threshold**, though both clear the 3:1 graphical/large-text one. Current usage is
-graphical-only — the connection-status dot (Android `RemoteScreen`/desktop
-`TrayIcon`) and the pairing-success checkmark icon — so nothing today violates AA.
-**Constraint for future work: don't set small body/label text in `success` or
-`warning` in light mode** without a darker shade; they're fine for dots, icons, and
-large/bold text.
+The constraint this section used to carry — "don't set small text in light `success`
+or `warning`" — is retired: both clear 4.5:1 everywhere now, and the test fails if a
+future edit takes them back under.
+
+Desktop's palette is the same table in `Theme/Palette.cs` and is **not** covered by
+that test; it's a hand-kept mirror, so a token changed on one side has to be changed on
+the other (both files say so at the top).
 
 Touch/click-target audit: Android's hand-rolled controls (`TrackpadScreen`'s
 `ClickButton` at 56dp, `MediaScreen`'s `TransportButton` at 48–72dp,
@@ -734,6 +800,16 @@ components, shared surfaces before one-off screens. All six phases below are don
     desktop stopped naming this PC as the phone, started saying when a phone was
     refused, replaced `MessageBox` with `TokenDialog`, and had every absolute
     `TableLayoutPanel` size scaled so a 150% display stops clipping its captions.
+14. **The palette, second pass.** ✅ Tinted neutrals, a `surface-muted` fill and a
+    `border`/`border-strong` split, every Material `ColorScheme` slot filled in, light
+    `success`/`warning` taken to 800-weight, and §5's face-and-edge rule applied to
+    cards, inputs, key faces, the trackpad and the nav capsule on both platforms — see
+    §3, §5 and §9. Last, and it touches everything the previous thirteen phases built,
+    because the fault was in the tokens rather than in any one screen: light mode had a
+    single white for `surface`, `surface-raised` and every container slot, so every
+    component that was supposed to sit *on* a card was invisible against it. §9's
+    hand-computed audit table became `ContrastTest` in the same pass — the one artifact
+    here that stops this from happening a third time.
 
 ---
 
@@ -776,16 +852,75 @@ tile — is used for tray idle and for anything drawn on an app surface.
 Material Symbols (via `material-icons-extended`, already a dependency) everywhere on
 Android; no second icon set, and no hand-drawn glyphs outside the brand mark itself.
 
-Two rules that decide where an icon earns its place:
+Five rules that decide where an icon earns its place:
 
 1. **Icons carry recognition, not decoration.** Files list rows use extension-derived
    type icons (`iconForFile` in `FilesScreen.kt`) because a column of identical
    document glyphs makes every row look the same — the one screen in the app showing
-   content the user has to pick out at a glance. Buttons whose label already says the
-   thing (`Connect`, `Copy address`) do not get one.
-2. **An empty screen states the state.** Zero/error states pair a 48dp icon with a
+   content the user has to pick out at a glance. The test is whether the glyph is
+   *findable faster than the word is readable*, which is true far more often than this
+   rule was first read to mean: a `PrimaryTabRow` of four modes, a scrolling row of
+   nine chips from three unrelated groups, a settings screen that is one long column
+   of near-identical rows, and a power menu whose five entries are near-synonyms are
+   all cases where the label alone makes the user read rather than scan.
+2. **A set is iconned whole or not at all.** A row where six of nine items have a
+   glyph reads as three items being odd, not as six being labelled — the missing ones
+   look broken rather than plain. If one member of a menu, chip row or tab row earns
+   an icon, every member takes one; if one genuinely can't have a sensible glyph, the
+   whole set stays text. (The browser's overflow menu and its tab list were both
+   caught by this.)
+3. **One idea, one glyph, everywhere.** `LinkOff` means "this pairing goes away" on
+   PairScreen, in Settings and in the dead-session dialog; the mirror's quality
+   presets carry the same three glyphs on the mirror and in Settings; a Share kind
+   filter uses the icon its own rows use. Where that's mechanical, the glyph rides on
+   the enum (`MirrorPreset.icon`, `PowerMode.icon`, `ControlMode.icon`) so a new
+   entry can't ship without one.
+4. **Still no icon where the label is already the answer.** `Connect`, `Copy address`,
+   `Left`/`Right` on the trackpad (one `Mouse` glyph on both buttons distinguishes
+   nothing), `Volume` above three volume buttons, and the TV remote's key chips
+   (`Esc`, `Page ↑`) — the word *is* the key's name. The keyboard's special-key row is
+   the near miss that goes the other way: `⌫`, `↵` and copy/paste/undo are glyphs the
+   user already knows from the physical keyboard and from every app, so there the
+   icon is the convention and the label is the gloss.
+5. **An empty screen states the state.** Zero/error states pair a 48dp icon with a
    title and one line of what to do next (`EmptyState` in `FilesScreen.kt`). A bare
    sentence centered in a blank screen reads as a glitch rather than as a state.
+
+Sizes come from the component, never from `Icon`'s 24dp default: `ButtonDefaults
+.IconSize`/`IconSpacing` inside buttons, `FilterChipDefaults.IconSize` /
+`AssistChipDefaults.IconSize` in chips (`ChipIcon` in `ScreenScreen.kt` and
+`AssistChipIcon` in `BrowserScreen.kt` wrap those two), 18dp for a leading glyph on a
+section header or a tab label. A decorative glyph beside its own label takes
+`contentDescription = null` — the label is already the accessible name, and repeating
+it makes TalkBack say everything twice.
+
+### Desktop iconography — `Theme/Glyphs.cs`
+
+The desktop's answer to `material-icons-extended` is the icon font Windows already
+ships: **Segoe Fluent Icons** on Win11, **Segoe MDL2 Assets** on Win10, which carries
+the same codepoints for everything used here. No bundled asset, no package, and
+nothing to redraw when a glyph changes — so §11's "no hand-drawn glyphs outside the
+brand mark" holds, since none of these are drawn by us. `Glyphs.Available` is false
+when neither font resolves and every call site falls back to its label alone rather
+than printing a column of tofu boxes.
+
+- **`TokenButton.Glyph`** draws a glyph left of the label, measured and centered *as
+  one group* — centering the label and hanging the glyph off its left edge puts the
+  pair half a glyph off-centre, which shows the moment two buttons of different label
+  lengths sit side by side. Its em is derived from the label's measured height rather
+  than from a constant, so it survives the 150% case §12 had to fix by hand.
+- **The tray menu takes bitmaps**, since `ToolStripMenuItem.Image` can't take a font.
+  `Glyphs.Render` makes them at the menu's own `ImageScalingSize` in the palette's
+  `text-primary`. "Open Portal Remote" is the exception that gets `BrandMark` instead
+  of a glyph: that item opens *this app*, and the mark is already the thing being
+  right-clicked to reach the menu.
+- **Codepoints are picked by rendering them, not from a remembered table.** Both fonts
+  carry near-duplicates a few codepoints apart (`E8B7` folder vs `E838` folder-fill,
+  `E8C8` copy vs `E8B8` contact-card) and memory lands on the wrong one often enough
+  that it isn't worth trusting. §11 rule 1 also has to be re-checked *at 16px*: the
+  tray's "Send clipboard to phone" started on a clipboard glyph, which at menu size is
+  two stacked rectangles and so is the Copy directly beneath it. It uses the same send
+  glyph as the window's composer now — which is also what it does.
 
 ---
 
@@ -806,15 +941,50 @@ Exit.
 
 Two columns, no scrolling, at a fixed minimum size:
 
-- **Left — pairing.** Heading, QR in a `surface-raised` card, the address in
-  mono, the same-Wi-Fi/firewall hint, and the one accent-filled primary button
-  ("Copy address").
+- **Left — the conversation, with pairing behind it.** The share thread: the same
+  bubbles the phone's ShareScreen draws (incoming left in `surface-muted`,
+  outgoing right in `accent` — one `Theme/Bubble.cs` shared with the assistant
+  window), a composer with Send and Attach, and file drop anywhere on the thread.
+  "Pair a phone" swaps the whole column for the QR, the address in mono, the
+  same-Wi-Fi/firewall hint and "Copy address"; "Messages" swaps back.
 - **Right — this PC.** A status card (dot + label, the same `success` /
   `text-secondary` pair and the same vocabulary as the Android top bar in §7),
-  then port, shared folder, start-with-Windows, and token rotation.
+  then port, shared folder, cast receiver, assistant state, start-with-Windows,
+  and token rotation.
 
 Decisions worth keeping if this is rewritten:
 
+- **Which column is up is a fact about the PC, not a default.** The window opens
+  on the thread once `ServerConfig.Paired` is true and on the QR while it is
+  false — a paired PC whose main view is "scan to pair" is answering a question
+  the user already answered. `Paired` is set by `ControlEndpoint` on the first
+  authorized socket, *not* where the token is handed out: a phone that scanned
+  the QR took the token off the screen and never asked this PC for it. Rotating
+  the token swaps back to the QR, since nothing can reach this PC until a phone
+  scans it.
+- **The desktop had no way to send, only to receive.** `Ctrl+Alt+V` pushed the
+  clipboard and a balloon announced arrivals, and that was the whole surface —
+  everything that had passed between the two machines was in a notification that
+  had already gone. The thread is that history made visible, from
+  `ShareHub.History` (in memory, last 50, same as the phone). Clicking a bubble
+  does what the balloon did: a link opens, a note goes back on the clipboard, a
+  file is *revealed* in Explorer and never launched.
+- **A composer that cannot deliver says so before the button is pressed.** With
+  no phone connected, Send and Attach are disabled and the hint says why, rather
+  than swallowing the message — `TokenButton` draws its own disabled face, since
+  an owner-drawn button ignores `Enabled` unless it is drawn in.
+- **The assistant row is status, not conversation.** Ready / Not running / Not
+  set up, the reason, and a Check that skips `AiHealth`'s backoff. The
+  conversation itself is its own window (`Tray/AssistantForm.cs`) — this column
+  is an inventory of what this PC is doing, and a chat is not an inventory item.
+  Opening the window is passive: it probes within the backoff, so a dead port is
+  never polled every few seconds by a window somebody left open.
+
+- **The window is the canvas, the cards on it are surfaces.** It painted itself
+  `surface` — the same token as the cards it holds — so in light mode the QR card and
+  the status card were white panels on a white window with a hairline between them. The
+  form is `bg` now; text fields are `surface-muted`, since a field is a sunken control
+  and not a card (§5).
 - **Every setting saves on change.** No Save button, no dirty state, nothing to
   discard — the settings are few and individually harmless.
 - **The port is the exception that needed a mechanism.** It only binds at
