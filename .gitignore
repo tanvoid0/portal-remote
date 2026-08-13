@@ -17,6 +17,13 @@ android/captures/
 *.ap_
 *.dex
 
+# --- signing (sign-setup.ps1 writes these outside the repo by default — belt and
+# suspenders in case that default is ever pointed here) ---
+*.jks
+*.jks.b64
+*.keystore
+release.local.env
+
 # --- docs ---
 # generate.py --png output; the README uses the SVGs, these are a local convenience
 docs/assets/png/
