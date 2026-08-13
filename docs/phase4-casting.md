@@ -932,6 +932,29 @@ work (§4), and we have none yet — our own PC can be handed headers directly, 
 route 1 and cheaper. Build it with the first third-party target, not before. Subtitles
 and the CORS header Chromecast needs come with it.
 
+### Waking the PC (the last of 4f)
+
+The rest of 4f — the remote screen, the power actions — was built with the TV remote.
+Power *on* could not be, because nothing on the phone knew this machine's MAC: ARP isn't
+readable from an app, and by the time the PC is asleep it can't be asked.
+
+So the PC volunteers it. `mac` is a field in the hello (`Config/MacAddress.cs` — the Up
+Ethernet/Wi-Fi adapter that has an IPv4 gateway, which is the one the phone is talking
+to), the phone keeps it on the `SavedHost`, and the "Last used" card grows a **Wake**
+button. `net/WakeOnLan.kt` broadcasts the magic packet to the subnet's broadcast address
+*and* `255.255.255.255`, since a sleeping PC has no address to aim at and some routers
+drop the all-ones form.
+
+**Nothing comes back**, so the button can only report that the packet left the phone —
+and the line under it says the rest, because a Wake that needs a BIOS setting and gives
+no feedback is otherwise a button that "does nothing".
+
+**Verified:** the hello from this machine carries `2c:9c:58:e6:96:9b`, which is its Wi-Fi
+adapter; three JVM tests pin the packet (`FF`×6 then the MAC ×16, 102 bytes), that
+`1A-2B-…`, `1a:2b:…` and `1a2b3c4d5e6f` all parse the same, and that a malformed MAC is
+refused rather than padded into a packet that would wake nothing. **Not verified:** an
+actual machine waking — this PC's BIOS setting is the user's call, not a code path.
+
 **Not built yet, in order:** everything in §11 from 4c onward.
 
 ## Sources

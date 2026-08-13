@@ -97,6 +97,9 @@ public static class ControlEndpoint
             // again after its address changes.
             id = config.Id,
             version = ServerInfo.Version,
+            // So the phone can wake this PC once it has been asleep. Null on a machine
+            // with no ordinary LAN adapter, which the phone reads as "no wake button".
+            mac = MacAddress.OfLanInterface(),
             screen = new { width, height }
         }, ct);
     }

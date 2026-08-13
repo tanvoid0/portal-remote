@@ -59,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -85,6 +86,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
 import com.portalremote.R
 import com.portalremote.data.SavedHost
+import com.portalremote.net.WakeOnLan
 import com.portalremote.net.DiscoveredHost
 import com.portalremote.net.discoverHosts
 import com.portalremote.net.ipFromOctets
@@ -93,6 +95,7 @@ import com.portalremote.net.parsePairUrl
 import com.portalremote.net.requestPairing
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
 private const val DEFAULT_PORT = "8765"
@@ -414,7 +417,35 @@ private fun LastDeviceCard(
                 Spacer(modifier = Modifier.weight(1f))
                 TextButton(onClick = onForget) { Text("Forget") }
             }
+            // Only once the PC has told us its MAC. Wake-on-LAN is the one thing that
+            // works when it isn't answering, which is exactly when this card is what
+            // you are looking at.
+            host.mac?.let { WakeButton(mac = it, peer = host.host, label = host.label) }
         }
+    }
+}
+
+/**
+ * A magic packet, and honesty about it — `docs/phase4-casting.md` §8. Nothing comes
+ * back from a sleeping PC, so this can only report that the packet left the phone; if
+ * the machine doesn't come up, the fix is in its BIOS and adapter settings and the
+ * text has to say so rather than leave the user pressing a button that "did nothing".
+ */
+@Composable
+private fun WakeButton(mac: String, peer: String, label: String) {
+    var sent by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    TextButton(onClick = { scope.launch { sent = WakeOnLan.wake(mac, peer) } }) {
+        Text("Wake $label")
+    }
+    if (sent) {
+        Text(
+            "Sent. If it doesn't wake, Wake-on-LAN has to be enabled in the PC's BIOS " +
+                "and on its network adapter.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

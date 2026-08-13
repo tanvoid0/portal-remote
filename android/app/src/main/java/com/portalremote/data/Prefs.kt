@@ -26,6 +26,9 @@ data class SavedHost(
      *  identifies the same machine tomorrow — it's what lets the app follow a PC to
      *  a new address instead of asking the user to pair again. */
     val id: String? = null,
+    /** The PC's LAN adapter address, learned from the hello. The only thing that can
+     *  reach a machine that is switched off — see [com.portalremote.net.WakeOnLan]. */
+    val mac: String? = null,
 ) {
     /** What to call this PC in the UI before it has ever said hello. */
     val label: String get() = name ?: host
@@ -75,6 +78,7 @@ class Prefs(private val context: Context) {
         val TOKEN = stringPreferencesKey("token")
         val NAME = stringPreferencesKey("name")
         val SERVER_ID = stringPreferencesKey("server_id")
+        val MAC = stringPreferencesKey("mac")
 
         val POINTER_SPEED = floatPreferencesKey("pointer_speed")
         val NATURAL_SCROLL = booleanPreferencesKey("natural_scroll")
@@ -90,7 +94,7 @@ class Prefs(private val context: Context) {
         val port = prefs[Keys.PORT]?.toIntOrNull()
         val token = prefs[Keys.TOKEN]
         if (host != null && port != null && token != null) {
-            SavedHost(host, port, token, prefs[Keys.NAME], prefs[Keys.SERVER_ID])
+            SavedHost(host, port, token, prefs[Keys.NAME], prefs[Keys.SERVER_ID], prefs[Keys.MAC])
         } else {
             null
         }
@@ -105,6 +109,7 @@ class Prefs(private val context: Context) {
             prefs[Keys.TOKEN] = host.token
             if (host.name != null) prefs[Keys.NAME] = host.name else prefs.remove(Keys.NAME)
             if (host.id != null) prefs[Keys.SERVER_ID] = host.id else prefs.remove(Keys.SERVER_ID)
+            if (host.mac != null) prefs[Keys.MAC] = host.mac else prefs.remove(Keys.MAC)
         }
     }
 

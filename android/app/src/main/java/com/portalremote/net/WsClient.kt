@@ -31,6 +31,9 @@ data class ServerHello(
     /** Stable per-install id — see [com.portalremote.data.SavedHost.id]. Null from
      *  servers built before this field existed. */
     val id: String? = null,
+    /** This PC's LAN adapter address, for waking it later. Null from servers built
+     *  before this field existed, and from a machine with no ordinary LAN adapter. */
+    val mac: String? = null,
 )
 
 sealed interface ConnectionState {
@@ -108,6 +111,7 @@ class WsClient {
                                 screenWidth = screen?.optInt("width") ?: 0,
                                 screenHeight = screen?.optInt("height") ?: 0,
                                 id = json.optString("id").ifBlank { null },
+                                mac = json.optString("mac").ifBlank { null },
                             )
                         )
                     }

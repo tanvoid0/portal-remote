@@ -491,7 +491,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // and [followToNewAddress] has something to recognise it by if that IP
         // stops working.
         val host = currentHost ?: return
-        val updated = host.copy(name = hello.name, id = hello.id ?: host.id)
+        val updated = host.copy(
+            name = hello.name,
+            id = hello.id ?: host.id,
+            // Kept from before if this server is too old to send one: a MAC learned
+            // once is still the same machine's.
+            mac = hello.mac ?: host.mac,
+        )
         if (updated == host) return
         currentHost = updated
         viewModelScope.launch { prefs.save(updated) }
