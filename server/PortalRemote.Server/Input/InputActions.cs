@@ -147,29 +147,11 @@ public static class InputActions
             case "cast":
             {
                 // Not input, but it rides the same socket the phone already holds
-                // open rather than earning an endpoint of its own.
+                // open rather than earning an endpoint of its own. Where it lands is
+                // CastRouter's decision, shared with the DLNA renderer.
                 var url = GetString(msg, "url") ?? throw new UnknownMessageException("cast needs 'url'");
-                var checkedUrl = Cast.CastLauncher.Validate(url);
-
-                // Three routes, best control first. An attached receiver page wins
-                // because opening it was a deliberate choice of *screen* — quite
-                // possibly not this one. Then mpv, which plays formats a browser
-                // can't and takes the same commands. ShellExecute last: it throws
-                // the link at whatever is registered and forgets it.
-                if (Cast.CastHub.Instance.HasReceivers)
-                {
-                    Cast.CastHub.Instance.Load(checkedUrl, GetString(msg, "title"));
-                    return new { t = "cast_ok", url = checkedUrl, via = "receiver" };
-                }
-
-                if (Cast.MpvPlayer.Instance.Available)
-                {
-                    Cast.MpvPlayer.Instance.Load(checkedUrl, GetString(msg, "title"));
-                    return new { t = "cast_ok", url = checkedUrl, via = "mpv" };
-                }
-
-                Cast.CastLauncher.Open(checkedUrl);
-                return new { t = "cast_ok", url = checkedUrl, via = "shell" };
+                var (checkedUrl, via) = Cast.CastRouter.Cast(url, GetString(msg, "title"));
+                return new { t = "cast_ok", url = checkedUrl, via };
             }
 
             case "cast_status":
@@ -179,30 +161,18 @@ public static class InputActions
 
             case "player":
             {
-                // Transport for whatever the receiver page is playing. Deliberately
-                // separate from "media", which taps global media keys and therefore
-                // lands on whatever window Windows thinks is playing.
+                // Transport for whatever the receiver page or mpv is playing.
+                // Deliberately separate from "media", which taps global media keys and
+                // therefore lands on whatever window Windows thinks is playing.
                 var action = GetString(msg, "action")
                     ?? throw new UnknownMessageException("player needs 'action'");
                 if (!PlayerActions.Contains(action))
                     throw new UnknownMessageException($"unknown player action: {action}");
-                // Same order as "cast" above, and for the same reason: drive whatever
-                // the cast actually landed on.
-                if (Cast.CastHub.Instance.HasReceivers)
-                    Cast.CastHub.Instance.Command(new
-                    {
-                        t = action,
-                        to = GetDouble(msg, "to"),
-                        by = GetDouble(msg, "by"),
-                        level = GetDouble(msg, "level"),
-                        muted = GetBool(msg, "muted")
-                    });
-                else if (Cast.MpvPlayer.Instance.Running)
-                    Cast.MpvPlayer.Instance.Command(
-                        action, GetDouble(msg, "to"), GetDouble(msg, "by"),
-                        GetDouble(msg, "level"), GetBool(msg, "muted"));
-                else
-                    throw new UnknownMessageException("no cast receiver is attached");
+
+                var handled = Cast.CastRouter.Transport(
+                    action, GetDouble(msg, "to"), GetDouble(msg, "by"),
+                    GetDouble(msg, "level"), GetBool(msg, "muted"));
+                if (!handled) throw new UnknownMessageException("no cast receiver is attached");
 
                 return new { t = "player_ok", action };
             }

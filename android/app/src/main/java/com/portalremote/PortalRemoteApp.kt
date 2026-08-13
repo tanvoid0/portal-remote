@@ -35,6 +35,9 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
             val cast by viewModel.cast.collectAsState()
             val castStatus by viewModel.castStatus.collectAsState()
             val aiState by viewModel.aiState.collectAsState()
+            val chat by viewModel.chat.collectAsState()
+            val chatStreaming by viewModel.chatStreaming.collectAsState()
+            val chatError by viewModel.chatError.collectAsState()
             var triedSavedHost by remember { mutableStateOf(false) }
             val haptics = rememberHaptics(settings.haptics)
 
@@ -104,7 +107,14 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             shares = shares,
                             onCastFile = { viewModel.castLocalFile(it) },
                             aiState = aiState,
+                            chat = chat,
+                            chatStreaming = chatStreaming,
+                            chatError = chatError,
                             onProbeAi = { viewModel.probeAi(it) },
+                            onSendChat = { viewModel.sendChat(it) },
+                            onRegenerateChat = { viewModel.regenerateChat() },
+                            onStopChat = { viewModel.stopChat() },
+                            onClearChat = { viewModel.clearChat() },
                             onShareText = { viewModel.shareText(it) },
                             onRetryShare = { viewModel.retryShare(it) },
                             onForget = { viewModel.forgetHost() },

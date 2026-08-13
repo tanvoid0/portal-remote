@@ -41,6 +41,17 @@ public sealed class ServerConfig
     /// </summary>
     public AgentPlatformConfig AgentPlatform { get; set; } = new();
 
+    /// <summary>
+    /// Announce this PC as a DLNA <c>MediaRenderer</c> so VLC, Web Video Caster and
+    /// gallery apps can cast to it — <c>docs/phase4-casting.md</c> §4l.
+    ///
+    /// <b>Off by default, and it has to be.</b> A DLNA controller cannot present our
+    /// pairing token — speaking someone else's protocol is the entire point — so those
+    /// endpoints are open to the LAN, and "anyone on this Wi-Fi can put a video
+    /// fullscreen on my PC" is not a default anybody chose.
+    /// </summary>
+    public bool EnableDlnaRenderer { get; set; }
+
     /// <summary>Root directory exposed to the file browser. Nothing outside it is reachable.</summary>
     public string ShareRoot { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "PortalRemoteShare");
@@ -153,4 +164,22 @@ public sealed class AgentPlatformConfig
 
     /// <summary>Optional, and unused until 7g — the only step that starts a process.</summary>
     public string ExePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Passed through to <c>/v1/chat/completions</c> untouched, so it is whatever model
+    /// id the configured provider uses. There is no sensible default we could pick for
+    /// someone else's provider catalogue, so the assistant says which one it is asking
+    /// for rather than guessing on their behalf.
+    /// </summary>
+    public string Model { get; set; } = "gpt-4o-mini";
+
+    /// <summary>
+    /// Prepended to every conversation. Kept in config rather than in code because the
+    /// useful version of it names this PC and what the phone can ask for, and that is a
+    /// per-install fact.
+    /// </summary>
+    public string SystemPrompt { get; set; } =
+        "You are the assistant inside Portal Remote, an app that remote-controls a Windows PC "
+        + "from an Android phone. Be brief: answers are read on a phone screen. If asked to do "
+        + "something on the PC or the phone, say plainly that acting on it is not wired up yet.";
 }

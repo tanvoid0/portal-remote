@@ -19,9 +19,9 @@ docs/      design-system.md — shared design tokens/motion spec for both UIs
 | 1 | Trackpad, keyboard, media keys | ✅ Done, verified live |
 | 2 | File browser: list / download / upload | ✅ Done, verified live |
 | 3 | Screen mirroring | ✅ Done, verified live |
-| 4 | Casting: link handoff, in-app browser, browser receiver | 🟡 4a/4e/4g built and verified; mpv, other targets not |
+| 4 | Casting: link handoff, mpv, in-app browser, browser receiver, local files | 🟡 4a/4b/4d/4e/4f/4g built; Cast/Roku/DLNA senders not |
 | 5 | Quick share: clipboard, links, images, files | ✅ Built; server verified live, phone half not yet |
-| 7 | Assistant: chatbot + actions via agent-platform | 📝 Designed only |
+| 7 | Assistant: chatbot + actions via agent-platform | 🟡 7a/7b built, not yet driven live; actions (7c) not |
 
 Phases 0–3 have been built **and exercised end-to-end** — real Android build,
 real Windows server, actual mouse movement/clicks measured, actual files
@@ -103,18 +103,21 @@ where the player allows it) and a play/pause button that knows which one it is.
   Planned in [docs/phase4-casting.md](docs/phase4-casting.md). The handoff (4a),
   the in-app browser (4e) and the browser receiver (4g) are built — a `cast`
   message opens a link on the PC, and the receiver URL (in the app window, Copy or
-  Open) turns *any* screen with a browser into a cast target. The receiver's own
-  position, duration and paused state are now pushed to the phone as it plays, so
-  that target has a **scrub bar and a play/pause toggle that knows which one it
-  is**, not just blind buttons. Next: mpv on the PC, which plays the HLS a browser
-  can't and survives the page being closed, then Google Cast / Roku / DLNA senders,
-  which are adapters behind the same interface.
+  Open) turns *any* screen with a browser into a cast target. mpv (4b) plays what a
+  browser can't and reports a real position, files on the phone are served to the PC
+  over range requests (4d), and whichever target is playing pushes its position back
+  so the phone has a **scrub bar and a play/pause toggle that knows which one it
+  is**. Next: Google Cast / Roku / DLNA senders, which are adapters behind the same
+  interface — extract `RemotePlayer` (4c) before the first of them.
 - **Phase 7: assistant.** A chatbot and an action-taking assistant in the app,
-  backed by the agent-platform API over loopback from the PC — the phone never
-  talks to it directly. Designed in
-  [docs/phase7-assistant.md](docs/phase7-assistant.md), not built. The first step
-  is the availability model, because that platform is a separate app the user
-  starts independently and "not running" is the normal case.
+  backed by the agent-platform API over loopback from the PC — the phone never talks
+  to it directly. Planned in [docs/phase7-assistant.md](docs/phase7-assistant.md).
+  The availability model (7a) and the chatbot (7b) are built: the PC probes
+  agent-platform and pushes whether it is up, and `/ai/chat` streams a reply through
+  to the phone, keeping partial text and offering Regenerate when a stream is cut
+  off. **Neither has been driven against a live `agent-platformd` yet.** Next: 7c,
+  the action loop — register what this PC and phone can do, ask `/decide`, and
+  execute only what the user confirms.
 - **Phase 6: internet relay for quick share.** Would make phase 5 work when the
   phone is off the Wi-Fi. Needs an always-on relay, e2e encryption, and a key
   agreement folded into pairing — planned in

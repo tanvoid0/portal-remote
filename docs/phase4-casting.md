@@ -4,7 +4,7 @@ Research and design notes for turning Portal Remote into a Web-Video-Caster-styl
 app where the **PC is the screen** and the phone is the browser/remote — while
 keeping everything Phases 0–3 already do (PC → phone control) working.
 
-**Status:** 4a, 4b, 4e, 4g and the file-serving half of 4d are built — see §13.
+**Status:** 4a, 4b, 4e, 4g, 4l and the file-serving half of 4d are built — see §13.
 Everything else in this document is still design.
 
 ---
@@ -954,6 +954,59 @@ adapter; three JVM tests pin the packet (`FF`×6 then the MAC ×16, 102 bytes), 
 `1A-2B-…`, `1a:2b:…` and `1a2b3c4d5e6f` all parse the same, and that a malformed MAC is
 refused rather than padded into a packet that would wake nothing. **Not verified:** an
 actual machine waking — this PC's BIOS setting is the user's call, not a code path.
+
+### The PC as a DLNA renderer (4l)
+
+The reverse of 4j, and the cheapest interop in this document: announce this PC as a UPnP
+`MediaRenderer` and **VLC, Web Video Caster, BubbleUPnP and most Android gallery apps can
+cast to it with no client code of ours at all.** It is also a test harness for the mpv
+player — a real third-party sender, rather than our own phone agreeing with itself.
+
+`Dlna/DlnaRenderer.cs` is SSDP (M-SEARCH replies, `ssdp:alive` on start, `ssdp:byebye` on
+exit) and `Dlna/DlnaEndpoints.cs` is the device description plus the AVTransport SOAP
+actions. Everything lands in `CastRouter`, extracted from `InputActions` when this became
+its second caller — a phone and a copy of VLC pointing at this PC must not drift into two
+different routing rules.
+
+**Off by default, and it has to be** (`EnableDlnaRenderer`). A DLNA controller cannot
+present our pairing token — speaking someone else's protocol is the whole point — so
+these endpoints are open to the LAN, and "anyone on this Wi-Fi can put a video fullscreen
+on my PC" is not a default anybody chose. The startup banner says so when it is on.
+
+Three details that decide whether this works at all:
+
+- **`SO_REUSEADDR` before binding UDP 1900.** Windows already runs an SSDP service on
+  that port. Without it the bind is refused and DLNA silently never works on exactly the
+  machines most likely to have it.
+- **The `LOCATION` address is resolved per-request**, by opening a UDP socket toward the
+  controller and reading back which local address the routing table chose. A PC with
+  several NICs has no single right answer, and the one it dialled is the one it can dial
+  again.
+- **`force-media-title` comes from DIDL-Lite.** The sender's title arrives XML-escaped
+  inside the SOAP body; without unpacking it, mpv shows a CDN filename.
+
+**Verified** by driving it exactly as a controller does — real M-SEARCH on the multicast
+group, then SOAP over HTTP:
+
+| Case | Result |
+|---|---|
+| `M-SEARCH` for `MediaRenderer:1` | `200`, `LOCATION: http://192.168.0.137:8766/dlna/device.xml`, stable `uuid:` derived from the install id |
+| `device.xml` | `CRYOSTATION (Portal Remote)`, AVTransport + ConnectionManager |
+| `GetProtocolInfo` | the sink list — a `500` here is how a sender decides we can play nothing |
+| `SetAVTransportURI` with DIDL-Lite | mpv got `loadfile` **and** `force-media-title "Bunny From VLC"` |
+| `Play` / `Pause` / `Seek 0:01:05` | `set_property pause false` / `true` / `seek 65 absolute` |
+| `GetTransportInfo` | `PLAYING`, read from the same status the phone's scrub bar uses |
+| `GetPositionInfo` | `TrackDuration 0:02:00`, `RelTime 0:00:03` |
+| `SetAVTransportURI` with `file:///C:/Windows/System32/cmd.exe` | UPnP error **714** — the same validation the phone's cast goes through, so a controller cannot turn "cast this" into "run this" |
+| Unknown action | UPnP error 401 |
+| `Seek` to `banana` | UPnP error 711 |
+
+**Not built:** GENA eventing (`eventSubURL` is empty, so controllers poll
+`GetPositionInfo`, which we answer) and `RenderingControl`. Without the latter a sender
+simply doesn't offer a volume slider, which beats offering one that does nothing.
+
+**Not verified:** a real sender app. What is proven is every byte of our side of SSDP and
+SOAP against a hand-written controller; VLC's or Web Video Caster's own quirks are not.
 
 **Not built yet, in order:** everything in §11 from 4c onward.
 

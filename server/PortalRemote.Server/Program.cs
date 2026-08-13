@@ -5,6 +5,7 @@ using PortalRemote.Auth;
 using PortalRemote.Cast;
 using PortalRemote.Config;
 using PortalRemote.Control;
+using PortalRemote.Dlna;
 using PortalRemote.Files;
 using PortalRemote.Input;
 using PortalRemote.Media;
@@ -66,7 +67,11 @@ internal static class Program
             if (share.HasClients) _ = share.BroadcastAsync(payload);
         };
 
-        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai);
+        // Built before the app so the endpoints can be mapped against it; it doesn't
+        // touch the network until Start().
+        using var dlna = new DlnaRenderer(config);
+
+        var app = BuildApp(config, args, connectionState, approval, share, nowPlaying, ai, dlna);
 
         try
         {
@@ -93,6 +98,15 @@ internal static class Program
         using var discovery = new DiscoveryResponder(config);
         discovery.Start();
 
+        // Same ordering rule as discovery: nothing should advertise a renderer whose
+        // HTTP half isn't listening. Said out loud because it is off by default and,
+        // unlike everything else here, unauthenticated — see ServerConfig.
+        if (config.EnableDlnaRenderer)
+        {
+            dlna.Start();
+            Console.WriteLine("  DLNA renderer on: any app on this network can cast to this PC.");
+        }
+
         // Not awaited: attaching to the media session is a nice-to-have, and the tray
         // should appear whether or not this machine has one.
         _ = nowPlaying.StartAsync();
@@ -118,7 +132,7 @@ internal static class Program
 
     private static WebApplication BuildApp(
         ServerConfig config, string[] args, ConnectionState connectionState, PairApproval approval, ShareHub share,
-        NowPlaying nowPlaying, AiHealth ai)
+        NowPlaying nowPlaying, AiHealth ai, DlnaRenderer dlna)
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -166,6 +180,8 @@ internal static class Program
         app.MapShareEndpoints(config, share);
         app.MapCastEndpoints(config);
         app.MapMediaEndpoints(config, nowPlaying);
+        app.MapDlnaEndpoints(config, dlna);
+        app.MapAiEndpoints(config, ai);
 
         return app;
     }

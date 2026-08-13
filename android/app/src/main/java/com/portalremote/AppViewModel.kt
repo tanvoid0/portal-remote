@@ -14,7 +14,11 @@ import androidx.lifecycle.viewModelScope
 import com.portalremote.data.AppSettings
 import com.portalremote.data.Prefs
 import com.portalremote.data.SavedHost
+import com.portalremote.net.AiChat
+import com.portalremote.net.AiChatException
 import com.portalremote.net.AiState
+import com.portalremote.net.ChatEvent
+import com.portalremote.net.ChatTurn
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
 import com.portalremote.net.ConnectionState
@@ -33,6 +37,7 @@ import com.portalremote.ui.copyToClipboard
 import com.portalremote.ui.displayNameOf
 import com.portalremote.ui.notifyShare
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -132,6 +137,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Whether the assistant's backend is answering. Null until the PC says — which it
      *  does on connect, so the tab is right the moment it opens. */
     val aiState: StateFlow<AiState?> = _aiState.asStateFlow()
+
+    private val aiChat = AiChat()
+
+    private val _chat = MutableStateFlow<List<ChatTurn>>(emptyList())
+
+    /** The conversation, in memory only. Persisting it is an open decision
+     *  (`docs/phase7-assistant.md` §11.5) and not something to start doing by accident. */
+    val chat: StateFlow<List<ChatTurn>> = _chat.asStateFlow()
+
+    private val _chatError = MutableStateFlow<String?>(null)
+
+    /** Why the last turn never started. A stream that *stopped* is not this — that leaves
+     *  a partial reply on screen instead. */
+    val chatError: StateFlow<String?> = _chatError.asStateFlow()
+
+    /** The in-flight reply, so a second Send can't start one on top of it. */
+    private var chatJob: Job? = null
+
+    private val _chatStreaming = MutableStateFlow(false)
+
+    val chatStreaming: StateFlow<Boolean> = _chatStreaming.asStateFlow()
 
     private var nextShareId = 0L
 
@@ -522,6 +548,104 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Ask the PC whether the assistant's backend is up. [retry] is a person pressing
      *  the button, which is always allowed to skip the PC's backoff. */
     fun probeAi(retry: Boolean) = send(JSONObject().put("t", AI_STATE).put("retry", retry))
+
+    /** Send [text] and stream the reply — step 7b of `docs/phase7-assistant.md`. */
+    fun sendChat(text: String) {
+        val message = text.trim()
+        if (message.isEmpty() || chatJob != null) return
+        _chat.value += ChatTurn(ChatTurn.USER, message)
+        runChat()
+    }
+
+    /**
+     * Ask again for the last reply.
+     *
+     * Drops the previous answer rather than appending a second one: the user is saying
+     * *that* was wrong or cut off, and two attempts at the same question stacked on top
+     * of each other is a transcript nobody wants to read.
+     */
+    fun regenerateChat() {
+        if (chatJob != null) return
+        val history = _chat.value.dropLastWhile { !it.fromUser }
+        if (history.isEmpty()) return
+        _chat.value = history
+        runChat()
+    }
+
+    /** Stop the reply where it is. A deliberate stop is not a failure, so what arrived
+     *  is kept as a whole answer rather than flagged as cut off. */
+    fun stopChat() {
+        chatJob?.cancel()
+        chatJob = null
+        _chatStreaming.value = false
+    }
+
+    fun clearChat() {
+        stopChat()
+        _chat.value = emptyList()
+        _chatError.value = null
+    }
+
+    /**
+     * Stream one reply onto the end of the conversation.
+     *
+     * The reply turn is appended empty and grown in place, so tokens appear as they
+     * arrive. **A stream that ends without saying `Done` is a cut-off reply** — that is
+     * the only way to tell one from a finished one, since both look like a flow
+     * completing — and it keeps what arrived with Regenerate beside it (§4.4). The flag
+     * is set at the end rather than held during the stream, or every reply would render
+     * as cut off until its last token landed.
+     */
+    private fun runChat() {
+        val host = currentHost ?: run {
+            _chatError.value = "Not connected to a PC"
+            return
+        }
+        _chatError.value = null
+        val history = _chat.value
+
+        chatJob = viewModelScope.launch {
+            _chatStreaming.value = true
+            _chat.value += ChatTurn(ChatTurn.ASSISTANT, "")
+            var done = false
+            try {
+                aiChat.stream(host, history).collect { event ->
+                    when (event) {
+                        is ChatEvent.Delta -> appendToReply(event.text)
+                        ChatEvent.Done -> done = true
+                        ChatEvent.Ignore -> {}
+                    }
+                }
+                if (!done) markCutOff()
+            } catch (ex: AiChatException) {
+                // Refused outright: nothing was ever shown, so the empty turn is noise.
+                _chat.value = _chat.value.dropLast(1)
+                _chatError.value = ex.message
+            } catch (ex: CancellationException) {
+                // A deliberate Stop. What arrived stands as the answer.
+                throw ex
+            } catch (ex: Exception) {
+                // The stream died mid-reply. Whatever arrived stays on screen, flagged.
+                markCutOff()
+                _chatError.value = ex.message ?: "The connection dropped"
+            } finally {
+                _chatStreaming.value = false
+                chatJob = null
+            }
+        }
+    }
+
+    private fun appendToReply(text: String) {
+        val turns = _chat.value
+        val last = turns.lastOrNull() ?: return
+        _chat.value = turns.dropLast(1) + last.copy(text = last.text + text)
+    }
+
+    private fun markCutOff() {
+        val turns = _chat.value
+        val last = turns.lastOrNull() ?: return
+        _chat.value = turns.dropLast(1) + last.copy(incomplete = true)
+    }
 
     /**
      * Cast a file that lives on this phone — phase 4d of `docs/phase4-casting.md`.

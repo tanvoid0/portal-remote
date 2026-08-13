@@ -4,7 +4,8 @@ Design notes for putting a chatbot and an action-taking assistant into the Andro
 app, backed by the **agent-platform** API (`../../ai/agentic-ai/agent-platform`, the
 Rust `agent-platformd`).
 
-**Status:** 7a is built — see §13. Everything else here is design.
+**Status:** 7a is built (§13) and 7b is built but not yet driven live (§14). Everything
+else here is design.
 
 The short version: agent-platform already has the exact primitive this needs, the phone
 must never talk to it directly, and the whole feature has to survive the platform being
@@ -409,7 +410,71 @@ nicety — it is the only thing that stops "is the assistant up?" from blocking 
 socket for two seconds, and the message the user sees is the timeout's, not the refusal's.
 Do not remove it on the grounds that refusals are fast.
 
-**Not built:** 7b onward. Nothing yet calls `/v1/chat/completions` or `/api/v1/decide`.
+## 14. What is built (7b)
+
+The chatbot. `/decide` is still untouched — that is 7c.
+
+**Server** — `Ai/AiChatEndpoint.cs`, `POST /ai/chat`, token-authed like every other route.
+It asks `AiHealth` before dialling and answers **503 with the health snapshot** rather
+than a connection error if the backend went away since the last push; the phone should
+never have been able to get here, but "should not" is not "cannot". The upstream SSE is
+piped through **unparsed** — the phone already has to understand OpenAI's `data:` frames
+to render tokens as they arrive, so re-serialising could only lose information.
+
+Two things are added rather than forwarded. The **system prompt comes from config, not
+from the phone**: it is the one message the user does not write, and a client that could
+replace it could ask this PC's assistant to be something else entirely. And the
+conversation is **bounded** (100 messages, 16k characters each) before it goes upstream on
+our token.
+
+Two config fields joined `AgentPlatform`: `Model` (passed through untouched — there is no
+default we could pick for someone else's provider catalogue) and `SystemPrompt`.
+
+**Phone** — `net/AiChat.kt` and a real chat pane in `ui/AssistantScreen.kt`. The tab still
+shows the 7a "not running" panel when the backend is down; the chat replaces it only when
+the state is `ready`.
+
+**The one design point worth keeping.** `data: [DONE]` is modelled as its own event rather
+than inferred from the flow completing, because **a finished reply and a dropped one look
+identical from the socket** — both are lines that stop arriving. So the reply is appended
+unflagged, grown in place, and marked cut off only if the stream ends without a
+terminator. That flag is what puts partial text on screen with **Regenerate** beside it
+instead of throwing the answer away (§4.4), and setting it at the *end* rather than
+holding it during the stream is what stops every reply rendering as "Cut off" until its
+last token lands.
+
+The other three endings are deliberately different:
+
+| Ending | What the user gets |
+|---|---|
+| `[DONE]` | A whole answer |
+| Stream stops without it | What arrived, labelled "Cut off", Regenerate offered |
+| **Stop** pressed | What arrived, unlabelled — a deliberate stop is not a failure |
+| Refused before any text (401/503/502) | The empty turn is removed and the PC's own sentence is shown, since there is nothing partial to keep |
+
+Regenerate drops the previous answer rather than appending a second one: the user is
+saying *that* was wrong, and two attempts at one question stacked up is a transcript
+nobody wants to read.
+
+The draft is never cleared by a failure — only by a send that actually started. Retyping a
+question because the backend blinked is the rudest possible way to report that it blinked.
+
+**History lives in memory on the phone and nowhere else.** §7 says it stays on the PC;
+that was about not syncing it anywhere, which in-memory satisfies equally, and retention
+is still an open decision (§11.5). Nothing writes a chat log to disk on either machine —
+which is the right default to hold until somebody decides otherwise.
+
+**Verified:** server builds clean; the phone compiles and 105 JVM tests pass, 8 new over
+`AiChat.parse`/`describe` — the delta frame, the terminator, SSE comments and blank lines,
+the role-only opening chunk, an unparseable frame being skipped rather than fatal, and a
+failure preferring the PC's own sentence to a status code.
+
+**Not verified:** anything live. `/ai/chat` has not been called against a running
+`agent-platformd` — the parse tests cover the frames it will send, not that it sends them.
+The 503 path and the chat pane have not been driven on a device.
+
+**Not built:** 7c onward. Nothing yet calls `/api/v1/decide`, so the assistant can talk
+about the PC but cannot touch it — which is what the stock system prompt tells it to say.
 
 ## Sources
 

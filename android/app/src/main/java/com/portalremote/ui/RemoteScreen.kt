@@ -86,6 +86,7 @@ import com.portalremote.data.SavedHost
 import com.portalremote.net.AiState
 import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
+import com.portalremote.net.ChatTurn
 import com.portalremote.net.NowPlaying
 import com.portalremote.net.Protocol
 import com.portalremote.net.ServerHello
@@ -135,7 +136,14 @@ fun RemoteScreen(
     shares: List<ShareEntry>,
     onCastFile: (Uri) -> String?,
     aiState: AiState?,
+    chat: List<ChatTurn>,
+    chatStreaming: Boolean,
+    chatError: String?,
     onProbeAi: (retry: Boolean) -> Unit,
+    onSendChat: (String) -> Unit,
+    onRegenerateChat: () -> Unit,
+    onStopChat: () -> Unit,
+    onClearChat: () -> Unit,
     onShareText: (String) -> Unit,
     onRetryShare: (Long) -> Unit,
     onForget: () -> Unit,
@@ -302,7 +310,14 @@ fun RemoteScreen(
                         )
                         RemoteTab.ASSISTANT -> AssistantScreen(
                             state = aiState,
+                            chat = chat,
+                            streaming = chatStreaming,
+                            error = chatError,
                             onProbe = onProbeAi,
+                            onSend = onSendChat,
+                            onRegenerate = onRegenerateChat,
+                            onStop = onStopChat,
+                            onClear = onClearChat,
                         )
                     }
                 }
