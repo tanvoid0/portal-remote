@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -120,6 +122,7 @@ private enum class RemoteTab(val label: String, val icon: ImageVector) {
  * callback into the live socket; files and share talk to the server's HTTP endpoints
  * directly using [host].
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RemoteScreen(
     hello: ServerHello,
@@ -213,12 +216,21 @@ fun RemoteScreen(
         onDispose { view.keepScreenOn = false }
     }
 
+    // Six tab icons between a text field and the keyboard is chrome nobody can use
+    // while typing — the bar's own bottom inset would float it right there, on top of
+    // the IME. It goes away instead, and the content takes the keyboard's inset itself
+    // (see contentWindowInsets below, which Scaffold only applies once no bottom bar
+    // is measured).
+    val imeVisible = WindowInsets.isImeVisible
+
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             // System bars are hidden (see MainActivity), so the bars below pad for the
             // display cutout only; the content itself just needs the horizontal side of
-            // it, for a landscape notch.
-            contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal),
+            // it, for a landscape notch — plus the bottom, which is what keeps a
+            // composer above the keyboard once the nav bar has stepped out of the way.
+            contentWindowInsets = WindowInsets.safeDrawing
+                .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
             topBar = {
                 if (!fullscreen) {
                     RemoteTitleBar(
@@ -230,7 +242,7 @@ fun RemoteScreen(
                 }
             },
             bottomBar = {
-                if (!fullscreen) {
+                if (!fullscreen && !imeVisible) {
                     RemoteNavBar(
                         selected = tab,
                         backdrop = if (glass) backdrop else null,

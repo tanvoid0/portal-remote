@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -185,11 +184,10 @@ fun BrowserScreen(
         }
     }
 
-    // System bars are hidden app-wide and the window doesn't fit them, so nothing pads
-    // for the keyboard on its own: without this the IME covers the bottom of the page —
-    // including whatever field was just tapped, which is every search box on the web —
-    // and the address bar when the page is short enough to sit under it.
-    Box(modifier = Modifier.fillMaxSize().imePadding()) {
+    // No imePadding() here: the shell hides the nav bar when the keyboard is up and
+    // hands the IME inset to the tab content instead (RemoteScreen's contentWindowInsets),
+    // so padding again would lift the page a second keyboard's worth.
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             BrowserBar(
                 address = address,
