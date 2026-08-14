@@ -18,7 +18,7 @@ data class SavedHost(
     val port: Int,
     val token: String,
     /** The PC's own name, once it has told us — filled in from the server hello (or
-     *  the pair-request reply) so the "last device" card can say "Tanveer-PC"
+     *  the pair-request reply) so the "last device" card can say "STUDIO-PC"
      *  instead of an IP address nobody recognises. */
     val name: String? = null,
     /** The PC's stable install id, learned from the hello. [host] is an IP address

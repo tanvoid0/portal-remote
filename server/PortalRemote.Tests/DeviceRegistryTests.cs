@@ -22,15 +22,15 @@ public class DeviceRegistryTests : IDisposable
         var config = NewConfig();
         var registry = new DeviceRegistry(config);
 
-        registry.Connected("Tanveer's S26 Ultra", "192.168.0.234");
+        registry.Connected("Galaxy S26 Ultra", "192.168.0.31");
         Assert.True(registry.Snapshot().Single().Connected);
 
-        registry.Disconnected("Tanveer's S26 Ultra", "192.168.0.234");
+        registry.Disconnected("Galaxy S26 Ultra", "192.168.0.31");
 
         // The row survives — a phone that is switched off is still a phone this PC is
         // paired with, which is the entire reason the list is persisted.
         var device = registry.Snapshot().Single();
-        Assert.Equal("Tanveer's S26 Ultra", device.Name);
+        Assert.Equal("Galaxy S26 Ultra", device.Name);
         Assert.False(device.Connected);
     }
 
@@ -96,15 +96,15 @@ public class DeviceRegistryTests : IDisposable
     {
         var first = NewConfig();
         var registry = new DeviceRegistry(first);
-        registry.Connected("Tanveer's S26 Ultra", "192.168.0.234");
-        registry.Disconnected("Tanveer's S26 Ultra", "192.168.0.234");
+        registry.Connected("Galaxy S26 Ultra", "192.168.0.31");
+        registry.Disconnected("Galaxy S26 Ultra", "192.168.0.31");
 
         // What Load() would find on the next launch.
         var reloaded = System.Text.Json.JsonSerializer.Deserialize<ServerConfig>(File.ReadAllText(_configPath))!;
         var after = new DeviceRegistry(reloaded);
 
         var device = Assert.Single(after.Snapshot());
-        Assert.Equal("Tanveer's S26 Ultra", device.Name);
+        Assert.Equal("Galaxy S26 Ultra", device.Name);
         Assert.False(device.Connected);
     }
 }
