@@ -802,7 +802,7 @@ trigger an ad in a new tab" — left the tab count at 1. Both match what this se
 claims and what it doesn't: the **self-hosted interstitial still appears**, because it
 is first-party and a hostname blocker has nothing to match on; killing it needs the
 cosmetic rules the parser deliberately skips. The README's
-`android-browser-adblock.png` is that run.
+`browser-adblock.png` is that run.
 
 **One bug the pixels caught that the tree did not:** the WebView Box used
 `fillMaxSize()` inside a `Column`, so it claimed the full height and — being a real

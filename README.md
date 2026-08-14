@@ -6,37 +6,60 @@ transfer. No cloud, no relay — the phone talks directly to a small server runn
 PC.
 
 <p align="center">
-  <img src="docs/assets/screenshots/desktop-window.png" width="760" alt="The Windows tray app: the share thread with the phone on the left, and on the right the connected phone's address, port, shared folder, cast link and assistant status">
+  <img src="docs/assets/screenshots/desktop-tray.png" width="760" alt="The Windows tray app: the share thread with the phone on the left, and on the right the connected phone, port, shared folder, cast link and assistant status">
+</p>
+
+<p align="center"><b>Pairing and settings</b> — find the PC on the LAN, then tune how the trackpad feels</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/pair.png" width="180" alt="Pairing screen: the PC found by discovery on the LAN as a one-tap card, with QR scan and typed address as fallbacks">
+  <img src="docs/assets/screenshots/settings.png" width="180" alt="Settings: pointer speed and fine control, scroll momentum and natural scrolling, then a reference list of every trackpad gesture">
+</p>
+
+<p align="center"><b>Control</b> — the four ways to drive the PC by hand, behind one tab</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/control-trackpad.png" width="180" alt="Control tab, trackpad mode: a full-surface trackpad with reticle marks at its corners and a scroll rail down the right edge, a tap-to-type field above and left/right click buttons below">
+  <img src="docs/assets/screenshots/control-keyboard.png" width="180" alt="Control tab, keyboard mode: Esc, Tab, Enter, Space, Backspace, Win, Alt+Tab and clipboard shortcuts as chamfered key caps, with a directional pad below">
+  <img src="docs/assets/screenshots/control-media.png" width="180" alt="Control tab, media mode: what the PC is playing with a scrubber, transport and volume, and the card that streams the PC's sound to the phone instead of its own speakers">
+  <img src="docs/assets/screenshots/control-remote.png" width="180" alt="Control tab, remote mode: a TV-style round D-pad with OK, transport and volume controls, plus rows of function keys for the couch">
+</p>
+
+<p align="center"><b>Monitor</b> — the PC's desktop, and its vitals</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/monitor-screen.png" width="180" alt="Monitor tab, screen mode: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
+  <img src="docs/assets/screenshots/monitor-stats.png" width="180" alt="Monitor tab, stats mode in dark: lit CPU and memory dials, a minute-long load trace, and a lit cell per logical core">
+  <img src="docs/assets/screenshots/monitor-stats-light.png" width="180" alt="The same dashboard in light mode: identical panels, dials and meters redrawn as ink on paper rather than light on black">
+  <img src="docs/assets/screenshots/monitor-stats-detail.png" width="180" alt="Monitor tab, stats mode scrolled down: the mirrored network trace, a segmented meter per fixed drive, and the processes using the most CPU">
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/android-pair.png" width="180" alt="Pairing screen: the PC found by discovery on the LAN as a one-tap card, with QR scan and typed address as fallbacks">
-  <img src="docs/assets/screenshots/android-control.png" width="180" alt="Control tab, trackpad mode: a full-surface trackpad with reticle marks at its corners and a scroll rail down the right edge, a tap-to-type field above and left/right click buttons below">
-  <img src="docs/assets/screenshots/android-keyboard.png" width="180" alt="Control tab, keyboard mode: Esc, Tab, Enter, Space, Backspace, Win, Alt+Tab and clipboard shortcuts as chamfered key caps, with a directional pad below">
-  <img src="docs/assets/screenshots/android-remote.png" width="180" alt="Control tab, remote mode: a TV-style round D-pad with OK, transport and volume controls, plus rows of function keys for the couch">
-  <img src="docs/assets/screenshots/android-media.png" width="180" alt="Control tab, media mode: what the PC is playing with a scrubber, transport and volume, and the speaker card streaming the PC's sound to the phone at 48kHz stereo">
+  <img src="docs/assets/screenshots/monitor-screen-full.png" width="620" alt="The mirror full-screen in landscape: the PC's desktop fills the phone edge to edge, with the on-screen controls hidden behind a single floating button">
 </p>
 
-<p align="center">
-  <img src="docs/assets/screenshots/android-stats.png" width="180" alt="Monitor tab, stats mode in dark: lit CPU and memory dials, a glowing minute-long load trace, and a lit cell per logical core">
-  <img src="docs/assets/screenshots/android-stats-light.png" width="180" alt="The same dashboard in light mode: identical panels, dials and meters redrawn as ink on paper rather than light on black">
-  <img src="docs/assets/screenshots/android-stats-detail.png" width="180" alt="Monitor tab, stats mode scrolled down: the mirrored network trace, a segmented meter per fixed drive, and the processes using the most CPU">
-  <img src="docs/assets/screenshots/android-browser.png" width="180" alt="Browser tab: an in-app browser showing this project's own repository, with the address bar at the bottom within thumb reach">
-  <img src="docs/assets/screenshots/android-screen.png" width="180" alt="Monitor tab, screen mode: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
-  <img src="docs/assets/screenshots/android-assistant.png" width="180" alt="Assistant tab: a question answered in text, followed by a proposed PC action the user must approve before anything runs">
-</p>
+<p align="center"><b>Transfer</b> — push things across, or go and fetch them</p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/android-share.png" width="180" alt="Transfer tab, share mode: a thread of links and notes sent to the PC, each bubble squared off on the sending device's side, with the composer below">
-  <img src="docs/assets/screenshots/android-files.png" width="180" alt="Transfer tab, files mode: the PC's shared folder as a list of files and folders with sizes, a download button per row and an upload action">
-  <img src="docs/assets/screenshots/android-browser-adblock.png" width="180" alt="Browser tab on canyoublockit.com's adblock test: every ad slot on the page is empty and the site's own script is complaining that an adblocker is preventing it from loading">
+  <img src="docs/assets/screenshots/transfer-share.png" width="180" alt="Transfer tab, share mode: a thread of links and notes moving both ways, each bubble squared off on the sending device's side, with the composer below">
+  <img src="docs/assets/screenshots/transfer-files.png" width="180" alt="Transfer tab, files mode: the PC's shared folder as a list of files and folders with sizes, a download button per row and an upload action">
+</p>
+
+<p align="center"><b>Deck, Browser and Assistant</b></p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/deck.png" width="180" alt="Deck tab: a grid of quick actions — search, Explorer, task manager, lock, sleep — above which a context row follows whatever window has focus on the PC, here offering Explorer's own shortcuts">
+  <img src="docs/assets/screenshots/browser.png" width="180" alt="Browser tab: an in-app browser showing this project's own repository, with the address bar at the bottom within thumb reach">
+  <img src="docs/assets/screenshots/browser-adblock.png" width="180" alt="Browser tab on canyoublockit.com's adblock test: every ad slot on the page is empty and the site's own script is complaining that an adblocker is preventing it from loading">
+  <img src="docs/assets/screenshots/assistant.png" width="180" alt="Assistant tab: a question answered in text, followed by a proposed pair of PC actions the user must approve before either one runs">
 </p>
 
 <p align="center"><sub>
-Real captures of a running build — a paired phone over <code>adb</code>, and the tray
-window straight off the PC. The pairing token is boxed out of the desktop shot, and a
-placeholder file stands in for what was actually in the shared folder; nothing else is
-retouched. Re-shooting them is in
+Real captures of one running build — a paired phone over <code>adb</code>, and the tray
+window straight off the PC. The phone's status bar is cropped so the set frames
+identically; the shared folder, the share thread and the assistant conversation are
+staged; and the LAN addresses, the Windows username and the phone's own name are
+redrawn as neutral stand-ins. Nothing else is retouched. Re-shooting them is in
 <a href="docs/development.md#screenshots">docs/development.md</a>.
 </sub></p>
 

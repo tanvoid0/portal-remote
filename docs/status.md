@@ -67,9 +67,11 @@ in [features.md](features.md); how it was verified is in [process.md](process.md
   themes, with the Material scheme *derived* from it rather than written beside it, cut
   corners on the shape scale, and monospace instrument type. The rollout is complete —
   every screen draws from the kit, and `ContrastTest` covers every accent on both faces.
-  What is **not** done is the screenshot set: `android-screen.png` and `android-pair.png`
-  still show the pre-kit build, because re-shooting them needs a staged desktop and a
-  re-pairing respectively (see [development.md](development.md#screenshots)).
+  The screenshot set has now caught up with it: the whole set was re-shot in one pass
+  against `v0.4.1`, at one resolution, so no frame shows the pre-kit build any more. It
+  also gained the three screens that had never been captured — Deck, Settings and the
+  mirror full-screen in landscape — and is named by tab so the directory sorts into the
+  groups the README uses (see [development.md](development.md#screenshots)).
 
 ## Still needs hardware — the outstanding to-do list
 
