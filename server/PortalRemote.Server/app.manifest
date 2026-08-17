@@ -9,6 +9,19 @@
     </application>
   </compatibility>
 
+  <!-- Stated rather than left to default: nothing here needs elevation — the input
+       injection is user-level, the listener binds a high port, and the agent-platform
+       install goes under %APPDATA%. Declaring asInvoker also opts the process out of
+       UAC file/registry virtualisation, which a manifest without a trustInfo block
+       leaves on. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
   <!-- DPI awareness is configured via the ApplicationHighDpiMode project property,
        which injects the manifest entry at build time. Declaring it here as well
        would conflict (compiler warning WFAC010). -->

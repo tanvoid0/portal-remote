@@ -20,6 +20,18 @@
          checked in, so the update check refuses to read them as a release. -->
     <Version>0.1.0-dev</Version>
     <RootNamespace>PortalRemote</RootNamespace>
+    <!-- Explorer's Details tab and the SmartScreen prompt read these off the exe. An
+         unsigned build still warns, but a blank Product/Company reads as malware to
+         both a wary user and a heuristic scanner, so fill them in either way. -->
+    <!-- AssemblyTitle, not Description, is the one Windows shows as the file's
+         description — in the SmartScreen prompt, Task Manager and the Explorer tooltip.
+         Without it that field falls back to the AssemblyName, "PortalRemote". -->
+    <AssemblyTitle>Portal Remote</AssemblyTitle>
+    <Product>Portal Remote</Product>
+    <Company>Portal Remote</Company>
+    <Authors>Portal Remote</Authors>
+    <Description>Control a Windows desktop from an Android phone over the local network.</Description>
+    <Copyright>Copyright © Portal Remote contributors</Copyright>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Brand mark, generated from Theme/BrandMark.cs's geometry — see
          docs/design-system.md §11. Only affects the exe's Explorer/taskbar icon;

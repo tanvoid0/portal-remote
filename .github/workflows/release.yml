@@ -9,6 +9,11 @@ on:
 jobs:
   server:
     runs-on: windows-latest
+    # Job level for the same reason as the android job: a step's `if:` cannot see that
+    # step's own `env:`, and cannot see `secrets` at all.
+    env:
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v4
@@ -22,6 +27,29 @@ jobs:
           ./publish.ps1 -Output ${{ github.workspace }}/out -Version $version
         shell: pwsh
         working-directory: server
+      - name: Sign the exe
+        # Optional, exactly like the Android keystore below: without the secrets the
+        # build ships unsigned and Windows shows "unknown publisher" on first run.
+        #
+        # WINDOWS_CERT_BASE64 is a base64 .pfx. That form only exists for a cert whose
+        # private key is exportable — since June 2023 a newly issued OV/EV code-signing
+        # key must live on a hardware token or a cloud HSM, so a fresh cert wants the
+        # provider's own action here (Azure Trusted Signing, SignPath) in place of
+        # signtool. The gate is what matters; swapping the tool inside it is one edit.
+        #
+        # Timestamped so signatures outlive the cert's expiry.
+        if: env.WINDOWS_CERT_BASE64 != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object FullName -like '*\x64\*' | Select-Object -Last 1
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            "${{ github.workspace }}/out/PortalRemote.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'signtool failed.' }
+          Remove-Item $pfx -Force
       - uses: actions/upload-artifact@v4
         with:
           name: server
@@ -85,8 +113,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Until the exe is signed, the checksum is the only way for someone who
+          # clicked past the SmartScreen prompt to tell a real download from a proxied
+          # one. Flattened out of the per-artifact folders first so the names in the
+          # file are the names on disk after downloading, and `sha256sum -c` just works.
+          mkdir rel
+          find dist -type f \( -name '*.exe' -o -name '*.apk' \) -exec mv -t rel {} +
+          (cd rel && sha256sum *) > SHA256SUMS.txt
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            dist/server/PortalRemote.exe dist/android/*.apk
+            rel/* SHA256SUMS.txt

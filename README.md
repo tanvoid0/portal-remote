@@ -107,6 +107,33 @@ the only request is to GitHub's public release API, when you ask.
 
 Building from source instead: [docs/development.md](docs/development.md).
 
+### "Windows protected your PC"
+
+Expected, on both halves. Neither download is signed by a certificate authority, so
+Windows and Android each say so in the strongest words they have.
+
+- **PC** — SmartScreen shows *Windows protected your PC* and names an unknown publisher.
+  **More info → Run anyway.** Defender may also quarantine the download first: the exe is
+  a compressed self-extracting bundle of the whole .NET runtime, which is a shape
+  installers and packers share, and unsigned files in that shape get flagged on
+  reputation alone.
+- **Phone** — *Install unknown apps* has to be allowed for whatever app you downloaded the
+  APK with, because it did not come from Play.
+
+Before clicking through either, check the download against `SHA256SUMS.txt` on the same
+release — it is attached to every tag and is what tells a real download apart from a
+tampered one:
+
+```powershell
+Get-FileHash PortalRemote.exe -Algorithm SHA256
+```
+
+The fix for the PC prompt is a code-signing certificate, not a code change. The release
+workflow already signs the exe when `WINDOWS_CERT_BASE64` and `WINDOWS_CERT_PASSWORD` are
+set as repository secrets, and ships it unsigned when they are not. Note that an OV
+certificate quiets SmartScreen only once the signed builds accumulate reputation; an EV
+certificate clears it from the first download.
+
 ## The assistant needs agent-platform
 
 Everything above works on its own. The **assistant** is the one feature with an outside
