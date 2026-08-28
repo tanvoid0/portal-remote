@@ -36,9 +36,19 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
 
+        // Before the port, the config and the tray: a second copy has nothing to do
+        // but raise the first one's window, and everything below here either fails or
+        // fights with the copy already doing it.
+        using var instance = SingleInstance.Claim();
+        if (instance is null) return 0;
+
         // If we are the freshly installed build, the one we replaced is still sitting
         // next door as .old — nothing holds it open now.
         UpdateCheck.CleanUp();
+
+        // Autostart is stored as a path, and this build may not be at the path that was
+        // stored. Fixes a registration whose target has gone; never adds one.
+        StartupRegistration.Repair();
 
         var config = ServerConfig.Load();
         var connectionState = new ConnectionState();
@@ -195,6 +205,10 @@ internal static class Program
         _ = nowPlaying.StartAsync();
 
         using var tray = new TrayIcon(config, connectionState, approval, share, assistant, ai, devices, onExit: Application.ExitThread);
+
+        // Someone double-clicked the shortcut of an app that was already running in the
+        // tray. Show them the window they were asking for.
+        instance.ShowRequested = tray.ShowWindow;
 
         // Nothing has ever paired with this PC, so the QR code is the only useful
         // next step — show it rather than leaving a new user hunting the tray.

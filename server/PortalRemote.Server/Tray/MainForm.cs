@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using PortalRemote.Ai;
 using PortalRemote.Config;
 using PortalRemote.Devices;
@@ -361,10 +360,10 @@ public sealed class MainForm : Form
             Text = "Start Portal Remote when I sign in",
             Font = Fonts.Body,
             Dock = DockStyle.Fill,
-            Checked = StartsWithWindows(),
+            Checked = StartupRegistration.IsEnabled(),
         };
         // Wired after Checked is set so reading the current state doesn't write it back.
-        _startWithWindows.CheckedChanged += (_, _) => SetStartWithWindows(_startWithWindows.Checked);
+        _startWithWindows.CheckedChanged += (_, _) => StartupRegistration.SetEnabled(_startWithWindows.Checked);
 
         _rotate = new TokenButton { Text = "Rotate pairing token", Glyph = Glyphs.Lock, Secondary = true, Dock = DockStyle.Left, Width = 198 };
         _rotate.Click += (_, _) => RotateToken();
@@ -1110,34 +1109,6 @@ public sealed class MainForm : Form
 
     private static void OpenPath(string path) =>
         Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
-
-    // Startup registration lives in the per-user Run key — no elevation, no service,
-    // and it disappears with the user profile rather than outliving it.
-    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string RunValueName = "PortalRemote";
-
-    private static bool StartsWithWindows()
-    {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-        return key?.GetValue(RunValueName) is string;
-    }
-
-    private static void SetStartWithWindows(bool enabled)
-    {
-        using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
-        if (key is null) return;
-
-        if (!enabled)
-        {
-            key.DeleteValue(RunValueName, throwOnMissingValue: false);
-            return;
-        }
-
-        // Null when running from a host that isn't an executable file (single-file
-        // publishing and `dotnet run` both give a real path, so this is defensive).
-        if (Environment.ProcessPath is not { } exe) return;
-        key.SetValue(RunValueName, $"\"{exe}\"");
-    }
 
     protected override void OnHandleCreated(EventArgs e)
     {

@@ -50,10 +50,52 @@ jobs:
             "${{ github.workspace }}/out/PortalRemote.exe"
           if ($LASTEXITCODE -ne 0) { throw 'signtool failed.' }
           Remove-Item $pfx -Force
+      - name: Build the installer
+        # Signed first, packaged second: the installer carries a copy of the .exe, and
+        # signing the original afterwards would leave the copy inside it unsigned.
+        #
+        # ISCC ships in the windows runner image; the choco fallback is there so a
+        # change to that image is a slower build rather than a broken release.
+        shell: pwsh
+        working-directory: server/installer
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install Inno Setup.' }
+          }
+          $version = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '0.1.0-dev' }
+          # Backslashes throughout: ISCC resolves Source paths itself and is the one
+          # tool here not guaranteed to accept the forward slashes used above. On a
+          # windows runner github.workspace is already backslash-separated.
+          $exe = Join-Path '${{ github.workspace }}' 'out\PortalRemote.exe'
+          & $iscc /DAppVersion=$version /DExeSource=$exe PortalRemote.iss
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed.' }
+          Move-Item PortalRemote-Setup-*.exe ${{ github.workspace }}/out/
+      - name: Sign the installer
+        # Same optional gate as the exe above, and a separate step for a reason: the
+        # installer does not exist yet when the exe is signed, and the exe has to be
+        # signed before it is packaged into one.
+        if: env.WINDOWS_CERT_BASE64 != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object FullName -like '*\x64\*' | Select-Object -Last 1
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            (Get-ChildItem "${{ github.workspace }}/out/PortalRemote-Setup-*.exe").FullName
+          if ($LASTEXITCODE -ne 0) { throw 'signtool failed.' }
+          Remove-Item $pfx -Force
       - uses: actions/upload-artifact@v4
         with:
           name: server
-          path: out/PortalRemote.exe
+          # Both: the installer is what a person should download, and the bare exe is
+          # what the app's own updater swaps in — it cannot run a setup wizard at itself.
+          path: |
+            out/PortalRemote.exe
+            out/PortalRemote-Setup-*.exe
 
   android:
     runs-on: ubuntu-latest

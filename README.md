@@ -94,10 +94,15 @@ redrawn as neutral stand-ins. Nothing else is retouched. Re-shooting them is in
 ## Try it
 
 Every `v*` tag builds both halves and attaches them to a [GitHub
-release](https://github.com/tanvoid0/portal-remote/releases): `PortalRemote.exe`
-(self-contained, no .NET needed) and `PortalRemote-<version>.apk`.
+release](https://github.com/tanvoid0/portal-remote/releases):
+`PortalRemote-Setup-<version>.exe` (the installer), `PortalRemote.exe` (the same app as
+one portable file) and `PortalRemote-<version>.apk`. All three are self-contained — no
+.NET needed on the PC.
 
-1. Run `PortalRemote.exe` on the PC. It opens the window above and drops a tray icon.
+1. Run `PortalRemote-Setup-<version>.exe` on the PC. It installs for you alone — no
+   admin prompt — leaves a Start-menu entry, and **starts Portal Remote when you sign
+   in**, so the phone can still find the PC after a reboot. It opens the window above
+   and drops a tray icon.
 2. Install the APK on a phone on the **same Wi-Fi** and open it.
 3. Tap the PC in the discovered list and click Allow on the PC — or scan the QR code,
    which pairs without the prompt.
@@ -106,6 +111,21 @@ Both halves update themselves from those releases, and neither phones home other
 the only request is to GitHub's public release API, when you ask.
 
 Building from source instead: [docs/development.md](docs/development.md).
+
+### Installer or portable exe?
+
+Take the installer unless you have a reason not to. `PortalRemote.exe` on its own is the
+same program and runs fine from wherever you put it, but it is a file you have to
+remember: nothing starts it after a reboot until you tick **Start Portal Remote when I
+sign in** in the window, and that setting records the path it was ticked at — move or
+delete that copy afterwards and the app quietly stops coming back. The installer puts it
+somewhere stable first and registers that.
+
+It installs to `%LOCALAPPDATA%\Programs\Portal Remote`, not `Program Files`, and that is
+deliberate: the app replaces its own .exe when it updates itself, which a program running
+as you cannot do inside `Program Files`. Uninstall from **Settings → Apps**. Your config
+and pairing token live in `%APPDATA%\portal-remote` and are left behind on purpose, so
+reinstalling does not make every paired phone scan a new code.
 
 ### "Windows protected your PC"
 
@@ -121,18 +141,18 @@ Windows and Android each say so in the strongest words they have.
   APK with, because it did not come from Play.
 
 Before clicking through either, check the download against `SHA256SUMS.txt` on the same
-release — it is attached to every tag and is what tells a real download apart from a
-tampered one:
+release — it is attached to every tag and covers every file on it, and is what tells a
+real download apart from a tampered one:
 
 ```powershell
-Get-FileHash PortalRemote.exe -Algorithm SHA256
+Get-FileHash PortalRemote-Setup-0.6.0.exe -Algorithm SHA256
 ```
 
 The fix for the PC prompt is a code-signing certificate, not a code change. The release
-workflow already signs the exe when `WINDOWS_CERT_BASE64` and `WINDOWS_CERT_PASSWORD` are
-set as repository secrets, and ships it unsigned when they are not. Note that an OV
-certificate quiets SmartScreen only once the signed builds accumulate reputation; an EV
-certificate clears it from the first download.
+workflow already signs both the exe and the installer when `WINDOWS_CERT_BASE64` and
+`WINDOWS_CERT_PASSWORD` are set as repository secrets, and ships them unsigned when they
+are not. Note that an OV certificate quiets SmartScreen only once the signed builds
+accumulate reputation; an EV certificate clears it from the first download.
 
 ## The assistant needs agent-platform
 
@@ -162,6 +182,7 @@ is agent-platform's business, not this app's:
 ```
 android/   Kotlin + Jetpack Compose client
 server/    .NET 8 / WinForms tray app + embedded Kestrel web server
+           installer/ — the Inno Setup script the release workflow packages it with
 docs/      design notes, status, security model, and the screenshot assets above
 ```
 

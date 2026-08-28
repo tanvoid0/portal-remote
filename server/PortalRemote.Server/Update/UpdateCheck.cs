@@ -26,8 +26,16 @@ public static class UpdateCheck
         Timeout = TimeSpan.FromMinutes(10)
     };
 
-    /// <summary>Null when the newest release carries no .exe — a phone-only release, or
-    /// one whose assets are still uploading.</summary>
+    /// <summary>
+    /// The one release asset that <i>is</i> the app. Matched by exact name, not by an
+    /// <c>.exe</c> suffix: a release also carries the installer, and "the first .exe in
+    /// the list" would cheerfully download PortalRemote-Setup-x.y.z.exe and swap it in
+    /// as the running app — leaving the tray replaced by a setup wizard.
+    /// </summary>
+    private const string ExeAssetName = "PortalRemote.exe";
+
+    /// <summary>Null when the newest release carries no app .exe — a phone-only release,
+    /// or one whose assets are still uploading.</summary>
     public static ReleaseInfo? Parse(string json)
     {
         using var doc = JsonDocument.Parse(json);
@@ -41,7 +49,7 @@ public static class UpdateCheck
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
-            if (name is null || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(name, ExeAssetName, StringComparison.OrdinalIgnoreCase)) continue;
             var url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
             if (IsTrustedAssetUrl(url)) return new ReleaseInfo(version, url!);
         }

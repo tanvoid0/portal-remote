@@ -63,6 +63,23 @@ public class UpdateCheckTests
     }
 
     [Fact]
+    public void SkipsTheInstallerAndPicksTheApp()
+    {
+        // Every release carries both, and the installer sorts first. Downloading it as
+        // if it were the app replaces the tray with a setup wizard on next launch.
+        var release = UpdateCheck.Parse(
+            """
+            {"tag_name":"v0.6.0","assets":[
+              {"name":"PortalRemote-Setup-0.6.0.exe","browser_download_url":"https://github.com/o/r/releases/download/v0.6.0/PortalRemote-Setup-0.6.0.exe"},
+              {"name":"PortalRemote.exe","browser_download_url":"https://github.com/o/r/releases/download/v0.6.0/PortalRemote.exe"}
+            ]}
+            """);
+
+        Assert.NotNull(release);
+        Assert.Equal("https://github.com/o/r/releases/download/v0.6.0/PortalRemote.exe", release!.ExeUrl);
+    }
+
+    [Fact]
     public void ReleaseWithoutAnExeIsNotAnUpdate()
     {
         Assert.Null(UpdateCheck.Parse("""{"tag_name":"v0.2.0","assets":[]}"""));

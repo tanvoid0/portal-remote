@@ -62,6 +62,19 @@ Produces `server\publish\PortalRemote.exe` — 79MB, self-contained, no .NET ins
 with `DOTNET_ROOT` unset). Trimming isn't supported for WinForms, so single-file
 compression is the only size lever; without it the same exe is 180MB.
 
+Wrapping that exe in the installer needs [Inno Setup 6](https://jrsoftware.org/isdl.php)
+(`choco install innosetup`), and reads the exe straight out of `publish\`:
+
+```powershell
+cd server\installer
+& 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /DAppVersion=0.6.0 PortalRemote.iss
+```
+
+Produces `PortalRemote-Setup-0.6.0.exe` next to the script. The release workflow runs the
+same two commands and attaches both files to the tag; `server/installer/PortalRemote.iss`
+is where the per-user install location and the sign-in registration are decided, and it
+says there why both are what they are.
+
 ```powershell
 cd android
 .\gradlew.bat assembleRelease
