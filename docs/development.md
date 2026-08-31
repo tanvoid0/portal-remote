@@ -1,7 +1,7 @@
 # Building and running from source
 
 Prebuilt binaries are attached to every [GitHub
-release](https://github.com/tanvoid0/portal-remote/releases) — this page is for running
+release](https://github.com/Aipairs-Ltd/portal-remote/releases) — this page is for running
 the two halves from the repo.
 
 ## Server (Windows)
@@ -93,9 +93,30 @@ captures of a real build — a phone over `adb`, and the tray window through `Pr
 They replaced a set of generated SVG mockups, which drifted from the app the moment a
 screen changed and flattered a UI that no longer existed.
 
-The set is named by the tab it belongs to — `control-*`, `monitor-*`, `transfer-*`, then
-`pair`, `deck`, `browser*`, `assistant`, `settings` and `desktop-tray` — so the directory
-sorts into the same groups the README lays them out in.
+The set is named by the tab it belongs to — `control-*`, `monitor-*`, `deck-*`,
+`transfer-*`, then `pair`, `browser*`, `assistant`, `settings` and `desktop-tray` — so the
+directory sorts into the same groups the README lays them out in.
+
+**The mechanical half is [`android/screenshots.ps1`](../android/screenshots.ps1).** It
+finds adb, pins the device to the frame below, `screencap`s, crops the status bar and
+writes each file under its canonical name; `-List` prints every shot with what has to be
+staged for it, and `-Only a,b` re-shoots just the ones a change touched. It prompts
+between shots rather than driving the app, for the reasons in the rest of this section —
+the tap coordinates move, `uiautomator` refuses on the animating screens, and someone has
+to decide what is in frame. `-NoPrompt` captures immediately for a screen you have already
+set up.
+
+Two things it does that are easy to miss when shooting by hand. It forces
+`wm size 1080x2340` and `wm density 420` for the duration and resets both afterwards, so a
+device with a different panel — an emulator especially — still yields images that frame
+identically; a set at two resolutions is worse than a set one release out of date. And it
+refuses to capture unless `mFocusedApp` is Portal Remote, because a crash or a stray tap
+puts the launcher in front and `screencap` will happily photograph the wallpaper.
+
+On a device the app has not run on before, Android shows its own *Viewing full screen /
+swipe down to exit* panel over the app the first time the nav bar is hidden, and it sits
+there until dismissed. Tap **Got it** once before starting a pass, or it lands in the
+first shot.
 
 **Every phone shot is 1080×2252 — a `screencap` with the status bar cropped, not staged.**
 SystemUI demo mode, the usual way to freeze the clock and hide notification icons, is
@@ -210,7 +231,11 @@ point it at something is to tap the Deck's own tile for that app and let the lau
 focus properly.
 
 **When the UI changes**, re-shoot the screens it touched. A screenshot in the README is a
-claim about what the app looks like today.
+claim about what the app looks like today. And **before a major release**, re-shoot the
+whole set in one pass — existing features and new ones alike — because a set assembled
+across two sessions frames inconsistently, which reads worse than one that is a version
+behind. The same instruction is in [CLAUDE.md](../CLAUDE.md) so it survives being
+forgotten.
 
 ## Updates
 

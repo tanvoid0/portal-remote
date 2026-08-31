@@ -17,7 +17,7 @@ public sealed record ReleaseInfo(string Version, string ExeUrl);
 /// </summary>
 public static class UpdateCheck
 {
-    private const string LatestUrl = "https://api.github.com/repos/tanvoid0/portal-remote/releases/latest";
+    private const string LatestUrl = "https://api.github.com/repos/Aipairs-Ltd/portal-remote/releases/latest";
 
     // GitHub rejects requests without one.
     private static readonly HttpClient Http = new()

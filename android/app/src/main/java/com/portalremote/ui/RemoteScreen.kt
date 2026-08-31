@@ -131,11 +131,16 @@ private enum class RemoteTab(val label: String, val icon: ImageVector) {
  * one Control tab and sends through the same [send] callback into the live socket;
  * files and share talk to the server's HTTP endpoints directly using [host].
  *
- * Six slots, not eight: Monitor holds the mirror and the stats dashboard, Transfer holds
- * share and files, each behind a 48dp sub-tab row (see [PortalSubTabRow]). That's what
- * left room for Deck (quick search, launched apps, shortcuts) at the six-icon limit
- * docs/design-system.md §13 sets — a capsule with more in it is a strip of targets too
- * narrow to hit rather than a way of navigating.
+ * Six slots, not eight: Deck holds the shortcut grid and the stats dashboard, Transfer
+ * holds share and files, each behind a 48dp sub-tab row (see [PortalSubTabRow]). That's
+ * what keeps all of it inside the six-icon limit docs/design-system.md §13 sets — a
+ * capsule with more in it is a strip of targets too narrow to hit rather than a way of
+ * navigating.
+ *
+ * Monitor is the one tab with nothing folded into it. The stats dashboard was there
+ * until the mirror started rotating (see [ScreenScreen]'s AutoRotate): a sub-tab row is
+ * 48dp across the top of a picture, which portrait could absorb and a sideways phone
+ * could not.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -270,8 +275,20 @@ fun RemoteScreen(
             // horizontal side of it, for a landscape notch — plus the bottom, which is
             // what keeps a composer above the keyboard once the nav bar has stepped out
             // of the way.
-            contentWindowInsets = WindowInsets.safeDrawing
-                .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
+            //
+            // Full screen takes even those: the horizontal inset is the width of the
+            // landscape nav bar, and holding it back left a strip of the Scaffold's own
+            // colour down one edge of a picture that is supposed to run edge to edge.
+            // It was there before the mirror rotated by itself and simply never showed
+            // — near-black container against a near-black mount — until a light-mode
+            // phone turned sideways and painted it pale. The frame is the whole point of
+            // this mode, so it gets the cutout too; the floating controls keep their own
+            // safeDrawingPadding and stay clear of it.
+            contentWindowInsets = if (fullscreen) {
+                WindowInsets(0, 0, 0, 0)
+            } else {
+                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+            },
             // The strip the floating capsule sits in belongs to the Scaffold rather than
             // to the screen above it, so it has to be the canvas colour — otherwise
             // every screen keeps a band of a slightly different grey across its bottom
@@ -374,7 +391,7 @@ fun RemoteScreen(
                             onPlayer = gatedSend,
                             onOpenOnDesktop = { url -> gatedSend(Protocol.openUrl(url)) },
                         )
-                        RemoteTab.MONITOR -> MonitorScreen(
+                        RemoteTab.MONITOR -> ScreenScreen(
                             host = host,
                             settings = settings,
                             fullscreen = fullscreen,
@@ -383,9 +400,6 @@ fun RemoteScreen(
                                 onSettingsChange { it.copy(mirrorPreset = preset.name) }
                             },
                             send = gatedSend,
-                            stats = stats,
-                            statsHistory = statsHistory,
-                            onWatchStats = onWatchStats,
                         )
                         RemoteTab.TRANSFER -> TransferScreen(
                             host = host,
@@ -395,12 +409,15 @@ fun RemoteScreen(
                             onRetryShare = onRetryShare,
                             bottomInset = padding.calculateBottomPadding(),
                         )
-                        RemoteTab.DECK -> DeckScreen(
+                        RemoteTab.DECK -> DeckTabs(
                             items = deckItems,
                             onItemsChange = onDeckItemsChange,
                             send = gatedSend,
                             activeWindow = activeWindow,
                             onWatchActiveWindow = onWatchActiveWindow,
+                            stats = stats,
+                            statsHistory = statsHistory,
+                            onWatchStats = onWatchStats,
                         )
                         RemoteTab.ASSISTANT -> AssistantScreen(
                             state = aiState,

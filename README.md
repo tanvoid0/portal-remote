@@ -25,17 +25,14 @@ PC.
   <img src="docs/assets/screenshots/control-remote.png" width="180" alt="Control tab, remote mode: a TV-style round D-pad with OK, transport and volume controls, plus rows of function keys for the couch">
 </p>
 
-<p align="center"><b>Monitor</b> — the PC's desktop, and its vitals</p>
+<p align="center"><b>Monitor</b> — the PC's desktop, live</p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/monitor-screen.png" width="180" alt="Monitor tab, screen mode: the PC's desktop mirrored live on flat black, with per-monitor and quality chips underneath">
-  <img src="docs/assets/screenshots/monitor-stats.png" width="180" alt="Monitor tab, stats mode in dark: lit CPU and memory dials, a minute-long load trace, and a lit cell per logical core">
-  <img src="docs/assets/screenshots/monitor-stats-light.png" width="180" alt="The same dashboard in light mode: identical panels, dials and meters redrawn as ink on paper rather than light on black">
-  <img src="docs/assets/screenshots/monitor-stats-detail.png" width="180" alt="Monitor tab, stats mode scrolled down: the mirrored network trace, a segmented meter per fixed drive, and the processes using the most CPU">
+  <img src="docs/assets/screenshots/monitor-screen.png" width="180" alt="Monitor tab: the PC's desktop mirrored live, letterboxed in near-black, with per-monitor and quality chips underneath">
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/monitor-screen-full.png" width="620" alt="The mirror full-screen in landscape: the PC's desktop fills the phone edge to edge, with the on-screen controls hidden behind a single floating button">
+  <img src="docs/assets/screenshots/monitor-screen-full.png" width="620" alt="The mirror full-screen in landscape: turning the phone sideways rotates it and drops the shell, so the PC's desktop fills the display edge to edge with the controls hidden behind a single floating button">
 </p>
 
 <p align="center"><b>Transfer</b> — push things across, or go and fetch them</p>
@@ -45,10 +42,18 @@ PC.
   <img src="docs/assets/screenshots/transfer-files.png" width="180" alt="Transfer tab, files mode: the PC's shared folder as a list of files and folders with sizes, a download button per row and an upload action">
 </p>
 
-<p align="center"><b>Deck, Browser and Assistant</b></p>
+<p align="center"><b>Deck</b> — what the machine is running, and how hard it is working</p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/deck.png" width="180" alt="Deck tab: a grid of quick actions — search, Explorer, task manager, lock, sleep — above which a context row follows whatever window has focus on the PC, here offering Explorer's own shortcuts">
+  <img src="docs/assets/screenshots/deck-shortcuts.png" width="180" alt="Deck tab, shortcuts mode: a grid of quick actions — search, Explorer, task manager, lock, sleep — above which a context row follows whatever window has focus on the PC, here offering Explorer's own shortcuts">
+  <img src="docs/assets/screenshots/deck-stats.png" width="180" alt="Deck tab, stats mode in dark: lit CPU and memory dials, a minute-long load trace, and a lit cell per logical core">
+  <img src="docs/assets/screenshots/deck-stats-light.png" width="180" alt="The same dashboard in light mode: identical panels, dials and meters redrawn as ink on paper rather than light on black">
+  <img src="docs/assets/screenshots/deck-stats-detail.png" width="180" alt="Deck tab, stats mode scrolled down: the mirrored network trace, a segmented meter per fixed drive, and the processes using the most CPU">
+</p>
+
+<p align="center"><b>Browser and Assistant</b></p>
+
+<p align="center">
   <img src="docs/assets/screenshots/browser.png" width="180" alt="Browser tab: an in-app browser showing this project's own repository, with the address bar at the bottom within thumb reach">
   <img src="docs/assets/screenshots/browser-adblock.png" width="180" alt="Browser tab on canyoublockit.com's adblock test: every ad slot on the page is empty and the site's own script is complaining that an adblocker is preventing it from loading">
   <img src="docs/assets/screenshots/assistant.png" width="180" alt="Assistant tab: a question answered in text, followed by a proposed pair of PC actions the user must approve before either one runs">
@@ -94,7 +99,7 @@ redrawn as neutral stand-ins. Nothing else is retouched. Re-shooting them is in
 ## Try it
 
 Every `v*` tag builds both halves and attaches them to a [GitHub
-release](https://github.com/tanvoid0/portal-remote/releases):
+release](https://github.com/Aipairs-Ltd/portal-remote/releases):
 `PortalRemote-Setup-<version>.exe` (the installer), `PortalRemote.exe` (the same app as
 one portable file) and `PortalRemote-<version>.apk`. All three are self-contained — no
 .NET needed on the PC.

@@ -21,7 +21,7 @@
   #define ExeSource "..\publish\PortalRemote.exe"
 #endif
 #define AppName "Portal Remote"
-#define AppUrl "https://github.com/tanvoid0/portal-remote"
+#define AppUrl "https://github.com/Aipairs-Ltd/portal-remote"
 
 [Setup]
 ; Never change this: it is the identity Windows matches an upgrade against, and a new

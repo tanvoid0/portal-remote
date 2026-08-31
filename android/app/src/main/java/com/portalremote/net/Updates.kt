@@ -20,7 +20,7 @@ data class Release(val version: String, val apkUrl: String, val notes: String)
  */
 object Updates {
 
-    private const val LATEST_URL = "https://api.github.com/repos/tanvoid0/portal-remote/releases/latest"
+    private const val LATEST_URL = "https://api.github.com/repos/Aipairs-Ltd/portal-remote/releases/latest"
 
     /** Null when the release carries no APK — a server-only release, or one still
      *  uploading its assets. */

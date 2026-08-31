@@ -72,6 +72,14 @@ in [features.md](features.md); how it was verified is in [process.md](process.md
   also gained the three screens that had never been captured — Deck, Settings and the
   mirror full-screen in landscape — and is named by tab so the directory sorts into the
   groups the README uses (see [development.md](development.md#screenshots)).
+  - **Re-shot again** after the mirror learned to rotate. Sixteen of the seventeen were
+    retaken in one pass on one device with
+    [`android/screenshots.ps1`](../android/screenshots.ps1), which pins the frame so the
+    set stays 1080x2252 whatever it is shot on. The dashboard moved tabs with its files:
+    `monitor-stats*` are now `deck-stats*` and `deck.png` is `deck-shortcuts.png`, so the
+    directory still sorts into the groups the README lays out. **`pair` is the one frame
+    not re-taken** — it is unchanged by that work, and re-shooting it means *Forget this
+    PC* and a person at the PC to allow the re-pair.
 
 ## Still needs hardware — the outstanding to-do list
 

@@ -1,5 +1,6 @@
 package com.portalremote.ui
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -69,6 +70,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
@@ -80,11 +82,10 @@ import com.portalremote.data.SavedHost
 import com.portalremote.net.Protocol
 import com.portalremote.net.RemoteMonitor
 import com.portalremote.net.ScreenApi
+import com.portalremote.ui.theme.AutoRotate
 import com.portalremote.ui.theme.Haptics
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.PortalRemoteTheme
-import com.portalremote.ui.theme.RotationSuggestionChip
-import com.portalremote.ui.theme.rememberRotationSuggestion
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.withTimeoutOrNull
@@ -248,12 +249,23 @@ fun ScreenScreen(
     val pan = remember { mutableStateOf(Offset.Zero) }
 
     // The app is locked portrait (see AndroidManifest) everywhere except here: this is
-    // the one screen whose content is itself a wide picture, so a physical rotation
-    // gets offered a real landscape layout instead of being ignored outright. Enabled
-    // unconditionally — this composable is only in the tree while Monitor's Screen tab
-    // is the visible one (see MonitorScreen's Crossfade), which is exactly the lifetime
-    // the sensor listener should run for.
-    val rotationSuggestion = rememberRotationSuggestion(enabled = true)
+    // the one screen whose content is itself a wide picture. Unconditional because this
+    // composable is only in the tree while the Screen tab is the visible one, which is
+    // exactly the lifetime the unlock should have.
+    AutoRotate()
+
+    // Turning the phone sideways in front of a desktop is a request for the whole
+    // display, so it gets the whole display: in landscape the title row, the nav
+    // capsule and the chip strip all step out (the same full screen the chip toggles),
+    // and turning back puts them there again. A landscape mirror inside the shell is
+    // the worst of both — roughly half of a ~400dp-tall window spent on chrome around
+    // a picture that just got wider.
+    //
+    // No guard against the first pass cancelling a full screen entered by hand: while
+    // full screen the nav bar is hidden, so this tab cannot be left and re-entered
+    // without leaving it first.
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    LaunchedEffect(landscape) { onFullscreen(landscape) }
 
     // Touch mode forwards fingers 1:1 — a leftover pinch-zoom from before the switch
     // would offset every contact from where the finger actually is.
@@ -401,14 +413,6 @@ fun ScreenScreen(
                 onExitFullscreen = { onFullscreen(false) },
             )
         }
-
-        RotationSuggestionChip(
-            state = rotationSuggestion,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .safeDrawingPadding()
-                .padding(top = 12.dp),
-        )
     }
 }
 

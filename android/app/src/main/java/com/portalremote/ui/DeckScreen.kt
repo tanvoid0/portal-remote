@@ -1,5 +1,7 @@
 package com.portalremote.ui
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,6 +45,7 @@ import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -77,6 +80,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,11 +92,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.DeckItem
 import com.portalremote.net.ActiveWindow
+import com.portalremote.net.PcStats
 import com.portalremote.net.Protocol
 import com.portalremote.ui.theme.HudPanel
 import com.portalremote.ui.theme.HudPanelShape
 import com.portalremote.ui.theme.HudType
 import com.portalremote.ui.theme.LocalHaptics
+import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
 import com.portalremote.ui.theme.hudCanvas
 import java.net.URLEncoder
@@ -255,6 +261,82 @@ private fun contextActionsFor(process: String): List<ContextAction> =
  *  drops the first few characters. */
 private const val OPEN_DELAY_MS = 320L
 private const val ENTER_DELAY_MS = 90L
+
+/** The two ways of looking at the machine itself rather than at its screen. */
+internal enum class DeckMode(val label: String, val icon: ImageVector) {
+    SHORTCUTS("Shortcuts", Icons.Filled.Apps),
+    STATS("Stats", Icons.Filled.Insights),
+}
+
+/**
+ * The deck and the stats dashboard under one tab row.
+ *
+ * Stats used to live next to the mirror, under Monitor — "looking at that machine
+ * rather than driving it" was the grouping. It cost the mirror a permanent 48dp row
+ * across the top of a picture, which portrait could just about afford and landscape
+ * (see [ScreenScreen]'s AutoRotate) could not: half a sideways phone was going on
+ * chrome around a wider picture. So the mirror now owns its tab outright and the
+ * readout moved here.
+ *
+ * It is a better pairing anyway. These two already share a look — §7's StatsScreen
+ * entry is where the deck's chamfers, brackets and monospace labels came from — and
+ * they answer consecutive questions about the same machine: what is running on it, and
+ * how hard it is working. The deck's own context panel reads the foreground app; the
+ * dashboard's process panel reads what that app costs.
+ *
+ * Same [PortalSubTabRow] as Control and Transfer, for the reason §13 gives: the row
+ * only pays for itself if it is one component rather than three that drift.
+ */
+@Composable
+fun DeckTabs(
+    items: List<DeckItem>,
+    onItemsChange: (List<DeckItem>) -> Unit,
+    send: (JSONObject) -> Unit,
+    activeWindow: ActiveWindow?,
+    onWatchActiveWindow: (Boolean) -> Unit,
+    stats: PcStats?,
+    statsHistory: List<PcStats>,
+    onWatchStats: (Boolean) -> Unit,
+) {
+    var mode by rememberSaveable { mutableStateOf(DeckMode.SHORTCUTS) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        PortalSubTabRow(
+            entries = DeckMode.entries,
+            selected = mode,
+            label = { it.label },
+            icon = { it.icon },
+            onSelect = { mode = it },
+        )
+
+        Crossfade(
+            targetState = mode,
+            animationSpec = tween(Motion.TabSwitchDurationMs, easing = Motion.EaseOut),
+            modifier = Modifier.fillMaxSize(),
+            label = "deck-mode",
+        ) { selected ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                when (selected) {
+                    DeckMode.SHORTCUTS -> DeckScreen(
+                        items = items,
+                        onItemsChange = onItemsChange,
+                        send = send,
+                        activeWindow = activeWindow,
+                        onWatchActiveWindow = onWatchActiveWindow,
+                    )
+                    // Only mounted while this is the visible half, which is what stops
+                    // the PC sampling itself for a screen nobody is looking at —
+                    // StatsScreen subscribes on composition and releases on disposal.
+                    DeckMode.STATS -> StatsScreen(
+                        stats = stats,
+                        history = statsHistory,
+                        onWatch = onWatchStats,
+                    )
+                }
+            }
+        }
+    }
+}
 
 /**
  * The quick-access page — search, launched apps, shortcuts and power/media, in the same

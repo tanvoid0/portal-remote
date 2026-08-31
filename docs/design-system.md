@@ -792,12 +792,24 @@ derived from. When adding a screen, reach for these before inventing a surface.
   Material3 `FilterChip`s below the frame (monitor picker, quality preset, and a
   zoom-reset chip that appears only while zoomed) — chips, not a settings sheet,
   because every one of them is a thing you change *while watching* the result.
-  Background is `PortalRemoteTheme.hud.background` rather than flat black: it still
-  reads as the letterbox around a picture (the frame is fit-scaled to the box, so
-  nothing but bare canvas ever shows through the sides), but a fixed black ignored
-  §13's own "form is the identity, not the darkness" reasoning and stayed a fixed
-  dark hole in light mode with no way to lighten it — the one surface in the app
-  that didn't answer the theme toggle.
+  Background is `MIRROR_MOUNT`, a near-black held in both themes and the one surface
+  in the app that ignores the palette: this is the letterbox around a picture, not a
+  panel the picture sits on, and a pale mount in light mode both shifts the apparent
+  colour of the desktop inside it and leaves the frame with no edge. Same rule as a
+  cinema screen. Not a true `#000` either — next to an OLED-off pixel that is exactly
+  where the frame's edge disappears again.
+  - **It is the only screen that rotates.** The app is portrait-locked in the
+    manifest; `AutoRotate` (`ui/theme/AutoRotate.kt`) lifts that for as long as the
+    mirror is composed and puts it back on the way out, so the unlock never outlives
+    the one screen whose content is a wide picture. Landscape then takes full screen
+    with it — turning the phone sideways in front of a desktop is a request for the
+    display, so it gets the display, and turning back restores the shell. It was a
+    *suggestion* first (a five-second "Rotate to landscape" pill, tapped to accept);
+    the pill, its sensor listener and its quadrant classifier are gone, because a
+    phone physically turned sideways has already said the thing the pill was asking
+    it to confirm. `SCREEN_ORIENTATION_SENSOR`, so it works through the system's own
+    rotation lock — the same exception a video player takes, and what the pill
+    already did on accept.
 - **StatsScreen** (the resource dashboard) — the densest use of the kit, and the screen
   the rest of the app's look was reverse-engineered from. Its content is a *readout*, and
   a readout is parsed in one glance — value, trend, is-it-bad — which is why every real
@@ -867,11 +879,26 @@ derived from. When adding a screen, reach for these before inventing a surface.
   - `destructive: true` paints the confirming button `danger` instead of `accent` —
     "Open" and "every paired phone stops working" should not be told apart by label alone.
 - **MainForm** — the one "designed" surface (originally a QR-only window; widened
-  into the app's main view in §12): `surface` background, 12px corner radius via
-  `DWMWA_WINDOW_CORNER_PREFERENCE` (Win11+), heading using the type scale in §4, QR
-  code framed in a `surface-raised` card with 12px padding, "Copy address" button
-  gets press feedback (owner-drawn, `OnMouseDown` background tint — WinForms buttons
-  don't support this natively).
+  into the app's main view in §12). It draws the same instrument language as the phone,
+  not a rounded Windows dialect of it: `bg` canvas with the §7 ruled ground behind
+  everything, chamfered panels with corner brackets (`Theme/Shapes.cs`, mirroring
+  `HudPanelShape`), tracked monospace section labels with a rule running out from them
+  (`Theme/HudText.cs`, mirroring `HudSectionHeader`), and lit status dots rather than
+  flat ones. The window frame keeps `DWMWA_WINDOW_CORNER_PREFERENCE` (Win11+) because
+  that corner belongs to the OS, not to us — everything inside it is cut.
+  - **The right column is a settings list, not a stack of cards.** One bracketed
+    `HudPanel` for what is live (the phones), then ruled `section` groups for
+    configuration — the shape the phone's own Settings screen uses. Four floating cards
+    of equal weight would say those groups are four separate objects and would give
+    "rotate the pairing token" the same voice as "open the shared folder".
+  - **No row height is written down.** `Theme/HudPanel.cs` measures wrapping captions at
+    the width they were actually given and sizes itself to its rows. The version before
+    it was a `TableLayoutPanel` of absolute heights that summed past the window's fixed
+    client height as soon as two phones were listed, and silently cut the last two
+    controls off the bottom.
+  - Every owner-drawn control carries the full desktop state set — default, hover,
+    pressed, disabled, **focused**. The focus ring is not optional: WinForms paints none
+    for an owner-drawn button, so without it keyboard navigation is invisible.
 
 ---
 
@@ -900,8 +927,26 @@ derived from. When adding a screen, reach for these before inventing a surface.
   a priority later, that's a WPF or WinUI 3 rewrite of the settings/QR window, not
   something to force into WinForms — flag that as a separate decision, don't attempt
   it as part of this token/component pass.
-- Rounded corners: `DwmSetWindowAttribute` with `DWMWA_WINDOW_CORNER_PREFERENCE`
-  (Windows 11 only — no-op/ignore on Win10, don't branch UI around it).
+- Window frame corners: `DwmSetWindowAttribute` with `DWMWA_WINDOW_CORNER_PREFERENCE`
+  (Windows 11 only — no-op/ignore on Win10, don't branch UI around it). This is the only
+  rounded corner in the desktop app; every corner *inside* the window is cut per §5.
+- **GDI has no letter-spacing.** A `Font` carries a family, a size and a style and
+  nothing that corresponds to the phone's `letterSpacing`, so tracked labels step the
+  advance by hand in `Theme/HudText.cs`. That is affordable only because tracking is
+  reserved for instrument text — short, uppercase, monospace — where every character
+  advances by the same amount and one measurement drives the whole run. Prose is never
+  drawn through it.
+- **WinForms will not chamfer a stock control.** A `TextBox` draws its own border and
+  offers `BorderStyle` and nothing else, so inputs go borderless inside `Theme/Field.cs`,
+  which draws the well. For the same reason `NumericUpDown` is not used anywhere: its
+  spinner is system-drawn and cannot take the palette.
+- **`Control.Visible` is *effective* visibility.** While a form is still hidden — which
+  is exactly when its first layout pass runs — every child reports `false`. Any layout
+  code that skips invisible children will size the whole window to nothing on that pass.
+- **A docked child of an `AutoScroll` panel sizes to the scrollable width**, which is the
+  width it had before the vertical scrollbar appeared. Dock the content inside an inner
+  stack whose width is pinned to the scroller's `ClientSize`, or the column grows a
+  horizontal scrollbar to cover for the vertical one.
 
 ---
 
@@ -1332,13 +1377,21 @@ about 100dp.
   because "Trackpad" vs "Remote" is a distinction icons alone don't make.
 - **Six icons is the ceiling, so the same merge happened twice more.** Adding the
   stats dashboard would have made seven, in a capsule whose slots are already the
-  narrowest targets in the app. Instead **Monitor** holds the mirror and the stats
-  screen (one activity: looking at that machine rather than driving it) and
+  narrowest targets in the app. Instead **Deck** holds the shortcut grid and the stats
+  screen (one activity: what that machine is running, and how hard it is working) and
   **Transfer** holds share and files (one activity: getting something over there),
   leaving five. All three rows are the same composable —
   [`PortalSubTabRow`](../android/app/src/main/java/com/portalremote/ui/SubTabs.kt) —
   because the argument above only holds if the row costs 48dp *once*, and three
   near-identical copies is how that stops being true.
+  - **The dashboard started next to the mirror, under Monitor** — "looking at that
+    machine rather than driving it" was a fair grouping, and it is still the reason
+    the pair fit in one slot. What broke it was the mirror learning to rotate: a
+    sub-tab row is 48dp across the top of a *picture*, which portrait could absorb
+    and a sideways phone could not (title row + tab row + chip row + capsule is
+    roughly half of a ~400dp-tall landscape window). So the mirror took the tab
+    outright and the readout moved to Deck, which it already looks like — §7's
+    StatsScreen entry is where the deck's chamfers and monospace labels came from.
 - **The dashboard is the one screen allowed to look alive.** §2 rule 2 buys silence
   at high frequency on the surfaces you drive through; a screen whose entire content
   is a number that changes every second is the opposite case. Its gauges, bars and

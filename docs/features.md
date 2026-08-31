@@ -55,7 +55,7 @@ phone, and can be edited or cancelled from the same picker.
 
 ## Resource dashboard
 
-The Monitor tab's second half is a live read of the PC itself: CPU as a ring plus a bar
+The Deck tab's second half is a live read of the PC itself: CPU as a ring plus a bar
 per logical core, memory, the last minute of both on one shared 0–100 chart, network
 throughput each way, a meter per fixed drive, and the five processes currently using the
 most processor time.
