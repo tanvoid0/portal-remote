@@ -768,8 +768,8 @@ internal sealed class PlanCard : Panel
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        using (var path = RoundedRect.Path(new Rectangle(_card.X, _card.Y, _card.Width - 1, _card.Height - 1),
-                   RoundedRect.RadiusCard))
+        using (var path = Shapes.Panel(new Rectangle(_card.X, _card.Y, _card.Width - 1, _card.Height - 1),
+                   LogicalToDeviceUnits(Shapes.CutLarge)))
         {
             using var fill = new SolidBrush(_colors.SurfaceMuted);
             using var border = new Pen(_plan.State == PlanState.Pending ? _colors.Accent : _colors.Border);

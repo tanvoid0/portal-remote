@@ -3,15 +3,29 @@ package com.portalremote.ui
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.KeyboardAlt
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -30,16 +45,22 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.WebAsset
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -73,6 +94,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -81,15 +103,19 @@ import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
 import com.portalremote.net.Protocol
 import com.portalremote.net.RemoteMonitor
+import com.portalremote.net.RemoteWindow
 import com.portalremote.net.ScreenApi
 import com.portalremote.ui.theme.AutoRotate
 import com.portalremote.ui.theme.Haptics
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.PortalRemoteTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import kotlin.math.max
 
 /**
  * Capture presets — the mirror trades frame rate against sharpness and there's no
@@ -124,7 +150,7 @@ enum class MirrorPreset(
 // Tap slop is shared with the trackpad (see `PadGesture.kt`) — the same finger doing
 // the same thing on either surface has to mean the same thing.
 
-private enum class TouchMode { WAITING, POINT, DRAG, TWO_FINGER, RAIL }
+private enum class TouchMode { WAITING, POINT, DRAG, TWO_FINGER, THREE_FINGER, RAIL }
 
 /** Width of the right-edge scroll rail — same figure as the trackpad's, so a drag
  *  there covers the same distance per notch on both surfaces. Only live once zoomed:
@@ -138,7 +164,7 @@ private val MIRROR_MOUNT = Color(0xFF07090C)
 private val MIRROR_RAIL_WIDTH = 44.dp
 
 /** What a two-finger gesture turned out to mean, decided once and then held. */
-internal enum class TwoFingerIntent { UNDECIDED, ZOOM, PAN, SCROLL }
+internal enum class TwoFingerIntent { UNDECIDED, ZOOM, PAN, SCROLL, SWIPE }
 
 /** Movement (px) a two-finger gesture needs before it commits to zoom/pan/scroll. */
 private const val GESTURE_INTENT_SLOP = 16f
@@ -160,12 +186,19 @@ internal fun classifyTwoFingerIntent(
     pinchTravel: Float,
     panTravel: Float,
     zoomed: Boolean,
+    /** The fingers are travelling more sideways than up/down. At 1x that is the
+     *  trackpad's back/forward swipe rather than a scroll — the same two fingers going
+     *  the same way have to mean the same thing on both surfaces, which is the whole
+     *  reason this parameter exists. Zoomed in it changes nothing: panning the picture
+     *  owns both axes. */
+    horizontal: Boolean = false,
 ): TwoFingerIntent = when {
     pinchTravel < GESTURE_INTENT_SLOP && panTravel < GESTURE_INTENT_SLOP -> TwoFingerIntent.UNDECIDED
     pinchTravel > panTravel -> TwoFingerIntent.ZOOM
     // Panning is only meaningful once there's content off screen; at 1x the same
     // gesture scrolls the desktop.
     zoomed -> TwoFingerIntent.PAN
+    horizontal -> TwoFingerIntent.SWIPE
     else -> TwoFingerIntent.SCROLL
 }
 
@@ -198,6 +231,7 @@ internal fun mirrorFraction(point: Offset, pan: Offset, zoom: Float, area: IntSi
  * against absolute coordinates because "where the finger landed" is the whole point
  * of this screen and a delta would throw it away.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenScreen(
     host: SavedHost,
@@ -216,7 +250,9 @@ fun ScreenScreen(
     // competes for a two-finger sideways drag at 1x.
     val wheel = remember(settings.naturalScroll, haptics) {
         WheelScroll(scope) { dx, dy, coasting ->
-            val direction = if (settings.naturalScroll) -1 else 1
+            // Same sign correction as the trackpad's: a positive wheel delta scrolls up
+            // on Windows, which is content following a finger that went down.
+            val direction = if (settings.naturalScroll) 1 else -1
             send(Protocol.scroll(dy = direction * dy * WHEEL_DELTA, dx = direction * dx * WHEEL_DELTA))
             if (!coasting) haptics.tick()
         }
@@ -224,6 +260,10 @@ fun ScreenScreen(
 
     var monitors by remember { mutableStateOf<List<RemoteMonitor>>(emptyList()) }
     var monitor by remember { mutableStateOf<Int?>(null) }
+    // One app instead of a whole display. Wins over [monitor] while set; the whole
+    // RemoteWindow rather than its handle so the chip can say which app it is.
+    var window by remember { mutableStateOf<RemoteWindow?>(null) }
+    var pickingWindow by remember { mutableStateOf(false) }
     // Keyed on the stored name so the persisted preset also lands when it arrives
     // after first composition (DataStore reads are async).
     var preset by remember(settings.mirrorPreset) {
@@ -283,14 +323,14 @@ fun ScreenScreen(
     // repeatOnLifecycle, not a bare collect: the mirror is the one screen that costs
     // the PC real work per frame, so backgrounding the app must actually stop it
     // rather than leave the server capturing for a phone in someone's pocket.
-    LaunchedEffect(monitor, preset, attempt) {
-        // A different monitor is a different aspect ratio, so a pan/zoom carried over
-        // from the last one would point at the wrong part of the desktop.
+    LaunchedEffect(monitor, window, preset, attempt) {
+        // A different monitor or window is a different aspect ratio, so a pan/zoom
+        // carried over from the last one would point at the wrong part of the desktop.
         zoom.value = 1f
         pan.value = Offset.Zero
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             error = null
-            api.frames(host, monitor, preset.fps, preset.width, preset.quality)
+            api.frames(host, monitor, window?.handle, preset.fps, preset.width, preset.quality)
                 .conflate()
                 .catch { e -> error = e.message ?: "Mirror stopped" }
                 .collect { frame = it }
@@ -338,14 +378,14 @@ fun ScreenScreen(
                             // so without the key a scroll-direction change wouldn't take
                             // effect until the handler was restarted for some other reason.
                             .pointerInput(
-                                monitor, settings.naturalScroll, haptics, settings.momentum, touchMode,
+                                monitor, window, settings.naturalScroll, haptics, settings.momentum, touchMode,
                             ) {
                                 if (touchMode) {
-                                    touchPassthroughGestures(monitor, send) { touched = true }
+                                    touchPassthroughGestures(monitor, window?.handle, send) { touched = true }
                                 } else {
                                     mirrorGestures(
-                                        monitor, zoom, pan, haptics, wheel,
-                                        MomentumLevel.from(settings.momentum), send,
+                                        monitor, window?.handle, zoom, pan, haptics, wheel,
+                                        MomentumLevel.from(settings.momentum), scope, send,
                                     ) {
                                         touched = true
                                     }
@@ -362,32 +402,33 @@ fun ScreenScreen(
                 }
 
                 if (!touched && frame != null && error == null) MirrorGestureHint()
-            }
 
-            // Typing while watching the screen you're typing into is the whole point, so
-            // the capture field sits under the frame rather than on its own tab. Same
-            // field as KeyboardScreen's — it is a keystroke buffer, not a document.
-            if (typing) {
-                KeyCaptureField(
-                    onText = { send(Protocol.text(it)) },
-                    onTap = { send(Protocol.tap(it)) },
-                    label = "Typing to the PC",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                )
+                // Typing while watching the screen you're typing into is the whole
+                // point, so the keyboard lives here rather than on its own tab — the
+                // Keyboard tab's own panel, floated over the mount so the picture keeps
+                // its height. In full screen nothing above pads for the IME or the
+                // cutout, so the overlay does it itself.
+                if (typing) {
+                    FloatingKeyboard(
+                        send = send,
+                        onClose = { typing = false },
+                        modifier = if (fullscreen) Modifier.safeDrawingPadding() else Modifier,
+                    )
+                }
             }
 
             if (!fullscreen) {
                 MirrorControls(
                     monitors = monitors,
                     monitor = monitor,
+                    window = window,
                     preset = preset,
                     zoom = zoom.value,
                     typing = typing,
                     touchMode = touchMode,
                     fullscreen = false,
-                    onMonitor = { monitor = it },
+                    onMonitor = { monitor = it; window = null },
+                    onPickWindow = { pickingWindow = true },
                     onPreset = { preset = it; onPresetChange(it) },
                     onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
                     onToggleTyping = { typing = !typing },
@@ -401,11 +442,13 @@ fun ScreenScreen(
             FloatingMirrorControls(
                 monitors = monitors,
                 monitor = monitor,
+                window = window,
                 preset = preset,
                 zoom = zoom.value,
                 typing = typing,
                 touchMode = touchMode,
-                onMonitor = { monitor = it },
+                onMonitor = { monitor = it; window = null },
+                onPickWindow = { pickingWindow = true },
                 onPreset = { preset = it; onPresetChange(it) },
                 onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
                 onToggleTyping = { typing = !typing },
@@ -414,7 +457,99 @@ fun ScreenScreen(
             )
         }
     }
+
+    if (pickingWindow) {
+        ModalBottomSheet(onDismissRequest = { pickingWindow = false }) {
+            WindowPickerSheet(
+                load = { api.windows(host) },
+                selected = window?.handle,
+                onSelect = { window = it; pickingWindow = false },
+            )
+        }
+    }
 }
+
+/**
+ * The open windows on the PC, fetched fresh each time the sheet opens — the list
+ * changes every time something is launched or closed, so a cached one would be
+ * wrong the moment it matters. A sheet rather than more chips: the row already
+ * holds nine, and this list is as long as the taskbar.
+ */
+@Composable
+private fun WindowPickerSheet(
+    load: suspend () -> List<RemoteWindow>,
+    selected: Long?,
+    onSelect: (RemoteWindow?) -> Unit,
+) {
+    var windows by remember { mutableStateOf<List<RemoteWindow>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var attempt by remember { mutableIntStateOf(0) }
+    LaunchedEffect(attempt) {
+        windows = null
+        error = null
+        runCatching { load() }
+            .onSuccess { windows = it }
+            .onFailure { error = it.message ?: "Couldn't list windows" }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+        Text(
+            "Mirror",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        // The way back to the whole display lives here, not only on the monitor chips:
+        // with a single monitor there are no monitor chips at all.
+        ListItem(
+            headlineContent = { Text("Whole display") },
+            leadingContent = { Icon(Icons.Filled.Monitor, contentDescription = null) },
+            colors = pickerRowColors(selected == null),
+            modifier = Modifier.clickable { onSelect(null) },
+        )
+        when {
+            error != null -> Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    error!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+                TextButton(onClick = { attempt++ }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(4.dp))
+                    Text("Try again")
+                }
+            }
+
+            windows == null -> Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp) }
+
+            else -> LazyColumn {
+                items(windows!!, key = { it.handle }) { w ->
+                    ListItem(
+                        headlineContent = { Text(w.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(w.process, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Filled.WebAsset, contentDescription = null) },
+                        colors = pickerRowColors(selected == w.handle),
+                        modifier = Modifier.clickable { onSelect(w) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The picked row tinted the way a selected chip is, so the sheet and the chip row
+ *  say "this one" the same way. */
+@Composable
+private fun pickerRowColors(selected: Boolean) = ListItemDefaults.colors(
+    containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+)
 
 /**
  * The controls, off the picture: a barely-there button in the corner that opens the
@@ -430,11 +565,13 @@ fun ScreenScreen(
 private fun FloatingMirrorControls(
     monitors: List<RemoteMonitor>,
     monitor: Int?,
+    window: RemoteWindow?,
     preset: MirrorPreset,
     zoom: Float,
     typing: Boolean,
     touchMode: Boolean,
     onMonitor: (Int?) -> Unit,
+    onPickWindow: () -> Unit,
     onPreset: (MirrorPreset) -> Unit,
     onResetZoom: () -> Unit,
     onToggleTyping: () -> Unit,
@@ -465,25 +602,135 @@ private fun FloatingMirrorControls(
         if (open) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
-                shape = MaterialTheme.shapes.extraLarge,
+                // Same shape and edge as the floating keyboard beside it: two floating
+                // panels on one screen get one chrome (§5).
+                shape = MaterialTheme.shapes.large,
                 // Near-opaque, unlike the button: chips have to stay readable against
                 // whatever happens to be on the desktop behind them.
                 color = PortalRemoteTheme.extendedColors.surfaceRaised.copy(alpha = 0.94f),
+                border = BorderStroke(1.dp, PortalRemoteTheme.hud.edge),
             ) {
                 MirrorControls(
                     monitors = monitors,
                     monitor = monitor,
+                    window = window,
                     preset = preset,
                     zoom = zoom,
                     typing = typing,
                     touchMode = touchMode,
                     fullscreen = true,
                     onMonitor = onMonitor,
+                    onPickWindow = onPickWindow,
                     onPreset = onPreset,
                     onResetZoom = onResetZoom,
-                    onToggleTyping = onToggleTyping,
+                    // The keyboard lands where this panel is; two floating panels on
+                    // one edge is one too many, and the chips are not needed mid-type.
+                    onToggleTyping = { open = false; onToggleTyping() },
                     onToggleTouchMode = onToggleTouchMode,
                     onToggleFullscreen = onExitFullscreen,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * [KeyboardPanel] floated over the picture rather than parked under it: a fixed strip
+ * under the frame took a third of it in portrait, and in landscape there is no under.
+ * Dragged by its header, so it can be moved off whatever is being read, and closed
+ * from there too — the chip row that opened it is under the IME by now. The key grid
+ * is folded away by default: with the IME up the mount is barely taller than the grid.
+ */
+@Composable
+private fun FloatingKeyboard(
+    send: (JSONObject) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var keys by rememberSaveable { mutableStateOf(false) }
+    var offset by remember { mutableStateOf(IntOffset.Zero) }
+    var area by remember { mutableStateOf(IntSize.Zero) }
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    // Keeps the handle inside the mount — a panel dragged off screen has no way back.
+    // Applied at draw time as well as per drag, because the mount shrinks under the
+    // panel whenever the IME comes up and a stored offset from before is then off the
+    // top, header and all.
+    fun Density.clamped(o: IntOffset): IntOffset {
+        val pad = 8.dp.roundToPx()
+        val maxX = ((area.width - size.width) / 2 - pad).coerceAtLeast(0)
+        val maxY = (area.height - size.height - 2 * pad).coerceAtLeast(0)
+        return IntOffset(o.x.coerceIn(-maxX, maxX), o.y.coerceIn(-maxY, 0))
+    }
+
+    // No pointer handler on this Box, so a touch beside the panel still reaches the
+    // frame's gesture loop underneath — same as the floating controls.
+    Box(modifier = modifier.fillMaxSize().onSizeChanged { area = it }) {
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .offset { clamped(offset) }
+                .padding(8.dp)
+                // Wide enough that the drawn keyboard's 13 caps are keys and not
+                // pixels on a sideways phone; portrait is narrower than this anyway.
+                .widthIn(max = 560.dp)
+                .onSizeChanged { size = it },
+            shape = MaterialTheme.shapes.large,
+            // Near-opaque, like the floating controls: keys have to stay readable
+            // against whatever happens to be on the desktop behind them.
+            color = PortalRemoteTheme.extendedColors.surfaceRaised.copy(alpha = 0.94f),
+            border = BorderStroke(1.dp, PortalRemoteTheme.hud.edge),
+        ) {
+            Column(
+                modifier = Modifier.padding(start = 10.dp, end = 4.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, drag ->
+                                change.consume()
+                                offset = clamped(
+                                    IntOffset(offset.x + drag.x.roundToInt(), offset.y + drag.y.roundToInt()),
+                                )
+                            }
+                        },
+                ) {
+                    Icon(
+                        Icons.Filled.DragHandle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Typing to the PC",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    )
+                    IconButton(onClick = { keys = !keys }) {
+                        Icon(
+                            Icons.Filled.KeyboardAlt,
+                            contentDescription = if (keys) "Hide keys" else "Show keys",
+                            tint = if (keys) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Filled.Close, contentDescription = "Stop typing")
+                    }
+                }
+                KeyboardPanel(
+                    send = send,
+                    showKeys = keys,
+                    keyHeight = 40.dp,
+                    // Scrolls under a fixed header: a sideways phone with the IME up
+                    // leaves ~190dp of mount, which is less than the field and phrases
+                    // alone, and the header has to stay put or the panel can't be
+                    // moved or closed.
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(end = 6.dp),
                 )
             }
         }
@@ -495,8 +742,8 @@ private fun FloatingMirrorControls(
 @Composable
 private fun MirrorGestureHint() {
     Text(
-        "Pinch to zoom · two fingers to pan or scroll\n" +
-            "Zoomed in, the right edge scrolls",
+        "Pinch to zoom · two fingers scroll, hold to keep going\n" +
+            "Swipe two to go back · three for desktops",
         style = MaterialTheme.typography.bodySmall,
         color = Color.White.copy(alpha = 0.7f),
         textAlign = TextAlign.Center,
@@ -514,11 +761,16 @@ private fun MirrorGestureHint() {
  */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGestures(
     monitor: Int?,
+    window: Long?,
     zoom: MutableState<Float>,
     pan: MutableState<Offset>,
     haptics: Haptics,
     wheel: WheelScroll,
     momentum: MomentumLevel,
+    /** Where hold-to-keep-scrolling runs. Outlives no gesture — it is cancelled on
+     *  every release — but it has to outlive this loop's *event*, which is why it
+     *  can't just be launched from here. */
+    scope: CoroutineScope,
     send: (JSONObject) -> Unit,
     onTouch: () -> Unit,
 ) {
@@ -539,7 +791,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
         // the desktop fraction the server wants is relative to the *content*.
         fun pointAt(x: Float, y: Float) {
             val fraction = mirrorFraction(Offset(x, y), pan.value, zoom.value, area)
-            send(Protocol.mouseMoveNorm(fraction.x, fraction.y, monitor))
+            send(Protocol.mouseMoveNorm(fraction.x, fraction.y, monitor, window))
         }
 
         // The rail is decided by where the finger *landed*, once, same as the
@@ -556,6 +808,31 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
         var panTravel = 0f
         var twoFinger = TwoFingerIntent.UNDECIDED
         var pointerCount = 1
+        // The axis a three-finger swipe committed to, and whether it has already fired.
+        // A swipe says its piece once, however far the fingers carry on — and a release
+        // after one must not also click, the same rule the pad has.
+        var swipeAxis: Axis? = null
+        var swipeFired = false
+
+        // Hold-to-keep-scrolling, the same mechanic the trackpad has had: a phone-height
+        // frame is a dozen notches of travel, so without it reading a long page here
+        // means repeating the same two-finger swipe until the page ends. Displacement
+        // from where the scroll started, and when it last actually changed, are what the
+        // rate curve runs on — see startHoldToScroll.
+        var scrolledX = 0f
+        var scrolledY = 0f
+        var scrollOffset = 0f
+        var scrollLastMoveMs = down.uptimeMillis
+        var holdJob: Job? = null
+        fun armHold() {
+            holdJob?.cancel()
+            holdJob = startHoldToScroll(
+                scope, wheel, haptics,
+                offset = { scrollOffset },
+                lastMoveMs = { scrollLastMoveMs },
+            )
+        }
+        if (onRail) armHold()
 
         while (true) {
             val elapsed = System.currentTimeMillis() - downTimeMs
@@ -580,13 +857,14 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
             pointerCount = maxOf(pointerCount, pressed.size)
 
             if (pressed.isEmpty()) {
+                holdJob?.cancel()
                 // Both fingers often lift in this very event rather than a prior
                 // move — each change's positionChange() is still valid here even
                 // though `pressed` just went false. Skipping it drops the last chunk
                 // of a fast flick from totalMove, and a real two-finger scroll can
                 // land under TAP_SLOP and fire a right-click instead — see the same
                 // fix in TrackpadScreen's gesture loop.
-                if (mode == TouchMode.TWO_FINGER) {
+                if (mode == TouchMode.TWO_FINGER || mode == TouchMode.THREE_FINGER) {
                     totalMove += event.changes
                         .map { it.positionChange().getDistance() }
                         .average().toFloat()
@@ -602,6 +880,14 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                         haptics.tick()
                         send(Protocol.mouseClick("left", down = false))
                     }
+                    // A swipe that already fired has said what it meant; a trailing
+                    // tap-shaped release must not also click.
+                    swipeFired -> Unit
+                    // Same three keys the pad's three-finger tap sends.
+                    totalMove < TAP_SLOP && pointerCount >= 3 -> {
+                        haptics.tap()
+                        send(Protocol.combo("f5"))
+                    }
                     totalMove < TAP_SLOP && pointerCount >= 2 -> {
                         haptics.tap()
                         send(Protocol.mouseClick("right"))
@@ -614,8 +900,24 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                 break
             }
 
-            if (pointerCount >= 2 && mode != TouchMode.DRAG && mode != TouchMode.RAIL) {
-                mode = TouchMode.TWO_FINGER
+            if (mode != TouchMode.DRAG && mode != TouchMode.RAIL) {
+                if (pressed.size >= 3 && mode != TouchMode.THREE_FINGER) {
+                    // Fingers land milliseconds apart, so a three-finger swipe is briefly
+                    // a two-finger one. Everything the two-finger head of the gesture
+                    // decided is thrown away here, or the stray first 20ms picks the
+                    // meaning — the same reset the pad does on a pointer-count change.
+                    mode = TouchMode.THREE_FINGER
+                    holdJob?.cancel()
+                    holdJob = null
+                    twoFinger = TwoFingerIntent.UNDECIDED
+                    scrolledX = 0f
+                    scrolledY = 0f
+                    swipeAxis = null
+                } else if (pointerCount >= 2 && mode != TouchMode.THREE_FINGER) {
+                    // Never back down from three: lifting the third finger at the end of
+                    // a desktop swipe is not the start of a page-back.
+                    mode = TouchMode.TWO_FINGER
+                }
             }
 
             when (mode) {
@@ -627,6 +929,10 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                     val dy = primary.positionChange().y
                     primary.consume()
                     velocity.addPosition(primary.uptimeMillis, primary.position)
+                    scrollOffset = primary.position.y - down.position.y
+                    // Sub-pixel jitter from a resting finger must not count as movement,
+                    // or the hold never gets to start.
+                    if (kotlin.math.abs(dy) >= 1f) scrollLastMoveMs = primary.uptimeMillis
                     wheel.by(dy = dy)
                 }
 
@@ -652,7 +958,29 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                     if (twoFinger == TwoFingerIntent.UNDECIDED) {
                         pinchTravel += kotlin.math.abs(spread - previousSpread)
                         panTravel += centroidShift.getDistance()
-                        twoFinger = classifyTwoFingerIntent(pinchTravel, panTravel, zoom.value > 1f)
+                        // Banked while undecided so a gesture that turns out to be a
+                        // scroll can replay everything the classification swallowed.
+                        scrolledX += centroidShift.x
+                        scrolledY += centroidShift.y
+                        twoFinger = classifyTwoFingerIntent(
+                            pinchTravel,
+                            panTravel,
+                            zoomed = zoom.value > 1f,
+                            horizontal = kotlin.math.abs(scrolledX) > kotlin.math.abs(scrolledY),
+                        )
+                        if (twoFinger == TwoFingerIntent.SCROLL) {
+                            velocity.addPosition(a.uptimeMillis, centroid)
+                            wheel.by(dx = scrolledX, dy = scrolledY)
+                            scrollOffset = scrolledY
+                            scrollLastMoveMs = a.uptimeMillis
+                            armHold()
+                        }
+                        // Whatever this event carried is already banked above — in
+                        // `scrolledX/Y` for a scroll or swipe, in the travel totals for a
+                        // pinch — so the branches below would replay it. One frame is
+                        // nothing to a zoom or a pan and everything to a scroll, which is
+                        // why the replay above exists.
+                        continue
                     }
 
                     when (twoFinger) {
@@ -677,9 +1005,77 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                         // horizontal two-finger gesture on back/forward, but nothing
                         // competes for it here, and a wide timeline or spreadsheet is
                         // exactly what the mirror gets pointed at.
+                        // Two fingers sideways at 1x is back/forward, exactly as on the
+                        // trackpad. Horizontal *scrolling* loses its gesture here, which
+                        // is the price of the two surfaces agreeing on what a sideways
+                        // swipe means — and back/forward is what a hand reaches for
+                        // orders of magnitude more often.
+                        TwoFingerIntent.SWIPE -> {
+                            scrolledX += centroidShift.x
+                            if (!swipeFired && kotlin.math.abs(scrolledX) >= SWIPE_TRIGGER) {
+                                swipeFired = true
+                                haptics.press()
+                                send(
+                                    Protocol.combo(
+                                        *swipeShortcut(
+                                            GestureMode.TWO_FINGER, Axis.HORIZONTAL, scrolledX,
+                                        ).toTypedArray(),
+                                    ),
+                                )
+                            }
+                        }
+
                         TwoFingerIntent.SCROLL -> {
                             velocity.addPosition(a.uptimeMillis, centroid)
+                            scrolledX += centroidShift.x
+                            scrolledY += centroidShift.y
+                            scrollOffset = scrolledY
+                            if (kotlin.math.abs(centroidShift.y) >= 1f) {
+                                scrollLastMoveMs = a.uptimeMillis
+                            }
                             wheel.by(dx = centroidShift.x, dy = centroidShift.y)
+                        }
+                    }
+                }
+
+                TouchMode.THREE_FINGER -> {
+                    event.changes.forEach { it.consume() }
+                    // The centroid, not one finger: three fingers never lift together,
+                    // and tracking whichever is first reads the lift as a direction
+                    // change. positionChange() is Offset.Zero on a consumed change, so
+                    // the shift is taken from the positions themselves.
+                    val shift = Offset(
+                        pressed.map { it.position.x - it.previousPosition.x }.average().toFloat(),
+                        pressed.map { it.position.y - it.previousPosition.y }.average().toFloat(),
+                    )
+                    totalMove += shift.getDistance()
+                    if (!swipeFired) {
+                        scrolledX += shift.x
+                        scrolledY += shift.y
+                        if (swipeAxis == null &&
+                            max(kotlin.math.abs(scrolledX), kotlin.math.abs(scrolledY)) >= AXIS_LOCK_SLOP
+                        ) {
+                            swipeAxis = if (kotlin.math.abs(scrolledX) > kotlin.math.abs(scrolledY)) {
+                                Axis.HORIZONTAL
+                            } else {
+                                Axis.VERTICAL
+                            }
+                        }
+                        val locked = swipeAxis
+                        val travel = if (locked == Axis.HORIZONTAL) scrolledX else scrolledY
+                        if (locked != null && kotlin.math.abs(travel) >= SWIPE_TRIGGER) {
+                            swipeFired = true
+                            // The result shows up on the *other* screen, so the phone
+                            // has to say something itself — the app's heaviest haptic,
+                            // same as on the pad.
+                            haptics.press()
+                            send(
+                                Protocol.combo(
+                                    *swipeShortcut(
+                                        GestureMode.THREE_FINGER, locked, travel,
+                                    ).toTypedArray(),
+                                ),
+                            )
                         }
                     }
                 }
@@ -717,6 +1113,7 @@ private const val MAX_TOUCH_CONTACTS = 10
  */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.touchPassthroughGestures(
     monitor: Int?,
+    window: Long?,
     send: (JSONObject) -> Unit,
     onTouch: () -> Unit,
 ) {
@@ -755,7 +1152,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.touchPas
                 if (up) { slots.remove(key); freeSlots.addLast(slot) }
             }
 
-            if (contacts.isNotEmpty()) send(Protocol.touch(contacts, monitor))
+            if (contacts.isNotEmpty()) send(Protocol.touch(contacts, monitor, window))
             if (event.changes.all { !it.pressed }) break
         }
     }
@@ -782,17 +1179,19 @@ private fun MirrorMessage(message: String, onRetry: () -> Unit) {
     }
 }
 
-/** Monitor picker (only when there's a choice to make) plus the quality preset. */
+/** Monitor picker (only when there's a choice to make), the app chip, plus the quality preset. */
 @Composable
 private fun MirrorControls(
     monitors: List<RemoteMonitor>,
     monitor: Int?,
+    window: RemoteWindow?,
     preset: MirrorPreset,
     zoom: Float,
     typing: Boolean,
     touchMode: Boolean,
     fullscreen: Boolean,
     onMonitor: (Int?) -> Unit,
+    onPickWindow: () -> Unit,
     onPreset: (MirrorPreset) -> Unit,
     onResetZoom: () -> Unit,
     onToggleTyping: () -> Unit,
@@ -813,19 +1212,27 @@ private fun MirrorControls(
         if (monitors.size > 1) {
             monitors.forEach { display ->
                 FilterChip(
-                    selected = monitor == display.index,
+                    selected = window == null && monitor == display.index,
                     onClick = { onMonitor(display.index) },
                     leadingIcon = { ChipIcon(Icons.Filled.Monitor) },
                     label = { Text(display.label) },
                 )
             }
             FilterChip(
-                selected = monitor == ALL_MONITORS,
+                selected = window == null && monitor == ALL_MONITORS,
                 onClick = { onMonitor(ALL_MONITORS) },
                 leadingIcon = { ChipIcon(Icons.Filled.SelectAll) },
                 label = { Text("All") },
             )
         }
+        // One app rather than a display. Names the app while one is picked so the row
+        // says what the frame is showing; tapping it again opens the list to change.
+        FilterChip(
+            selected = window != null,
+            onClick = onPickWindow,
+            leadingIcon = { ChipIcon(Icons.Filled.WebAsset) },
+            label = { Text(window?.process?.ifEmpty { null } ?: "App") },
+        )
         MirrorPreset.entries.forEach { option ->
             FilterChip(
                 selected = preset == option,

@@ -301,18 +301,10 @@ fun DeckTabs(
     var mode by rememberSaveable { mutableStateOf(DeckMode.SHORTCUTS) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        PortalSubTabRow(
-            entries = DeckMode.entries,
-            selected = mode,
-            label = { it.label },
-            icon = { it.icon },
-            onSelect = { mode = it },
-        )
-
         Crossfade(
             targetState = mode,
             animationSpec = tween(Motion.TabSwitchDurationMs, easing = Motion.EaseOut),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth().weight(1f),
             label = "deck-mode",
         ) { selected ->
             Box(modifier = Modifier.fillMaxSize()) {
@@ -335,6 +327,16 @@ fun DeckTabs(
                 }
             }
         }
+
+        // At the bottom, within reach — same placement as Control's, for the same
+        // reason (docs/design-system.md §13).
+        PortalSubTabRow(
+            entries = DeckMode.entries,
+            selected = mode,
+            label = { it.label },
+            icon = { it.icon },
+            onSelect = { mode = it },
+        )
     }
 }
 
@@ -631,9 +633,11 @@ private fun DeckTile(
         }
 
         if (editing) {
+            // 48dp targets (§5), glyph unchanged at 15/16dp — a 26dp hitbox next to a
+            // 22dp one made "delete" and "move" the same mis-tap.
             IconButton(
                 onClick = onDelete,
-                modifier = Modifier.align(Alignment.TopEnd).size(26.dp),
+                modifier = Modifier.align(Alignment.TopEnd).size(48.dp),
             ) {
                 Icon(
                     Icons.Filled.Close,
@@ -642,23 +646,31 @@ private fun DeckTile(
                     modifier = Modifier.size(15.dp),
                 )
             }
-            Row(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp)) {
-                IconButton(onClick = onMoveEarlier, enabled = canMoveEarlier, modifier = Modifier.size(22.dp)) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = "Move ${item.label} earlier",
-                        tint = hud.textDim,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                IconButton(onClick = onMoveLater, enabled = canMoveLater, modifier = Modifier.size(22.dp)) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "Move ${item.label} later",
-                        tint = hud.textDim,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
+            // Opposite corners rather than a shared row: adjacent 48dp arrows would
+            // overlap on a 92dp tile, and touching corners can't invert each other.
+            IconButton(
+                onClick = onMoveEarlier,
+                enabled = canMoveEarlier,
+                modifier = Modifier.align(Alignment.BottomStart).size(48.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = "Move ${item.label} earlier",
+                    tint = hud.textDim,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            IconButton(
+                onClick = onMoveLater,
+                enabled = canMoveLater,
+                modifier = Modifier.align(Alignment.BottomEnd).size(48.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Move ${item.label} later",
+                    tint = hud.textDim,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }

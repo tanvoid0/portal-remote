@@ -18,7 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.portalremote.UploadProgress
 import com.portalremote.data.SavedHost
+import kotlinx.coroutines.flow.SharedFlow
 import com.portalremote.net.ShareEntry
 import com.portalremote.ui.theme.Motion
 
@@ -47,6 +49,13 @@ fun TransferScreen(
     onShareText: (String) -> Unit,
     onShareUri: (Uri) -> Unit,
     onRetryShare: (Long) -> Unit,
+    /** Files' folder and upload, owned by the ViewModel — see [FilesScreen]. */
+    filesPath: String,
+    onFilesPath: (String) -> Unit,
+    upload: UploadProgress?,
+    uploadMessages: SharedFlow<String>,
+    onUpload: (Uri) -> Unit,
+    onCancelUpload: () -> Unit,
     bottomInset: Dp = 0.dp,
 ) {
     var mode by rememberSaveable { mutableStateOf(TransferMode.SHARE) }
@@ -78,6 +87,12 @@ fun TransferScreen(
                     )
                     TransferMode.FILES -> FilesScreen(
                         host = host,
+                        path = filesPath,
+                        onPath = onFilesPath,
+                        upload = upload,
+                        uploadMessages = uploadMessages,
+                        onUpload = onUpload,
+                        onCancelUpload = onCancelUpload,
                         bottomInset = bottomInset,
                     )
                 }

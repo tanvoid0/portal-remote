@@ -45,6 +45,19 @@ public static class InputActions
         return table;
     }
 
+    /// <summary>Keys the phone has sent down and not yet up. A modifier held on the phone is
+    /// held on the PC, and if the socket dies in between nothing would ever let go of it.</summary>
+    // ponytail: one set for all sockets; per-connection if two phones ever hold keys at once.
+    private static readonly HashSet<ushort> Held = [];
+
+    /// <summary>Send key-up for everything still down — the control socket's close path.</summary>
+    public static void ReleaseHeld()
+    {
+        ushort[] keys;
+        lock (Held) { keys = [.. Held]; Held.Clear(); }
+        foreach (var vk in keys) WinInput.KeyEvent(vk, false);
+    }
+
     /// <summary>Resolve a key from either a numeric <c>vk</c> or a named <c>key</c>.</summary>
     public static ushort ResolveVk(JsonElement msg)
     {
@@ -83,14 +96,15 @@ public static class InputActions
 
             case "mouse_move_abs":
             {
-                // nx/ny (0..1 fractions of the monitor named by 'mon') take precedence
+                // nx/ny (0..1 fractions of the monitor named by 'mon', or the window named
+                // by 'win' — see WinInput.BoundsFor) take precedence
                 // over pixel x/y — the screen mirror has no reason to know desktop pixels.
                 var nx = GetDouble(msg, "nx");
                 if (nx is not null)
                 {
                     var ny = GetDouble(msg, "ny")
                         ?? throw new UnknownMessageException("mouse_move_abs with 'nx' also needs 'ny'");
-                    WinInput.MoveAbsoluteNormalized(nx.Value, ny, GetInt(msg, "mon"));
+                    WinInput.MoveAbsoluteNormalized(nx.Value, ny, GetInt(msg, "mon"), GetLong(msg, "win"));
                     return null;
                 }
 
@@ -123,8 +137,13 @@ public static class InputActions
                 return null;
 
             case "key":
-                WinInput.KeyEvent(ResolveVk(msg), GetBool(msg, "down") ?? true);
+            {
+                var vk = ResolveVk(msg);
+                var down = GetBool(msg, "down") ?? true;
+                WinInput.KeyEvent(vk, down);
+                lock (Held) { if (down) Held.Add(vk); else Held.Remove(vk); }
                 return null;
+            }
 
             case "tap":
                 WinInput.Tap(ResolveVk(msg));
@@ -252,7 +271,7 @@ public static class InputActions
                 var contacts = ParseTouchContacts(msg);
                 if (contacts.Count == 0)
                     throw new UnknownMessageException("touch needs a non-empty 'contacts' list");
-                WinInput.Touch(GetInt(msg, "mon"), contacts);
+                WinInput.Touch(GetInt(msg, "mon"), GetLong(msg, "win"), contacts);
                 return null;
             }
 
@@ -323,6 +342,10 @@ public static class InputActions
     private static int? GetInt(JsonElement msg, string name) =>
         msg.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i)
             ? i : null;
+
+    private static long? GetLong(JsonElement msg, string name) =>
+        msg.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var l)
+            ? l : null;
 
     private static double? GetDouble(JsonElement msg, string name) =>
         msg.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d)

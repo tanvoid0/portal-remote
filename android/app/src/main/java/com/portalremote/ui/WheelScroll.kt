@@ -1,14 +1,19 @@
 package com.portalremote.ui
 
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.ui.geometry.Offset
+import com.portalremote.ui.theme.Haptics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.sign
 
 /** Pixels of finger travel per wheel notch. Shared by the trackpad and the mirror so
  *  a scroll feels the same distance on both. */
@@ -114,5 +119,82 @@ internal class WheelScroll(
                 last = value
             }
         }
+    }
+}
+
+/**
+ * Hold-to-keep-scrolling — shared by every scrolling surface in the app: the
+ * trackpad's rail and two-finger scroll, and the mirror's (see [startHoldToScroll]).
+ *
+ * Either surface is 1:1 while the finger moves, which is right for a nudge and useless
+ * for a long document: a phone-height pad is maybe twelve notches of travel, so
+ * reaching the bottom of anything means repeating the same swipe over and over. So once
+ * the finger has been still for [RAIL_HOLD_MS] it switches to rate control —
+ * displacement from where the gesture started becomes a speed, the way holding a
+ * scrollbar's track does. Moving again hands control straight back to 1:1.
+ *
+ * Rate is squared, not linear, so the first third of the travel is a slow crawl you
+ * can stop on a line, and full tilt is reserved for the far end.
+ */
+private const val RAIL_HOLD_MS = 120L
+private const val RAIL_TICK_MS = 16L
+
+/** Displacement from where the gesture started below which holding does nothing. A
+ *  finger parked where it landed is a finger resting on the pad, not a request to
+ *  scroll forever. */
+private const val RAIL_DEAD_ZONE = 20f
+
+/** Displacement past the dead zone at which the rate hits [RAIL_MAX_PX_PER_SEC]. */
+private const val RAIL_FULL_SPEED = 160f
+
+/** Top auto-scroll rate, in the finger-travel pixels [WheelScroll] takes — about 26
+ *  notches a second, which is a fast but still readable page-flick. */
+private const val RAIL_MAX_PX_PER_SEC = 1600f
+
+/**
+ * Finger travel to emit for one tick of auto-scroll, given how far the held finger sits
+ * from where its gesture began. Pure and separate from the job below so the curve — dead
+ * zone, squared ramp, ceiling — can be checked without a clock; see `HoldScrollTest`.
+ */
+internal fun holdScrollStep(offset: Float, tickMs: Long = RAIL_TICK_MS): Float {
+    val over = abs(offset) - RAIL_DEAD_ZONE
+    if (over <= 0f) return 0f
+    val t = (over / RAIL_FULL_SPEED).coerceAtMost(1f)
+    return sign(offset) * t * t * RAIL_MAX_PX_PER_SEC * (tickMs / 1000f)
+}
+
+/**
+ * The hold-to-keep-scrolling mechanic itself, factored out so the rail and the
+ * two-finger vertical scroll, on both the trackpad and the mirror, share one rate
+ * curve instead of four that could drift apart. [offset] is displacement from wherever the caller considers the gesture's
+ * start — the rail's distance from touch-down, or the two-finger case's cumulative
+ * pan since the axis locked; [lastMoveMs] is the last time that offset actually
+ * changed, which is what "held still" means here.
+ */
+internal fun startHoldToScroll(
+    scope: CoroutineScope,
+    wheel: WheelScroll,
+    haptics: Haptics,
+    offset: () -> Float,
+    lastMoveMs: () -> Long,
+): Job = scope.launch {
+    var running = false
+    while (isActive) {
+        delay(RAIL_TICK_MS)
+        // Pointer uptime, not wall clock: [Finger.uptimeMs] is what stamps `lastMoveMs`,
+        // and wall clock jumps whenever the network corrects it.
+        val holding = SystemClock.uptimeMillis() - lastMoveMs() >= RAIL_HOLD_MS
+        val step = if (holding) holdScrollStep(offset()) else 0f
+        if (step == 0f) {
+            running = false
+            continue
+        }
+        // One bump as it takes over, then silence: this is continuous motion, and
+        // Haptics.kt's rule is that continuous motion gets nothing.
+        if (!running) { running = true; haptics.tick() }
+        // `coasting` because it isn't a finger: it suppresses the per-notch tick and
+        // leaves the scroll echo re-stamping, which is what says the auto-scroll is
+        // still running.
+        wheel.by(dy = step, coasting = true)
     }
 }

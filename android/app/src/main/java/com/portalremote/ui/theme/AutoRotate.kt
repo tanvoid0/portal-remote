@@ -23,12 +23,15 @@ import androidx.compose.ui.platform.LocalView
  * chrome charging admission for the obvious. The sensor listener, the timeout and the
  * quadrant classifier all went with it — the OS does that part.
  *
- * [ActivityInfo.SCREEN_ORIENTATION_SENSOR] rather than `..._USER`: it follows the
- * sensor even when the system's own rotation lock is on. That is the same exception a
- * video player takes full screen and for the same reason — the lock is a preference
- * about screens you *read*, and this is a screen whose whole shape is landscape. It is
- * also what the old chip did on accept (`SENSOR_LANDSCAPE`), so no behaviour the user
- * could already reach is being widened here.
+ * [ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE] rather than plain `..._SENSOR`:
+ * the latter also grants portrait, which is exactly the layout the mirror has none of —
+ * tilting the phone upright mid-mirror would flip it straight back to the letterboxed
+ * view this exists to escape. It follows the sensor even when the system's own rotation
+ * lock is on, the same exception a video player takes full screen and for the same
+ * reason — the lock is a preference about screens you *read*, and this is a screen whose
+ * whole shape is landscape. It is also what the old chip did on accept
+ * (`SENSOR_LANDSCAPE`), so no behaviour the user could already reach is being widened
+ * here.
  */
 @Composable
 fun AutoRotate() {
@@ -36,7 +39,7 @@ fun AutoRotate() {
     if (view.isInEditMode) return
     val activity = view.context as Activity
     DisposableEffect(activity) {
-        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         // Leaving the mirror always locks back, so the one screen that earned the
         // unlock is the only one that ever holds it.
         onDispose { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }

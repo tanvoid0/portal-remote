@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -66,8 +67,10 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -106,6 +109,7 @@ import com.portalremote.ui.theme.PortalRemoteTheme
 import com.portalremote.ui.theme.SystemBars
 import com.portalremote.ui.theme.portalCardBorder
 import com.portalremote.ui.theme.portalCardColors
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
@@ -147,8 +151,14 @@ fun PairScreen(
     var discovered by remember { mutableStateOf(emptyList<DiscoveredHost>()) }
     var lastScanError by remember { mutableStateOf<String?>(null) }
     var scanLocked by remember { mutableStateOf(false) }
+    // Bumped by the "Search again" button below, so a re-scan is a fresh probe rather
+    // than a re-collect of a flow that already gave up broadcasting.
+    var discoveryGen by remember { mutableStateOf(0) }
 
-    LaunchedEffect(Unit) { discoverHosts().collect { discovered = it } }
+    LaunchedEffect(discoveryGen) {
+        discovered = emptyList()
+        discoverHosts().collect { discovered = it }
+    }
 
     // Asking for a token holds the PC's dialog open, so it's driven from state
     // rather than a click handler: cancelling is then just `pending = null`, and
@@ -207,6 +217,7 @@ fun PairScreen(
                         // The remembered PC already has its own card above.
                         hosts = discovered.filter { it.host != savedHost?.host },
                         onPick = { pending = PendingPair(it.host, it.port, it.name) },
+                        onRescan = { discoveryGen++ },
                     )
 
                     PairMode.Manual -> ManualAddressSection(
@@ -273,21 +284,52 @@ private fun VpnNotice() {
 // ---------------------------------------------------------------- sections ----
 
 @Composable
-private fun DiscoverSection(hosts: List<DiscoveredHost>, onPick: (DiscoveredHost) -> Unit) {
+private fun DiscoverSection(
+    hosts: List<DiscoveredHost>,
+    onPick: (DiscoveredHost) -> Unit,
+    onRescan: () -> Unit,
+) {
     SectionLabel("PCs on this network")
 
     if (hosts.isEmpty()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-            Text(
-                "Looking for PCs running Portal Remote…",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        // A broadcast that reaches nothing looks identical to one still in flight —
+        // without a deadline this spinner would just run forever.
+        var timedOut by remember(hosts) { mutableStateOf(false) }
+        LaunchedEffect(hosts) {
+            delay(10_000)
+            timedOut = true
+        }
+
+        if (timedOut) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "No PCs found",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onRescan) {
+                    Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                    Text("Search again")
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    "Looking for PCs running Portal Remote…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         return
     }
@@ -411,6 +453,10 @@ private fun LastDeviceCard(
     onReconnect: () -> Unit,
     onForget: () -> Unit,
 ) {
+    // "Forget" sits ~8dp from "Reconnect" — a confirm here is the only thing between
+    // a mis-tap and a re-pair that needs someone physically at the PC to approve.
+    var confirmForget by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = portalCardColors(),
@@ -449,7 +495,7 @@ private fun LastDeviceCard(
                 // Link/link-off as a pair, and the same LinkOff Settings and the
                 // dead-session dialog use — "this pairing goes away" is one idea and
                 // should look like one wherever it's offered.
-                TextButton(onClick = onForget) {
+                TextButton(onClick = { confirmForget = true }) {
                     Icon(
                         Icons.Filled.LinkOff,
                         contentDescription = null,
@@ -465,6 +511,20 @@ private fun LastDeviceCard(
             host.mac?.let { WakeButton(mac = it, peer = host.host, label = host.label) }
         }
     }
+
+    if (confirmForget) {
+        AlertDialog(
+            onDismissRequest = { confirmForget = false },
+            title = { Text("Forget this PC?") },
+            text = { Text("Re-pairing needs someone at the PC to approve it.") },
+            confirmButton = {
+                TextButton(onClick = { confirmForget = false; onForget() }) { Text("Forget") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmForget = false }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 /**
@@ -473,12 +533,18 @@ private fun LastDeviceCard(
  * the machine doesn't come up, the fix is in its BIOS and adapter settings and the
  * text has to say so rather than leave the user pressing a button that "did nothing".
  */
+/** Untried until pressed, then whichever of the two actually happened — a failed
+ *  send has to say so rather than silently look identical to one that went out. */
+private enum class WakeStatus { Untried, Sent, Failed }
+
 @Composable
 private fun WakeButton(mac: String, peer: String, label: String) {
-    var sent by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(WakeStatus.Untried) }
     val scope = rememberCoroutineScope()
 
-    TextButton(onClick = { scope.launch { sent = WakeOnLan.wake(mac, peer) } }) {
+    TextButton(onClick = {
+        scope.launch { status = if (WakeOnLan.wake(mac, peer)) WakeStatus.Sent else WakeStatus.Failed }
+    }) {
         Icon(
             Icons.Filled.PowerSettingsNew,
             contentDescription = null,
@@ -487,13 +553,19 @@ private fun WakeButton(mac: String, peer: String, label: String) {
         Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
         Text("Wake $label")
     }
-    if (sent) {
-        Text(
+    when (status) {
+        WakeStatus.Sent -> Text(
             "Sent. If it doesn't wake, Wake-on-LAN has to be enabled in the PC's BIOS " +
                 "and on its network adapter.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        WakeStatus.Failed -> Text(
+            "Couldn't send the wake packet from this network.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        WakeStatus.Untried -> {}
     }
 }
 
@@ -569,7 +641,12 @@ private fun WaitingForApprovalCard(label: String, onCancel: () -> Unit) {
  */
 @Composable
 private fun IpEntry(onConnect: (String, Int) -> Unit) {
-    val octets = remember { mutableStateListOf("", "", "", "") }
+    // rememberSaveable, same as `port` beside it: rotating mid-entry shouldn't wipe a
+    // typed address just because a plain `remember` doesn't survive it.
+    val octets = rememberSaveable(saver = listSaver(
+        save = { it.toList() },
+        restore = { it.toMutableStateList() },
+    )) { mutableStateListOf("", "", "", "") }
     var port by rememberSaveable { mutableStateOf(DEFAULT_PORT) }
     val octetFocus = remember { List(4) { FocusRequester() } }
     val portFocus = remember { FocusRequester() }

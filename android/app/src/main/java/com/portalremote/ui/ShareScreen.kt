@@ -88,6 +88,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -150,6 +151,10 @@ fun ShareScreen(
     val snackbarHost = remember { SnackbarHostState() }
     val fileApi = remember { FileApi() }
     var library by rememberSaveable { mutableStateOf(false) }
+    // Hoisted out of Composer: it leaves the composition on the "Library" chip's tap
+    // (ViewSwitch below), and rememberSaveable inside it would lose a typed note on
+    // that round trip the same way plain `remember` would.
+    var draft by rememberSaveable { mutableStateOf("") }
 
     // Asked for here rather than at launch: this is the only screen that posts a
     // notification, and a permission prompt in front of a screen that doesn't need
@@ -194,7 +199,13 @@ fun ShareScreen(
                 )
             } else {
                 ChatThread(shares = shares, onOpen = open, modifier = Modifier.weight(1f))
-                Composer(onShareText = onShareText, onShareUri = onShareUri, bottomInset = bottomInset)
+                Composer(
+                    draft = draft,
+                    onDraftChange = { draft = it },
+                    onShareText = onShareText,
+                    onShareUri = onShareUri,
+                    bottomInset = bottomInset,
+                )
             }
         }
     }
@@ -343,12 +354,17 @@ private fun ShareBubble(entry: ShareEntry, onClick: () -> Unit) {
  * for something already known.
  */
 @Composable
-private fun Composer(onShareText: (String) -> Unit, onShareUri: (Uri) -> Unit, bottomInset: Dp) {
+private fun Composer(
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onShareText: (String) -> Unit,
+    onShareUri: (Uri) -> Unit,
+    bottomInset: Dp,
+) {
     val context = LocalContext.current
     val haptics = LocalHaptics.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var clip by remember { mutableStateOf<Clip?>(null) }
-    var draft by rememberSaveable { mutableStateOf("") }
     var attaching by remember { mutableStateOf(false) }
 
     // Read on entry and on each resume, never continuously: Android 12+ posts a
@@ -374,11 +390,14 @@ private fun Composer(onShareText: (String) -> Unit, onShareUri: (Uri) -> Unit, b
         uri?.let(onShareUri)
     }
 
+    val keyboard = LocalSoftwareKeyboardController.current
     val send = {
         if (draft.isNotBlank()) {
             haptics.tap()
             onShareText(draft)
-            draft = ""
+            onDraftChange("")
+            // What was sent lands in the thread above, which the IME is covering.
+            keyboard?.hide()
         }
     }
 
@@ -396,6 +415,9 @@ private fun Composer(onShareText: (String) -> Unit, onShareUri: (Uri) -> Unit, b
                     onSend = {
                         haptics.tap()
                         pending.uri?.let(onShareUri) ?: pending.text?.let(onShareText)
+                        // Otherwise the row stays under the finger and a second tap
+                        // sends the same clipboard content again.
+                        clip = null
                     },
                 )
                 HorizontalDivider()
@@ -433,7 +455,7 @@ private fun Composer(onShareText: (String) -> Unit, onShareUri: (Uri) -> Unit, b
 
                 OutlinedTextField(
                     value = draft,
-                    onValueChange = { draft = it },
+                    onValueChange = onDraftChange,
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Send to your PC") },
                     // Grows to a few lines, then scrolls: a note is usually one line,

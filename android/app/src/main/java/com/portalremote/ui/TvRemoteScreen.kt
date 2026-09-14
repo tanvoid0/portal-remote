@@ -1,6 +1,7 @@
 package com.portalremote.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -10,8 +11,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -71,14 +75,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.portalremote.net.NowPlaying
 import com.portalremote.net.PowerTimerState
+import com.portalremote.net.Volume
 import com.portalremote.ui.theme.HapticPress
+import com.portalremote.ui.theme.Haptics
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.rememberPressScale
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -135,9 +144,11 @@ private val REMOTE_KEYS = listOf(
  * visible result on the other screen — no tracking, no gestures — which is the point,
  * since it's the one control surface you can use without looking at the phone.
  */
+@OptIn(ExperimentalLayoutApi::class) // FlowRow
 @Composable
 fun TvRemoteScreen(
     nowPlaying: NowPlaying?,
+    volume: Volume?,
     onTap: (key: String) -> Unit,
     onCombo: (keys: List<String>) -> Unit,
     onMedia: (action: String) -> Unit,
@@ -156,11 +167,12 @@ fun TvRemoteScreen(
 
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        // Bottom-anchored on a tall phone, same as the keyboard: within the thumb.
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
     ) {
         // Power sits apart from the navigation cluster, in the error colour, at the
         // top-left corner your thumb doesn't rest on — the one button here you must
@@ -219,18 +231,39 @@ fun TvRemoteScreen(
             TransportButton(Icons.Filled.SkipNext, "Next") { onMedia("next") }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            TransportButton(Icons.AutoMirrored.Filled.VolumeDown, "Volume down") { onMedia("vol_down") }
-            TransportButton(Icons.AutoMirrored.Filled.VolumeOff, "Mute") { onMedia("mute") }
-            TransportButton(Icons.AutoMirrored.Filled.VolumeUp, "Volume up") { onMedia("vol_up") }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Same hold-to-repeat as the D-pad: a plain tap walked 60% down to 10% in
+            // ~25 presses, the same "list one row at a time" problem the D-pad already
+            // solved for a different axis.
+            RepeatingVolumeButton(Icons.AutoMirrored.Filled.VolumeDown, "Volume down") { onMedia("vol_down") }
+            // Mirrors MediaScreen's VolumeRow: without the real state this always drew
+            // the muted glyph, so a remote user could never tell mute from merely quiet.
+            TransportButton(
+                icon = if (volume?.muted == true) Icons.AutoMirrored.Filled.VolumeOff
+                else Icons.AutoMirrored.Filled.VolumeUp,
+                description = if (volume?.muted == true) "Unmute" else "Mute",
+                onClick = { onMedia("mute") },
+            )
+            val level = volume?.level
+            Text(
+                if (level != null) "${(level * 100).toInt()}%" else "—",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            RepeatingVolumeButton(Icons.AutoMirrored.Filled.VolumeUp, "Volume up") { onMedia("vol_up") }
             TransportButton(Icons.Filled.Fullscreen, "Full screen") { onTap("f11") }
         }
 
-        LazyRow(
+        // Wraps rather than scrolls — same fault and fix as KeyboardScreen's special-key
+        // row (§7): a LazyRow left "Task view"/"Desktop"/"Close" off the right edge with
+        // nothing on screen admitting it, and this screen sits in a verticalScroll that
+        // has the room to spend on a second line instead.
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            items(REMOTE_KEYS) { key ->
+            REMOTE_KEYS.forEach { key ->
                 KeyButton(onClick = {
                     if (key.keys.size == 1) onTap(key.keys[0]) else onCombo(key.keys)
                 }) { Text(key.label) }
@@ -239,11 +272,12 @@ fun TvRemoteScreen(
 
         // F-keys are the "functional" half of a TV remote's coloured buttons: whatever
         // the app in front happens to bind them to.
-        LazyRow(
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            items((1..12).toList()) { n ->
+            (1..12).forEach { n ->
                 KeyButton(
                     onClick = { onTap("f$n") },
                     contentPadding = PaddingValues(horizontal = 8.dp),
@@ -273,7 +307,10 @@ fun TvRemoteScreen(
                                     customMinutes = ""
                                     timerPicker = mode
                                 }) { Text("Edit") }
-                                TextButton(onClick = onPowerTimerCancel) { Text("Cancel timer") }
+                                TextButton(onClick = {
+                                    powerOpen = false
+                                    onPowerTimerCancel()
+                                }) { Text("Cancel timer") }
                             }
                         }
                         HorizontalDivider(modifier = Modifier.padding(bottom = 8.dp))
@@ -459,14 +496,50 @@ private fun DirectionPad(onTap: (String) -> Unit) {
 }
 
 /**
+ * Press-and-hold, factored out of what was `DPadArrow`'s own pointerInput block so the
+ * volume buttons below don't reimplement the same hold/repeat timing and cancellation.
+ *
+ * Bypasses the click gesture, so the scale pulse and the haptic are driven off this
+ * button's own down/up tracking (as `TrackpadScreen`'s ClickButton does). One buzz on
+ * the press and nothing during the repeat: §6a's rule is that continuous output gets no
+ * continuous feedback, and 16 taps a second is a rattle.
+ *
+ * `onClick` is also wired through `semantics { onClick { ... } }`: TalkBack activates a
+ * button by calling its accessibility action, not by sending a touch sequence, so a
+ * control that only fires from `pointerInput` announces as a button and does nothing.
+ */
+private fun Modifier.pressAndRepeat(
+    scale: Animatable<Float, AnimationVector1D>,
+    scope: CoroutineScope,
+    haptics: Haptics,
+    onClick: () -> Unit,
+): Modifier = this
+    .pointerInput(haptics) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false)
+            haptics.tap()
+            scope.launch { scale.animateTo(Motion.PressScale, Motion.pressSpec()) }
+            val repeat = scope.launch {
+                // The first press lands immediately — the repeat is what waits, so a
+                // plain tap is never delayed by the hold feature.
+                onClick()
+                delay(REPEAT_DELAY_MS)
+                while (true) {
+                    onClick()
+                    delay(REPEAT_INTERVAL_MS)
+                }
+            }
+            waitForUpOrCancellation()
+            repeat.cancel()
+            scope.launch { scale.animateTo(1f, Motion.pressSpec()) }
+        }
+    }
+    .semantics { onClick { onClick(); true } }
+
+/**
  * An arrow that keeps firing while it's held, after [REPEAT_DELAY_MS] — the same
  * auto-repeat a real keyboard has, and the thing that makes walking down a long list
  * from the couch bearable instead of forty separate taps.
- *
- * Press-and-hold means bypassing the click gesture, so the scale pulse and the haptic
- * are driven off this button's own down/up tracking (as `TrackpadScreen`'s ClickButton
- * does). One buzz on the press and nothing during the repeat: §6a's rule is that
- * continuous output gets no continuous feedback, and 16 taps a second is a rattle.
  */
 @Composable
 private fun BoxScope.DPadArrow(
@@ -485,31 +558,29 @@ private fun BoxScope.DPadArrow(
             .padding(4.dp)
             .size(56.dp)
             .graphicsLayer { scaleX = scale.value; scaleY = scale.value }
-            .pointerInput(haptics) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    haptics.tap()
-                    scope.launch { scale.animateTo(Motion.PressScale, Motion.pressSpec()) }
-                    val repeat = scope.launch {
-                        // The first press lands immediately — the repeat is what waits,
-                        // so a plain tap is never delayed by the hold feature.
-                        onClick()
-                        delay(REPEAT_DELAY_MS)
-                        while (true) {
-                            onClick()
-                            delay(REPEAT_INTERVAL_MS)
-                        }
-                    }
-                    waitForUpOrCancellation()
-                    repeat.cancel()
-                    scope.launch { scale.animateTo(1f, Motion.pressSpec()) }
-                }
-            },
+            .pressAndRepeat(scale, scope, haptics, onClick),
         colors = IconButtonDefaults.filledTonalIconButtonColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
         Icon(icon, contentDescription = description, modifier = Modifier.size(32.dp))
+    }
+}
+
+/** Volume nudge with the same hold-to-repeat as [DPadArrow] above. */
+@Composable
+private fun RepeatingVolumeButton(icon: ImageVector, description: String, onClick: () -> Unit) {
+    val scale = remember { Animatable(1f) }
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHaptics.current
+    FilledTonalIconButton(
+        onClick = {},
+        modifier = Modifier
+            .size(48.dp)
+            .graphicsLayer { scaleX = scale.value; scaleY = scale.value }
+            .pressAndRepeat(scale, scope, haptics, onClick),
+    ) {
+        Icon(icon, contentDescription = description)
     }
 }
 

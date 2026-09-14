@@ -324,7 +324,7 @@ private fun DrawScope.drawTicks(value: Float, color: Color, unlit: Color) {
         val angle = Math.toRadians((DIAL_START + DIAL_SWEEP * i / (DIAL_TICKS - 1f)).toDouble())
         val cosA = cos(angle).toFloat()
         val sinA = sin(angle).toFloat()
-        val on = i <= lit
+        val on = i < lit
         drawLine(
             color = if (on) color.copy(alpha = 0.85f) else unlit,
             start = Offset(center.x + inner * cosA, center.y + inner * sinA),

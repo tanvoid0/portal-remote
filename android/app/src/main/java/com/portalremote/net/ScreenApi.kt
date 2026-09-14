@@ -26,7 +26,14 @@ data class RemoteMonitor(
     val label: String get() = "Display ${index + 1}"
 }
 
-/** Client for the server's `/screen` endpoints — monitor list and the MJPEG mirror. */
+/** One open window on the paired PC. [handle] is what the server wants back. */
+data class RemoteWindow(
+    val handle: Long,
+    val title: String,
+    val process: String,
+)
+
+/** Client for the server's `/screen` endpoints — monitor and window lists, and the MJPEG mirror. */
 class ScreenApi(
     private val client: OkHttpClient = OkHttpClient.Builder()
         // The mirror is a single response that never ends, so a read timeout would
@@ -53,8 +60,26 @@ class ScreenApi(
         }
     }
 
+    suspend fun windows(host: SavedHost): List<RemoteWindow> = withContext(Dispatchers.IO) {
+        val request = authed(host, "${host.httpBase}/screen/windows").build()
+        client.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) throw FileApiException("windows failed: HTTP ${resp.code}", resp.code)
+            val arr = JSONObject(resp.body?.string() ?: "{}").optJSONArray("windows")
+                ?: return@use emptyList()
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                RemoteWindow(
+                    handle = o.getLong("handle"),
+                    title = o.optString("title"),
+                    process = o.optString("process"),
+                )
+            }
+        }
+    }
+
     /**
-     * Decoded frames of the desktop, until the collector stops or the connection drops.
+     * Decoded frames of the desktop — one monitor, or one window when [window] is set —
+     * until the collector stops or the connection drops.
      *
      * The transport is `multipart/x-mixed-replace`: one HTTP response containing an
      * endless run of JPEGs separated by a boundary line. Every part carries a
@@ -64,6 +89,7 @@ class ScreenApi(
     fun frames(
         host: SavedHost,
         monitor: Int?,
+        window: Long?,
         fps: Int,
         width: Int,
         quality: Int,
@@ -71,6 +97,7 @@ class ScreenApi(
         val url = buildString {
             append("${host.httpBase}/screen/mjpeg?fps=$fps&width=$width&quality=$quality")
             if (monitor != null) append("&monitor=$monitor")
+            if (window != null) append("&window=$window")
         }
         val call = client.newCall(authed(host, url).build())
         try {

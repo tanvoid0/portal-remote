@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mouse
@@ -58,6 +59,8 @@ fun ControlScreen(
     onText: (String) -> Unit,
     onTap: (key: String) -> Unit,
     onCombo: (keys: List<String>) -> Unit,
+    /** The raw socket, for the keyboard — it builds its own messages (see KeyboardPanel). */
+    send: (JSONObject) -> Unit,
     onMedia: (action: String) -> Unit,
     onSeek: (ms: Long) -> Unit,
     cast: CastState?,
@@ -83,20 +86,12 @@ fun ControlScreen(
     val haptics = LocalHaptics.current
 
     Column(modifier = Modifier.fillMaxSize()) {
-        PortalSubTabRow(
-            entries = ControlMode.entries,
-            selected = mode,
-            label = { it.label },
-            icon = { it.icon },
-            onSelect = { mode = it },
-        )
-
         // Same cross-fade as the shell's tabs: switching modes is switching, not
         // navigating. See docs/design-system.md §6.
         Crossfade(
             targetState = mode,
             animationSpec = tween(Motion.TabSwitchDurationMs, easing = Motion.EaseOut),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth().weight(1f),
             label = "control-mode",
         ) { selected ->
             Box(modifier = Modifier.fillMaxSize()) {
@@ -107,22 +102,11 @@ fun ControlScreen(
                         onScroll = onScroll,
                         onClick = onClick,
                         onShortcut = onCombo,
-                        onText = onText,
-                        onTap = onTap,
-                        onFocusKeyboard = {
-                            if (mode != ControlMode.KEYBOARD) haptics.tick()
-                            mode = ControlMode.KEYBOARD
-                        },
+                        // No tick here: the type bar is a KeyButton and already buzzed
+                        // on the press.
+                        onFocusKeyboard = { mode = ControlMode.KEYBOARD },
                     )
-                    ControlMode.KEYBOARD -> KeyboardScreen(
-                        onText = onText,
-                        onTap = onTap,
-                        onCombo = onCombo,
-                        onSubmit = {
-                            if (mode != ControlMode.TRACKPAD) haptics.tick()
-                            mode = ControlMode.TRACKPAD
-                        },
-                    )
+                    ControlMode.KEYBOARD -> KeyboardScreen(send = send)
                     ControlMode.MEDIA -> MediaScreen(
                         host = host,
                         nowPlaying = nowPlaying,
@@ -143,6 +127,7 @@ fun ControlScreen(
                     )
                     ControlMode.REMOTE -> TvRemoteScreen(
                         nowPlaying = nowPlaying,
+                        volume = volume,
                         onTap = onTap,
                         onCombo = onCombo,
                         onMedia = onMedia,
@@ -154,5 +139,18 @@ fun ControlScreen(
                 }
             }
         }
+
+        // Under the surfaces, not over them: these four are the tabs switched most
+        // often, one-handed, and the top of a tall phone is the one place a thumb
+        // holding it cannot reach. With the IME up the row sits directly above it,
+        // which is exactly where "back to the trackpad" is wanted mid-type. See
+        // docs/design-system.md §13.
+        PortalSubTabRow(
+            entries = ControlMode.entries,
+            selected = mode,
+            label = { it.label },
+            icon = { it.icon },
+            onSelect = { mode = it },
+        )
     }
 }

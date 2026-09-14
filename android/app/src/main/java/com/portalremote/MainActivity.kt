@@ -24,7 +24,18 @@ class MainActivity : ComponentActivity() {
         // Cold start *from* the share sheet. The pairing usually isn't up yet at this
         // point; AppViewModel.shareFromIntent waits for it rather than dropping the
         // payload.
-        viewModel.shareFromIntent(intent)
+        //
+        // Only on a genuinely fresh start: the launch intent stays ACTION_SEND for the
+        // life of the task, so reopening from recents after the process was killed
+        // replayed the same share and uploaded the file a second time.
+        if (savedInstanceState == null) viewModel.shareFromIntent(intent)
+    }
+
+    /** Back in front — after the screen was off, after another app. The control socket
+     *  may have died quietly in between; see [com.portalremote.net.WsClient.checkAlive]. */
+    override fun onStart() {
+        super.onStart()
+        viewModel.checkConnectionAlive()
     }
 
     /** A share into an already-open session — `singleTop` in the manifest routes it

@@ -550,8 +550,43 @@ derived from. When adding a screen, reach for these before inventing a surface.
     under the system "remove animations" setting — this is decoration, which is
     exactly what that setting is for, so it is gated even though §6 only names the
     pairing spring and the status morph.
-- **KeyboardScreen** — key press = instant visual state (background tint on
-  `pointerInput` down, not on click, so it matches physical key latency) + release.
+- **KeyboardScreen** — key press = instant visual state (background tint on the press
+  interaction, i.e. pointer-down, so it *reads* at physical key latency) + release.
+  - **One panel, two homes.** `KeyboardPanel` (field, quick phrases, key grid, arrows) is
+    the whole tab, and the mirror floats the same panel over its picture in a draggable
+    window (`ScreenScreen`'s `FloatingKeyboard`) rather than keeping a lesser keyboard of
+    its own — the grid folded away by default there, since with the IME up the mount is
+    barely taller than the grid.
+  - **The grid is rows of equal caps, icon over label**, five across: side by side,
+    "Backspace" plus its glyph was a 100dp key and the ten keys wrapped into three ragged
+    rows. Arrows are one row of four, not a cross — a cross spends two rows on four keys
+    on a screen the IME has already halved.
+  - **Ctrl, Alt and Shift are keys, not chords.** Down on press, up on release, so a second
+    finger can tap the key they modify; a quick tap latches one (tinted, held down on the
+    PC) until the next key, typed letter or combo goes out, or a second tap. Letters typed
+    under a modifier go as `tap` by key name rather than `text`, because `text` types via
+    `KEYEVENTF_UNICODE` and no app reads that as an accelerator. Leaving the panel releases
+    anything still down — a Ctrl left held on the PC turns every later trackpad click into
+    Ctrl+click with nothing on the phone saying so. Win stays a tap: released alone it is
+    the Start menu, which a latch would hold back until the second tap.
+  - **The field has a hide-keyboard button while focused.** The IME's return key is Enter
+    (it has to be — see below), so nothing on screen put the keyboard away except the
+    back gesture. The field also hides the IME as it leaves the composition, so switching
+    to the trackpad never strands the keyboard over it.
+  - **…and a clear button while there is something to clear**, behind a confirmation. It
+    sends one backspace per character typed since the buffer last reset — the only span
+    this side can honestly claim the PC holds — rather than Ctrl+A, which selects a whole
+    document in an editor. Guarded because it is the one control on the screen that
+    deletes on the PC, and it deletes wherever the caret *is*; the dialog states the
+    count so it can be checked against the screen.
+  - **The tint fires on press; the keystroke fires on release.** The keystroke used to
+    go out on pointer-down too, which cost the user something they could not take back
+    twice over: the column scrolls (the IME owns half the screen the moment this tab
+    opens), so a thumb landing on a quick phrase and flicking to reach the arrow pad
+    sent that phrase *and Enter* to the PC before the scroll began — and an empty
+    `onClick` with the real work in `pointerInput` is a key that TalkBack announces and
+    then does not press at all. A key that speaks 60ms later beats a key that speaks
+    when nobody asked.
   - **A key has a face** (§5): `surface-muted` under a `border-strong` outline. It was
     transparent-on-transparent, i.e. every key in the app — here and on the TV remote,
     which shares `KeyButton` — was defined by a hairline that in light mode was white on
@@ -789,9 +824,17 @@ derived from. When adding a screen, reach for these before inventing a surface.
   top would fight it — no cross-fade between frames, no press feedback on the
   image, no animated zoom (the pinch tracks the fingers 1:1, per §2's direct
   manipulation rule and §6's "trackpad drag = none"). Chrome is one row of
-  Material3 `FilterChip`s below the frame (monitor picker, quality preset, and a
-  zoom-reset chip that appears only while zoomed) — chips, not a settings sheet,
-  because every one of them is a thing you change *while watching* the result.
+  Material3 `FilterChip`s below the frame (monitor picker, an App chip, quality preset,
+  a Type chip that floats the Keyboard tab's whole panel over the picture — see the
+  KeyboardScreen entry — and a zoom-reset chip that appears only while zoomed) — chips,
+  not a settings sheet,
+  because every one of them is a thing you change *while watching* the result. The one
+  exception is the App chip, which opens a `ModalBottomSheet` of the PC's open windows:
+  that list is as long as the taskbar and changes every time something launches, so it
+  is fetched fresh on open and cannot be a fixed run of chips. While a window is picked
+  the chip is selected and carries the app's name, so the row still says what the frame
+  is showing, and the sheet's first row is "Whole display" — the way back has to live
+  there because a single-monitor PC shows no monitor chips at all.
   Background is `MIRROR_MOUNT`, a near-black held in both themes and the one surface
   in the app that ignores the palette: this is the letterbox around a picture, not a
   panel the picture sits on, and a pale mount in light mode both shifts the apparent
@@ -991,7 +1034,11 @@ Touch/click-target audit: Android's hand-rolled controls (`TrackpadScreen`'s
 `ClickButton` at 56dp, `MediaScreen`'s `TransportButton` at 48–72dp,
 `KeyboardScreen`'s shared `KeyButton` — explicitly given `defaultMinSize(48.dp,
 48.dp)` since its 4dp-padded arrow-key variant would otherwise land under the
-minimum) all meet the 48dp floor; stock Material3 components (`Button`,
+minimum) all meet the 48dp floor, with three recorded exceptions at 40dp: the quick
+phrases, the trackpad's type bar (both `KeyButton`s sized smaller on purpose — words
+and a hand-off, not caps; §13) and the drawn PC keyboard's caps when floating over the
+mirror (48dp on the Keyboard tab; a 25dp-wide key is what a PC layout costs on a
+phone, and the height is the part that can give). Stock Material3 components (`Button`,
 `NavigationBarItem`, `ListItem`, and `SettingsScreen`'s `Switch`/`Slider`/
 `FilterChip`) meet it by default. Desktop's owner-drawn `TokenButton` is 34px tall
 everywhere it appears in `MainForm` — primary ("Copy address") and secondary
@@ -1375,6 +1422,15 @@ about 100dp.
   is that switching between the four things you do with your hands no longer travels
   through the bottom of the screen. The tab row is labelled where the nav bar isn't,
   because "Trackpad" vs "Remote" is a distinction icons alone don't make.
+  - **Control's and Deck's rows sit at the bottom, above the capsule.** These are the
+    tabs switched most often, one-handed, and the top of a tall phone is the one place
+    the thumb holding it cannot reach. With the IME up the row sits directly above it —
+    exactly where "back to the trackpad" is wanted mid-type. Transfer keeps its row on
+    top: Share's composer and Files' upload own that edge, and its lists are the ones
+    that run under the frosted capsule.
+  - **The trackpad's type bar is a 40dp button, not a field.** It only ever handed focus
+    to the Keyboard tab, and a text field with a floating label costs 64dp of pad to say
+    "tap to type".
 - **Six icons is the ceiling, so the same merge happened twice more.** Adding the
   stats dashboard would have made seven, in a capsule whose slots are already the
   narrowest targets in the app. Instead **Deck** holds the shortcut grid and the stats

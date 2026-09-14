@@ -12,6 +12,13 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "portal_remote_prefs")
 
+/**
+ * What the keyboard's one-tap phrase row starts with: the words a chat or a terminal
+ * prompt actually wants back, which are short, repeated, and always followed by Enter.
+ * Everything past this is the user's own, edited from the row itself.
+ */
+fun defaultQuickPhrases(): List<String> = listOf("yes", "no", "continue", "1", "2", "3")
+
 /** A paired desktop server, as scanned from its QR code or entered manually. */
 data class SavedHost(
     val host: String,
@@ -93,6 +100,8 @@ class Prefs(private val context: Context) {
         val HAPTICS = booleanPreferencesKey("haptics")
         val ACCENT = stringPreferencesKey("accent")
         val DECK_ITEMS = stringPreferencesKey("deck_items")
+        val QUICK_PHRASES = stringPreferencesKey("quick_phrases")
+        val PAD_LEGEND_SEEN = booleanPreferencesKey("pad_legend_seen")
     }
 
     val savedHost: Flow<SavedHost?> = context.dataStore.data.map { prefs ->
@@ -154,6 +163,31 @@ class Prefs(private val context: Context) {
 
     suspend fun saveDeckItems(items: List<DeckItem>) {
         context.dataStore.edit { prefs -> prefs[Keys.DECK_ITEMS] = encodeDeckItems(items) }
+    }
+
+    /** One-tap phrases for the keyboard, newline-separated — see
+     *  [defaultQuickPhrases]. Stored as the same text the editor
+     *  shows, so there is nothing to encode and nothing that can fail to parse. */
+    val quickPhrases: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.QUICK_PHRASES]?.let { text ->
+            text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        } ?: defaultQuickPhrases()
+    }
+
+    suspend fun saveQuickPhrases(phrases: List<String>) {
+        context.dataStore.edit { prefs -> prefs[Keys.QUICK_PHRASES] = phrases.joinToString("\n") }
+    }
+
+    /** Whether the trackpad's gesture legend has done its job. It used to be composable
+     *  state, which the Control tab's cross-fade throws away — so the onboarding caption
+     *  came back into the middle of the pad every time the user returned from Keyboard or
+     *  Media. Seen once is seen. */
+    val padLegendSeen: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.PAD_LEGEND_SEEN] ?: false
+    }
+
+    suspend fun markPadLegendSeen() {
+        context.dataStore.edit { prefs -> prefs[Keys.PAD_LEGEND_SEEN] = true }
     }
 
     /** Forgets the paired PC only — pointer speed and the rest are the user's

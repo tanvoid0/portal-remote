@@ -1,8 +1,5 @@
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
+using PortalRemote.Input;
 
 namespace PortalRemote.Metrics;
 
@@ -18,7 +15,7 @@ namespace PortalRemote.Metrics;
 /// nothing goes out, for a phone that doesn't have the tab open.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed partial class ActiveWindow : IDisposable
+public sealed class ActiveWindow : IDisposable
 {
     /// <summary>Fast enough that switching apps on the PC reads as immediate on the
     /// phone; slow enough that it's nowhere near worth a hook.</summary>
@@ -75,7 +72,7 @@ public sealed partial class ActiveWindow : IDisposable
 
     private void Tick()
     {
-        var (process, title) = ReadForeground();
+        var (process, title) = WinInput.Foreground();
         // A title changing under the same process — a new tab, a new document — isn't a
         // context switch; only a different process is, since that's what the action
         // catalog on the phone keys off.
@@ -91,37 +88,6 @@ public sealed partial class ActiveWindow : IDisposable
         Changed?.Invoke(payload);
     }
 
-    private static (string Process, string Title) ReadForeground()
-    {
-        var handle = GetForegroundWindow();
-        if (handle == nint.Zero) return ("", "");
-
-        var title = ReadTitle(handle);
-        GetWindowThreadProcessId(handle, out var pid);
-        if (pid == 0) return ("", title);
-
-        try
-        {
-            using var process = Process.GetProcessById((int)pid);
-            return (process.ProcessName, title);
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
-        {
-            // Exited between the handle lookup and the process read — the next tick
-            // will have whatever took its place.
-            return ("", title);
-        }
-    }
-
-    private static string ReadTitle(nint handle)
-    {
-        var length = GetWindowTextLength(handle);
-        if (length <= 0) return "";
-        var buffer = new StringBuilder(length + 1);
-        GetWindowText(handle, buffer, buffer.Capacity);
-        return buffer.ToString();
-    }
-
     public void Dispose()
     {
         lock (_gate)
@@ -132,20 +98,6 @@ public sealed partial class ActiveWindow : IDisposable
         }
         _timer.Dispose();
     }
-
-    [LibraryImport("user32.dll")]
-    private static partial nint GetForegroundWindow();
-
-    [LibraryImport("user32.dll")]
-    private static partial uint GetWindowThreadProcessId(nint hWnd, out uint processId);
-
-    // StringBuilder marshalling isn't something the LibraryImport source generator
-    // supports — DllImport for these two, LibraryImport above for everything else.
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowTextLength(nint hWnd);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowText(nint hWnd, StringBuilder text, int count);
 }
 
 /// <summary>One client's interest in the active-window stream. Same shape as

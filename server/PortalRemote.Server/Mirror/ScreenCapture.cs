@@ -75,13 +75,13 @@ public static partial class ScreenCapture
     private static partial bool DeleteObject(nint obj);
 
     /// <summary>
-    /// Capture one monitor (see <see cref="WinInput.BoundsFor"/>) and encode it as JPEG.
-    /// <paramref name="maxWidth"/> caps the width — a 4K screen sent at native
-    /// resolution is both slow to encode and pointless on a phone.
+    /// Capture one monitor or one window (see <see cref="WinInput.BoundsFor"/>) and
+    /// encode it as JPEG. <paramref name="maxWidth"/> caps the width — a 4K screen sent
+    /// at native resolution is both slow to encode and pointless on a phone.
     /// </summary>
-    public static byte[] Jpeg(int? monitor, int maxWidth, int quality, bool drawCursor = true)
+    public static byte[] Jpeg(int? monitor, long? window, int maxWidth, int quality, bool drawCursor = true)
     {
-        var area = WinInput.BoundsFor(monitor);
+        var area = WinInput.BoundsFor(monitor, window);
         if (area.Width <= 0 || area.Height <= 0)
             throw new InvalidOperationException("capture area has no size");
 

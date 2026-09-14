@@ -29,6 +29,7 @@ import com.portalremote.net.CastState
 import com.portalremote.net.CastStatus
 import com.portalremote.net.CastTarget
 import com.portalremote.net.ConnectionState
+import com.portalremote.net.FileApi
 import com.portalremote.net.MediaServer
 import com.portalremote.net.NowPlaying
 import com.portalremote.net.PcStats
@@ -50,9 +51,11 @@ import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -66,6 +69,11 @@ import org.json.JSONObject
 /** How long WsClient gets to fix a drop on the known address before a discovery
  *  sweep is worth the radio. */
 private const val FOLLOW_DELAY_MS = 6_000L
+
+/** Discovery sweeps to spend chasing one lost PC before giving up on the idea that it
+ *  simply moved. Each one costs 5s of UDP broadcasts, and the drop that starts it
+ *  repeats every retry for as long as the machine is off. */
+private const val MAX_FOLLOW_SWEEPS = 4
 
 /** Share history is in-memory and scrollable, not a log — past this the old
  *  entries are noise you'd scroll past to reach the ones that matter. */
@@ -101,6 +109,10 @@ private const val STATS_HISTORY = 60
  *  that weren't next to each other. A few samples' worth — long enough to survive a
  *  glance at another tab, short enough that nothing false is ever drawn. */
 private const val STATS_GAP_MS = 5_000L
+
+/** An upload in flight: what is going, and how far. Lives in the ViewModel because a
+ *  500MB file outlasts a glance at another tab. */
+data class UploadProgress(val name: String, val fraction: Float)
 
 /** The PC's foreground app, for Deck's context row. Same subscribe-while-watched shape
  *  as [SYS]/`sys`, just keyed by process rather than by second. */
@@ -167,6 +179,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = Prefs(application)
     val ws = WsClient(deviceName(application))
     private val shareApi = ShareApi()
+    private val fileApi = FileApi()
 
     val connectionState get() = ws.state
 
@@ -359,6 +372,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private set
 
     private var followJob: Job? = null
+    private var followSweeps = 0
 
     // A saved pairing stores an IP address, and DHCP hands out a different one
     // eventually — after a router reboot, a lease expiry, a move between bands.
@@ -376,6 +390,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         // Android's network callbacks because reaching *this* PC is
                         // the condition that matters, and having Wi-Fi is not it.
                         retryPending()
+                        rearmWatches()
+                        followSweeps = 0
                     }
 
                     ConnectionState.Disconnected -> followToNewAddress()
@@ -681,11 +697,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun followToNewAddress() {
         val host = currentHost ?: return
+        // Bounded: each sweep is 5s of UDP broadcasts, and the drop that triggers it
+        // repeats for as long as the PC is switched off. A handful of tries covers the
+        // case this exists for — an address that changed while we were away — and a PC
+        // that is genuinely off is not going to answer the twentieth one either.
+        if (followSweeps >= MAX_FOLLOW_SWEEPS) return
         // Nothing to match on — this pairing predates the id, or has never
         // completed a hello. Leave WsClient retrying the address we were given.
         val id = host.id ?: return
         if (followJob?.isActive == true) return
 
+        followSweeps++
         followJob = viewModelScope.launch {
             // Let WsClient's own retry go first: most drops are a blip on an
             // address that is still correct, and a discovery sweep for those is
@@ -747,6 +769,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun send(json: JSONObject) = ws.send(json)
 
+    /** See [WsClient.checkAlive] — called whenever the activity comes to the front. */
+    fun checkConnectionAlive() = ws.checkAlive()
+
     /**
      * Start or stop the PC sampling itself for the Stats screen.
      *
@@ -754,7 +779,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * leave the screen permanently blank, so the screen re-sends it on reconnect (the
      * subscription belongs to the socket, and a new socket has none).
      */
+    /** What the PC has been asked to keep pushing. A subscription lives on the *socket*,
+     *  so a drop silently ends it — and the screens that asked only ask once, when they
+     *  are first composed. Without replaying these on reconnect the stats dashboard and
+     *  Deck's context row stay blank until the user leaves the sub-tab and comes back. */
+    private var watchingStats = false
+    private var watchingActiveWindow = false
+
+    private fun rearmWatches() {
+        if (watchingStats) send(JSONObject().put("t", SYS).put("on", true))
+        if (watchingActiveWindow) send(JSONObject().put("t", WIN_WATCH).put("on", true))
+    }
+
     fun watchStats(on: Boolean) {
+        watchingStats = on
         if (!on) {
             send(JSONObject().put("t", SYS).put("on", false))
             // Stop drawing the moment we stop asking: the last sample is already a
@@ -777,8 +815,69 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      *  leave the subscription permanently off, and the last-known app is cleared the
      *  moment nobody's asking for it rather than left showing a stale context. */
     fun watchActiveWindow(on: Boolean) {
+        watchingActiveWindow = on
         send(JSONObject().put("t", WIN_WATCH).put("on", on))
         if (!on) _activeWindow.value = null
+    }
+
+    /**
+     * The Files screen's upload, and the folder it is looking at.
+     *
+     * Both live here rather than in the screen because the screen does not survive a
+     * glance at another tab: the Transfer and shell cross-fades dispose it, which used
+     * to cancel a running upload mid-stream — the PC kept a truncated file, and coming
+     * back showed a fresh Upload button that mentioned none of it — and threw away
+     * whatever folder the user had navigated to.
+     */
+    private val _upload = MutableStateFlow<UploadProgress?>(null)
+    val upload: StateFlow<UploadProgress?> = _upload.asStateFlow()
+
+    /** One line about an upload that finished or failed, for whoever is on screen to
+     *  show. A SharedFlow because it is an event: re-collecting it after a tab switch
+     *  must not re-announce an upload that ended ten minutes ago. */
+    private val _uploadResult = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val uploadResult = _uploadResult.asSharedFlow()
+
+    private val _filesPath = MutableStateFlow("")
+    val filesPath: StateFlow<String> = _filesPath.asStateFlow()
+
+    private var uploadJob: Job? = null
+
+    fun openFilesPath(path: String) {
+        _filesPath.value = path
+    }
+
+    /** Starts an upload if none is running — the picker will hand back the same file
+     *  twice without complaint, and two copies on the PC is the worse outcome. */
+    fun uploadFile(uri: Uri) {
+        val host = currentHost ?: return
+        if (uploadJob?.isActive == true) return
+        val context = getApplication<Application>()
+        uploadJob = viewModelScope.launch {
+            val name = displayNameOf(context, uri) ?: uri.lastPathSegment ?: "upload.bin"
+            _upload.value = UploadProgress(name, 0f)
+            try {
+                val type = context.contentResolver.getType(uri)
+                fileApi.upload(context, host, _filesPath.value, name, type, uri) { sent, total ->
+                    _upload.value = UploadProgress(name, if (total > 0) sent.toFloat() / total else 0f)
+                }
+                _uploadResult.tryEmit("Uploaded $name")
+            } catch (e: CancellationException) {
+                // Only ever this phone's own cancel button: the job now outlives the
+                // screen, so nothing else gets to end it quietly.
+                _uploadResult.tryEmit("Upload cancelled")
+                throw e
+            } catch (e: Exception) {
+                _uploadResult.tryEmit("Upload failed: ${e.message}")
+            } finally {
+                _upload.value = null
+            }
+        }
+    }
+
+    fun cancelUpload() {
+        uploadJob?.cancel()
+        uploadJob = null
     }
 
     /** Ask the PC whether the assistant's backend is up. [retry] is a person pressing
@@ -841,10 +940,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * Nothing is added to the transcript here. The PC appends the turn and pushes it back,
      * so this phone and the PC's own window show the same message in the same order.
      */
-    fun sendChat(text: String) {
+    fun sendChat(text: String): Boolean {
         val message = text.trim()
-        if (message.isEmpty()) return
-        send(JSONObject().put("t", AI_ASK).put("text", message))
+        if (message.isEmpty()) return false
+        // The transcript belongs to the PC, so nothing here echoes the question back:
+        // a send that went nowhere while the socket was down left the user with a
+        // cleared field, no message, and no way to know either happened.
+        return send(JSONObject().put("t", AI_ASK).put("text", message))
     }
 
     /**

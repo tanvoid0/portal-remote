@@ -41,4 +41,24 @@ class TwoFingerIntentTest {
             classifyTwoFingerIntent(pinchTravel = 5f, panTravel = 40f, zoomed = true),
         )
     }
+
+    @Test
+    fun `sideways at 1x is the back-forward swipe, not a scroll`() {
+        assertEquals(
+            TwoFingerIntent.SWIPE,
+            classifyTwoFingerIntent(
+                pinchTravel = 5f, panTravel = 40f, zoomed = false, horizontal = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `sideways while zoomed in still pans the picture`() {
+        assertEquals(
+            TwoFingerIntent.PAN,
+            classifyTwoFingerIntent(
+                pinchTravel = 5f, panTravel = 40f, zoomed = true, horizontal = true,
+            ),
+        )
+    }
 }

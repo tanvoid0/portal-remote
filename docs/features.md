@@ -19,6 +19,19 @@ three-monitor PC that would be a 5:1 letterbox strip on the phone. `/screen/moni
 lists the displays and the app shows a chip per display (plus "All") when there's more
 than one.
 
+**One app instead of a display.** The "App" chip opens a sheet of the PC's open windows
+(`/screen/windows` — visible, titled, not cloaked; the server's own left out) and picking
+one mirrors just that window: `/screen/mjpeg?window=<hwnd>`, with taps sent as
+`mouse_move_abs {nx, ny, win}` so a fraction of the picture is a fraction of the window.
+The capture is a `BitBlt` of the window's on-screen rectangle
+(`DWMWA_EXTENDED_FRAME_BOUNDS`, re-read every frame so it follows a drag or resize), not
+`PrintWindow`: the phone then sees exactly what a tap at that spot hits, which matters
+more than seeing through whatever is stacked on top. That means the window has to be in
+front, so the server brings it there when the stream starts — restoring it if minimised,
+and sending a bare Ctrl tap first because Windows only lets the process that sent the
+last input steal foreground. A window that is later minimised or closed has no area;
+the stream holds open with no frames, the same way it does across a locked desktop.
+
 Two quality presets — Smooth (15fps / 960px / q50) and Sharp (8fps / 1600px / q78) —
 because no single setting suits both "watch a video" and "read a line of code".
 Measured over loopback against a 3440×1440 monitor: Smooth delivers **14.5 of 15fps at
@@ -34,14 +47,21 @@ scrolls the remote desktop instead, since there's nothing to pan). A finger is r
 small targets actually hittable rather than a nicety.
 
 Typing is available on the mirror itself (the "Type" chip) as well as on the Keyboard
-mode of the Control tab — same capture field, so text goes to the PC while you watch the
-window it lands in.
+mode of the Control tab — the same keyboard panel, floated over the picture in a window
+you drag by its handle, so text goes to the PC while you watch the window it lands in.
+Its key grid is folded away by default and opens from the panel's header.
 
 ## Control tab
 
 Everything you drive the PC with by hand — trackpad, keyboard, media, and a TV-style
-remote — sits behind one bottom-nav tab and switches with a tab row, because they're one
-activity rather than four screens.
+remote — sits behind one bottom-nav tab and switches with a tab row along the bottom,
+because they're one activity rather than four screens.
+
+The keyboard's Ctrl, Alt and Shift are real keys: hold one and tap another key, or tap
+it once to latch it for the next key or typed letter (tap again to let go). A letter
+typed under Ctrl arrives as the keystroke, so Ctrl+C lands as copy, not as a "c". The
+type field can take back what it has typed (one backspace per character, after a
+confirmation) and put the keyboard away.
 
 The TV remote is the couch mode: a D-pad with OK (arrows auto-repeat on hold, 400ms then
 ~16/sec like a real keyboard), Back/Start/menu, transport and volume, chip rows for
@@ -207,6 +227,14 @@ Three ways in, in the order the app offers them:
 1. **The remembered PC.** The last successful pairing is stored (address, token and the
    PC's own name) and reconnected silently on launch; the pairing screen also offers it
    as a one-tap card if that reconnect hasn't landed yet.
+
+   Once connected, the control socket is checked rather than trusted: a phone that slept,
+   roamed to another access point or lost Wi-Fi for a while keeps a socket that still
+   reports open, and every trackpad delta sent into it succeeds locally and goes nowhere
+   — the pad just goes dead, with no error and no "Reconnecting…", until OkHttp's own
+   ping (every 10s; a miss is noticed one interval later) happens to catch it. So each
+   time the app comes back to the front it sends a protocol `ping`, and a `pong` that
+   doesn't arrive within 2s means reconnect now.
 2. **Discovery.** The phone broadcasts `PORTALREMOTE?` on UDP 8765; every server on the
    LAN answers with its name, HTTP port and version — no secrets, so the reply is safe
    to shout. Tapping a discovered PC calls `POST /pair/request`, which puts an "allow

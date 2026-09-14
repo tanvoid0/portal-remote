@@ -85,6 +85,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -92,6 +93,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -116,8 +118,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -271,7 +275,11 @@ fun BrowserScreen(
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
-    var address by remember { mutableStateOf("") }
+    var confirmClearHistory by remember { mutableStateOf(false) }
+    var confirmClearData by remember { mutableStateOf(false) }
+    var address by remember { mutableStateOf(TextFieldValue("")) }
+    // Whether the address field has focus — the sync below must not fight someone mid-type.
+    var addressFocused by remember { mutableStateOf(false) }
     // Set by onShowCustomView — a site going fullscreen for video hands us a view to
     // put over everything, and nothing else on screen should survive it.
     var fullscreenView by remember { mutableStateOf<View?>(null) }
@@ -293,7 +301,11 @@ fun BrowserScreen(
         adBlock.enabled = settings.adBlockEnabled
         adBlock.allowedHosts = settings.allowedHosts
     }
-    LaunchedEffect(tab.id, tab.url) { address = tab.url.orEmpty() }
+    // Skipped while focused: a page navigating on its own (redirect, ad interstitial)
+    // would otherwise overwrite whatever's being typed into the field right now.
+    LaunchedEffect(tab.id, tab.url) {
+        if (!addressFocused) address = TextFieldValue(tab.url.orEmpty())
+    }
 
     val pageHost = remember(tab.url) {
         tab.url?.let { AdBlock.hostOf(it) }?.let { AdBlock.siteKey(it) }
@@ -425,7 +437,8 @@ fun BrowserScreen(
                     address = address,
                     incognito = tab.incognito,
                     onAddressChange = { address = it },
-                    onGo = { go(address) },
+                    onAddressFocusChange = { addressFocused = it },
+                    onGo = { go(address.text) },
                     canGoBack = tab.canGoBack,
                     canGoForward = tab.canGoForward,
                     onBack = { tab.webView?.goBack() },
@@ -528,7 +541,7 @@ fun BrowserScreen(
                 entries = history.map { it.title.ifBlank { it.url } to it.url },
                 onOpen = { url -> go(url); showHistory = false },
                 onRemove = null,
-                onClearAll = { scope.launch { store.clearHistory() } },
+                onClearAll = { confirmClearHistory = true },
             )
         }
     }
@@ -539,15 +552,47 @@ fun BrowserScreen(
                 settings = settings,
                 ruleCount = adBlock.ruleCount,
                 onChange = { next -> scope.launch { store.saveSettings(next) } },
-                onClearData = {
+                onClearData = { confirmClearData = true },
+            )
+        }
+    }
+
+    if (confirmClearHistory) {
+        AlertDialog(
+            onDismissRequest = { confirmClearHistory = false },
+            title = { Text("Clear history?") },
+            text = { Text("Every visited page in the list will be deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearHistory = false
+                    scope.launch { store.clearHistory() }
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearHistory = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (confirmClearData) {
+        AlertDialog(
+            onDismissRequest = { confirmClearData = false },
+            title = { Text("Clear browsing data?") },
+            text = { Text("Cookies, cached files, site storage and history will all be deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearData = false
                     scope.launch {
                         clearBrowsingData(context)
                         store.clearHistory()
                         showSettings = false
                     }
-                },
-            )
-        }
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearData = false }) { Text("Cancel") }
+            },
+        )
     }
 
     DisposableEffect(Unit) {
@@ -850,9 +895,10 @@ private fun addFound(
 
 @Composable
 private fun BrowserBar(
-    address: String,
+    address: TextFieldValue,
     incognito: Boolean,
-    onAddressChange: (String) -> Unit,
+    onAddressChange: (TextFieldValue) -> Unit,
+    onAddressFocusChange: (Boolean) -> Unit,
     onGo: () -> Unit,
     canGoBack: Boolean,
     canGoForward: Boolean,
@@ -930,6 +976,14 @@ private fun BrowserBar(
             // "every component has a face" table.
             val addressInteraction = remember { MutableInteractionSource() }
             val addressFocused by addressInteraction.collectIsFocusedAsState()
+            // Select the whole address on focus: going somewhere else should mean typing
+            // over it, not deleting a long URL by hand first.
+            LaunchedEffect(addressFocused) {
+                onAddressFocusChange(addressFocused)
+                if (addressFocused) {
+                    onAddressChange(address.copy(selection = TextRange(0, address.text.length)))
+                }
+            }
             val fieldShape = MaterialTheme.shapes.medium
             BasicTextField(
                 value = address,
@@ -971,7 +1025,7 @@ private fun BrowserBar(
                             Spacer(Modifier.width(6.dp))
                         }
                         Box(modifier = Modifier.weight(1f)) {
-                            if (address.isEmpty()) {
+                            if (address.text.isEmpty()) {
                                 Text(
                                     if (incognito) "Private search or address" else "Search or type a web address",
                                     style = MaterialTheme.typography.bodyMedium,

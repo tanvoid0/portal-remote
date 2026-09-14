@@ -187,6 +187,8 @@ public static class ControlEndpoint
         }
         finally
         {
+            // The phone that held a modifier down is gone; the PC must not stay Ctrl'd.
+            InputActions.ReleaseHeld();
             ArrayPool<byte>.Shared.Return(buffer);
             await pending.DisposeAsync();
         }

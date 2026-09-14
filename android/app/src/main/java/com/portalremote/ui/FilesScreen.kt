@@ -2,6 +2,7 @@ package com.portalremote.ui
 
 import android.app.DownloadManager
 import android.content.Context
+import android.net.Uri
 import android.os.Environment
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -16,8 +17,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
@@ -46,6 +50,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -72,9 +77,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import com.portalremote.UploadProgress
 import com.portalremote.data.SavedHost
 import com.portalremote.net.FileApi
 import com.portalremote.net.RemoteFileEntry
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -89,21 +96,31 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class) // PullToRefreshBox
 @Composable
-fun FilesScreen(host: SavedHost, bottomInset: Dp = 0.dp) {
+fun FilesScreen(
+    host: SavedHost,
+    /** The folder being shown, and the upload in flight — both owned above this screen,
+     *  because both used to be destroyed by a glance at another tab: the cross-fades
+     *  dispose this composable, which cancelled a running upload mid-stream (leaving a
+     *  truncated file on the PC and saying nothing about it) and reset the path to the
+     *  share root. */
+    path: String,
+    onPath: (String) -> Unit,
+    upload: UploadProgress?,
+    uploadMessages: SharedFlow<String>,
+    onUpload: (Uri) -> Unit,
+    onCancelUpload: () -> Unit,
+    bottomInset: Dp = 0.dp,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val fileApi = remember { FileApi() }
     val snackbarHost = remember { SnackbarHostState() }
 
-    var currentPath by remember { mutableStateOf("") }
+    val currentPath = path
     var entries by remember { mutableStateOf<List<RemoteFileEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    // Name + fraction of the upload in flight, or null. Also the re-entrancy guard:
-    // the FAB is disabled while it's set, since the picker will happily hand back the
-    // same file twice and the second copy lands beside the first on the PC.
-    var upload by remember { mutableStateOf<Pair<String, Float>?>(null) }
 
     /**
      * [showSpinner] false is the pull-to-refresh path: the gesture has its own
@@ -127,30 +144,21 @@ fun FilesScreen(host: SavedHost, bottomInset: Dp = 0.dp) {
 
     LaunchedEffect(currentPath) { reload() }
 
+    // The upload finished somewhere above this screen, possibly while it wasn't even
+    // composed. Re-listing on success is what turns "Uploaded x" into a visible file.
+    LaunchedEffect(uploadMessages) {
+        uploadMessages.collect { message ->
+            if (message.startsWith("Uploaded")) reload(showSpinner = false)
+            snackbarHost.showSnackbar(message)
+        }
+    }
+
     BackHandler(enabled = currentPath.isNotEmpty()) {
-        currentPath = currentPath.substringBeforeLast('/', missingDelimiterValue = "")
+        onPath(currentPath.substringBeforeLast('/', missingDelimiterValue = ""))
     }
 
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val name = displayNameOf(context, uri) ?: uri.lastPathSegment ?: "upload.bin"
-            try {
-                val type = context.contentResolver.getType(uri)
-                upload = name to 0f
-                fileApi.upload(context, host, currentPath, name, type, uri) { sent, total ->
-                    // Reported from the IO thread. Compose state is snapshot-safe to
-                    // write from anywhere, and this only ever sets a fresh value.
-                    upload = name to if (total > 0) (sent.toFloat() / total) else 0f
-                }
-                snackbarHost.showSnackbar("Uploaded $name")
-                reload()
-            } catch (e: Exception) {
-                snackbarHost.showSnackbar("Upload failed: ${e.message}")
-            } finally {
-                upload = null
-            }
-        }
+        if (uri != null) onUpload(uri)
     }
 
     Scaffold(
@@ -170,10 +178,10 @@ fun FilesScreen(host: SavedHost, bottomInset: Dp = 0.dp) {
         },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            Breadcrumbs(path = currentPath, onNavigate = { currentPath = it })
+            Breadcrumbs(path = currentPath, onNavigate = onPath)
             HorizontalDivider()
 
-            upload?.let { (name, fraction) -> UploadProgress(name, fraction) }
+            upload?.let { UploadBar(it.name, it.fraction, onCancel = onCancelUpload) }
 
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -230,7 +238,10 @@ fun FilesScreen(host: SavedHost, bottomInset: Dp = 0.dp) {
                                     entry = entry,
                                     onClick = {
                                         if (entry.isDir) {
-                                            currentPath = if (currentPath.isEmpty()) entry.name else "$currentPath/${entry.name}"
+                                            onPath(
+                                                if (currentPath.isEmpty()) entry.name
+                                                else "$currentPath/${entry.name}",
+                                            )
                                         } else {
                                             startDownload(context, fileApi, host, currentPath, entry)
                                         }
@@ -265,7 +276,9 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit) {
             MaterialTheme.colorScheme.primary
         }
         Row(
-            modifier = Modifier.clickable { onNavigate("") },
+            // 48dp floor (§5): the crumbs were ~38dp tall with 4dp gaps, close enough
+            // together that stepping back a level regularly landed on the wrong one.
+            modifier = Modifier.heightIn(min = 48.dp).clickable { onNavigate("") },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -286,7 +299,10 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit) {
             val isLast = index == segments.lastIndex
             Text(
                 name,
-                modifier = Modifier.clickable { onNavigate(segments.subList(0, index + 1).joinToString("/")) },
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .clickable { onNavigate(segments.subList(0, index + 1).joinToString("/")) }
+                    .wrapContentHeight(Alignment.CenterVertically),
                 color = if (isLast) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
             )
         }
@@ -347,16 +363,23 @@ internal fun EmptyState(
  *  docs/design-system.md §7. Falls back to indeterminate only when the content
  *  provider refuses to say how big the file is. */
 @Composable
-private fun UploadProgress(name: String, fraction: Float) {
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Text(
-            "Uploading $name",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(bottom = 4.dp),
-        )
+private fun UploadBar(name: String, fraction: Float, onCancel: () -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Uploading $name",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(bottom = 4.dp),
+            )
+            // The only way out of the wrong 2GB video. Leaving the screen used to be it,
+            // which cancelled the upload without ever saying so.
+            IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Filled.Close, contentDescription = "Cancel upload")
+            }
+        }
         if (fraction > 0f) {
             LinearProgressIndicator(
                 progress = { fraction },

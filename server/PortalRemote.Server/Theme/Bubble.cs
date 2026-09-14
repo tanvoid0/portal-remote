@@ -17,8 +17,9 @@ namespace PortalRemote.Theme;
 /// </summary>
 public sealed class Bubble : Panel
 {
-    private const int PadX = 12;
-    private const int PadY = 8;
+    // The phone's ShareBubble padding, so the two threads set text at the same rhythm.
+    private const int PadX = 14;
+    private const int PadY = 10;
     private const int MetaGap = 2;
 
     /// <summary>A bubble that reached the far edge would read as a full-width block
@@ -28,7 +29,15 @@ public sealed class Bubble : Panel
     // GDI (TextRenderer) rather than GDI+ (Graphics.DrawString) for both the measure
     // and the paint: the two disagree about wrapping, and measuring in one to draw in
     // the other clips the last line of anything that wraps.
-    private const TextFormatFlags TextFlags = TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix;
+    //
+    // WordEllipsis is what keeps a shared URL inside its own bubble. WordBreak alone
+    // breaks *between* words, so a single unbreakable run — which is what a link is —
+    // measured wider than the column it was given, and the bubble was drawn at that
+    // width: the two link bubbles in the shipped screenshot ran off both edges of the
+    // window. With this flag the run is truncated to the width it has. Nothing is lost
+    // by it — clicking the bubble still copies or opens the whole item, not the label.
+    private const TextFormatFlags TextFlags =
+        TextFormatFlags.WordBreak | TextFormatFlags.WordEllipsis | TextFormatFlags.NoPrefix;
 
     public bool Incoming { get; }
 
@@ -90,7 +99,10 @@ public sealed class Bubble : Panel
 
         var body = TextRenderer.MeasureText(_body, Fonts.Body, new Size(inner, int.MaxValue), TextFlags);
         var meta = TextRenderer.MeasureText(_meta, Fonts.Caption, new Size(inner, int.MaxValue), TextFlags);
-        var content = Math.Max(body.Width, meta.Width);
+        // Clamped: MeasureText returns the width an unbreakable run *wants*, which can
+        // exceed the width it was offered. Trusting it is what let a bubble grow wider
+        // than the control drawing it.
+        var content = Math.Min(inner, Math.Max(body.Width, meta.Width));
 
         _bubble = new Rectangle(
             Incoming ? 0 : Width - (content + padX * 2), 0,
@@ -109,7 +121,10 @@ public sealed class Bubble : Panel
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        using (var path = RoundedRect.Path(_bubble, RoundedRect.RadiusCard))
+        // Chamfered, with the square corner pointing at its own side of the thread —
+        // the phone's bubble exactly (Shapes.Bubble). Rounded corners here were the
+        // clearest tell that the two halves were drawn by different hands.
+        using (var path = Shapes.Bubble(_bubble, LogicalToDeviceUnits(12), Incoming))
         {
             using var fill = new SolidBrush(Incoming ? _colors.SurfaceMuted : _colors.Accent);
             g.FillPath(fill, path);

@@ -62,6 +62,8 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
             val stats by viewModel.stats.collectAsState()
             val statsHistory by viewModel.statsHistory.collectAsState()
             val deckItems by viewModel.deckItems.collectAsState()
+            val upload by viewModel.upload.collectAsState()
+            val filesPath by viewModel.filesPath.collectAsState()
             val activeWindow by viewModel.activeWindow.collectAsState()
             var triedSavedHost by remember { mutableStateOf(false) }
             val haptics = rememberHaptics(settings.haptics)
@@ -114,12 +116,16 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                     // recreate this whole subtree on every blip — losing the selected
                     // tab and cancelling anything in flight in FilesScreen (e.g. an
                     // upload) exactly the thing this reconnect logic exists to prevent.
-                    showRemote ->
+                    // `currentHost` is set before the socket can reach Connected (see
+                    // pairAndConnect/reconnectSavedHost) — but "Forget this PC" nulls it
+                    // synchronously while `state` is still a collected snapshot saying
+                    // Connected, and a recomposition in that window used to take the
+                    // requireNotNull below rather than the pairing screen.
+                    showRemote && viewModel.currentHost != null &&
+                        ((state as? ConnectionState.Connected)?.hello ?: viewModel.lastHello) != null ->
                         RemoteScreen(
                             hello = (state as? ConnectionState.Connected)?.hello
                                 ?: requireNotNull(viewModel.lastHello),
-                            // currentHost is always set before the socket can reach Connected —
-                            // see pairAndConnect/reconnectSavedHost, both set it before ws.connect().
                             host = requireNotNull(viewModel.currentHost),
                             reconnecting = state !is ConnectionState.Connected,
                             failure = (state as? ConnectionState.Failed)?.reason,
@@ -163,6 +169,12 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
                             onShareText = { viewModel.shareText(it) },
                             onShareUri = { viewModel.shareUri(it) },
                             onRetryShare = { viewModel.retryShare(it) },
+                            filesPath = filesPath,
+                            onFilesPath = { viewModel.openFilesPath(it) },
+                            upload = upload,
+                            uploadMessages = viewModel.uploadResult,
+                            onUpload = { viewModel.uploadFile(it) },
+                            onCancelUpload = { viewModel.cancelUpload() },
                             onForget = { viewModel.forgetHost() },
                         )
 

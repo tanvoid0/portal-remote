@@ -20,10 +20,12 @@ import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.PortalRemoteTheme
 
 /**
- * The row that sits under the title bar on a tab holding more than one screen.
+ * The row on a tab holding more than one screen — above the nav capsule on Control and
+ * Deck, where the thumb is, and under the title bar on Transfer, whose composer and
+ * lists own the bottom edge (docs/design-system.md §13).
  *
- * Three tabs use it now — Control (trackpad/keyboard/media/remote), Monitor
- * (screen/stats) and Transfer (share/files) — and the reason it's one composable rather
+ * Three tabs use it now — Control (trackpad/keyboard/media/remote), Deck
+ * (shortcuts/stats) and Transfer (share/files) — and the reason it's one composable rather
  * than three copies is that they have to look identical: the whole argument in
  * docs/design-system.md §13 for folding screens together is that the row costs 48dp
  * *once*, and three near-identical rows that drift apart is how that stops being true.

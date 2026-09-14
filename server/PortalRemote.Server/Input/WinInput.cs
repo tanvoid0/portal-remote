@@ -136,15 +136,21 @@ public static partial class WinInput
             .ToList();
 
     /// <summary>
-    /// Region a monitor index refers to: <c>null</c> means the primary display (the
-    /// sane default — mirroring a multi-monitor desktop onto a phone produces an
-    /// unreadable strip), a negative index means every monitor at once, and anything
-    /// out of range falls back to the full virtual desktop rather than throwing.
+    /// Region a capture target refers to. A <paramref name="window"/> handle (see
+    /// <see cref="Windows"/>) wins and means that window's on-screen rectangle — empty
+    /// once it's minimised or closed. Otherwise a monitor index: <c>null</c> means the
+    /// primary display (the sane default — mirroring a multi-monitor desktop onto a
+    /// phone produces an unreadable strip), a negative index means every monitor at
+    /// once, and anything out of range falls back to the full virtual desktop rather
+    /// than throwing.
     /// </summary>
-    public static Rectangle BoundsFor(int? monitor)
+    public static Rectangle BoundsFor(int? monitor, long? window = null)
     {
         var (vx, vy, vw, vh) = VirtualScreen();
         var all = new Rectangle(vx, vy, vw, vh);
+        // Only the on-screen part of a window: half of it dragged off the desktop has
+        // nothing to capture there, and clipping keeps taps lined up with the picture.
+        if (window is not null) return Rectangle.Intersect(WindowBounds((nint)window.Value), all);
         if (monitor < 0) return all;
 
         var displays = Displays();
@@ -207,9 +213,11 @@ public static partial class WinInput
     /// within the mirrored image and which monitor it asked for, nothing else, so the
     /// desktop's pixel geometry stays here.
     /// </summary>
-    public static void MoveAbsoluteNormalized(double fx, double fy, int? monitor = null)
+    public static void MoveAbsoluteNormalized(double fx, double fy, int? monitor = null, long? window = null)
     {
-        var bounds = BoundsFor(monitor);
+        var bounds = BoundsFor(monitor, window);
+        // A window that has gone away has nowhere for the pointer to go.
+        if (bounds.IsEmpty) return;
         MoveAbsolute(
             bounds.X + (int)Math.Round(Math.Clamp(fx, 0, 1) * (bounds.Width - 1)),
             bounds.Y + (int)Math.Round(Math.Clamp(fy, 0, 1) * (bounds.Height - 1)));
@@ -381,12 +389,13 @@ public static partial class WinInput
     /// mouse pretending to be one. [contacts] should carry every finger still down,
     /// not just the one that changed, the same way a real digitizer reports a frame.
     /// </summary>
-    public static void Touch(int? monitor, IReadOnlyList<TouchContact> contacts)
+    public static void Touch(int? monitor, long? window, IReadOnlyList<TouchContact> contacts)
     {
         if (contacts.Count == 0) return;
+        var bounds = BoundsFor(monitor, window);
+        if (bounds.IsEmpty) return;
         EnsureTouchInjectionInitialized();
 
-        var bounds = BoundsFor(monitor);
         var infos = new PointerTouchInfo[contacts.Count];
         for (var i = 0; i < contacts.Count; i++)
         {

@@ -13,14 +13,16 @@ object Protocol {
         put("t", "mouse_move_abs"); put("x", x); put("y", y)
     }
 
-    /** Point at a fraction (0..1) of [monitor]'s area — what the screen mirror sends,
-     *  since the phone knows where the finger landed in the mirrored image but not
-     *  what that is in desktop pixels. Null [monitor] means the primary display. */
-    fun mouseMoveNorm(nx: Float, ny: Float, monitor: Int? = null) = JSONObject().apply {
+    /** Point at a fraction (0..1) of [monitor]'s area, or of [window]'s when mirroring
+     *  one app — what the screen mirror sends, since the phone knows where the finger
+     *  landed in the mirrored image but not what that is in desktop pixels. Null
+     *  [monitor] means the primary display. */
+    fun mouseMoveNorm(nx: Float, ny: Float, monitor: Int? = null, window: Long? = null) = JSONObject().apply {
         put("t", "mouse_move_abs")
         put("nx", nx.coerceIn(0f, 1f).toDouble())
         put("ny", ny.coerceIn(0f, 1f).toDouble())
         if (monitor != null) put("mon", monitor)
+        if (window != null) put("win", window)
     }
 
     /** Full press-and-release when [down] is null, otherwise just that half of the click. */
@@ -39,6 +41,12 @@ object Protocol {
 
     fun tap(name: String) = JSONObject().apply {
         put("t", "tap"); put("key", name)
+    }
+
+    /** A key by Windows virtual-key code, for the ones the server has no name for —
+     *  the OEM punctuation keys the drawn keyboard presses under Ctrl. */
+    fun tapVk(vk: Int) = JSONObject().apply {
+        put("t", "tap"); put("vk", vk)
     }
 
     fun combo(vararg keys: String) = JSONObject().apply {
@@ -147,9 +155,10 @@ object Protocol {
 
     /** Inject real touch input — Windows' touch-digitizer path, not the mouse cursor
      *  every other message here drives. See ScreenScreen's touch-passthrough mode. */
-    fun touch(contacts: List<TouchContact>, monitor: Int? = null) = JSONObject().apply {
+    fun touch(contacts: List<TouchContact>, monitor: Int? = null, window: Long? = null) = JSONObject().apply {
         put("t", "touch")
         if (monitor != null) put("mon", monitor)
+        if (window != null) put("win", window)
         put(
             "contacts",
             JSONArray(

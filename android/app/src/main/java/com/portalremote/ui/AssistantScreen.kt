@@ -55,12 +55,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.portalremote.ui.theme.LocalHaptics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -94,7 +97,7 @@ fun AssistantScreen(
     catalogLoading: Boolean,
     catalogError: String?,
     onProbe: (retry: Boolean) -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (String) -> Boolean,
     onConfirm: (turnId: String, approved: List<Int>) -> Unit,
     onCancelPlan: (turnId: String) -> Unit,
     onRegenerate: () -> Unit,
@@ -189,7 +192,7 @@ private fun ChatPane(
     catalog: AiCatalog?,
     catalogLoading: Boolean,
     catalogError: String?,
-    onSend: (String) -> Unit,
+    onSend: (String) -> Boolean,
     onConfirm: (turnId: String, approved: List<Int>) -> Unit,
     onCancelPlan: (turnId: String) -> Unit,
     onRegenerate: () -> Unit,
@@ -198,15 +201,46 @@ private fun ChatPane(
     onLoadCatalog: () -> Unit,
     onSelectModel: (provider: String?, model: String) -> Unit,
 ) {
-    var draft by remember { mutableStateOf("") }
+    // rememberSaveable: a long question survives rotation or process death, the same
+    // way a half-typed message anywhere else in this app does.
+    var draft by rememberSaveable { mutableStateOf("") }
+    // Sending is the end of typing here: the answer streams in above, and a keyboard
+    // covering half of it means dismissing it by hand before you can read the reply.
+    val keyboard = LocalSoftwareKeyboardController.current
+    val haptics = LocalHaptics.current
+
+    // The draft is cleared only by a send that actually left the phone. The transcript
+    // is the PC's — nothing is echoed locally — so clearing it on a socket that is down
+    // deletes a paragraph the user would have to type again from memory.
+    fun submit() {
+        if (draft.isBlank() || streaming) return
+        if (onSend(draft)) {
+            draft = ""
+            keyboard?.hide()
+        } else {
+            // Same answer the control surfaces give for a message that went nowhere
+            // (§6a): the question is still in the field, and the buzz is what says the
+            // Send that just did nothing was not ignored.
+            haptics.reject()
+        }
+    }
     var showModelPicker by remember { mutableStateOf(false) }
-    var confirming by remember { mutableStateOf<Pair<String, List<Int>>?>(null) }
+    var confirming by remember { mutableStateOf<Triple<String, List<Int>, String>?>(null) }
+    var clearing by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    // Follow the reply as it grows. Keyed on the last turn's length as well as the count,
-    // because a streaming reply is one item getting longer rather than new items arriving.
+    // Follow the reply as it grows, but only when the bottom is already in view — this
+    // reads the layout as it stood before the new content landed, otherwise the very
+    // scroll this triggers would always read as "already at the bottom" next time round.
+    // Without the guard, scrolling up to re-read an earlier answer gets yanked back to
+    // the bottom several times a second while a reply streams.
     LaunchedEffect(chat.size, chat.lastOrNull()?.text?.length, chat.lastOrNull()?.plan) {
-        if (chat.isNotEmpty()) listState.animateScrollToItem(chat.lastIndex)
+        if (chat.isEmpty()) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val nearBottom = info.visibleItemsInfo.lastOrNull()?.index?.let {
+            it >= info.totalItemsCount - 2
+        } ?: true
+        if (nearBottom) listState.animateScrollToItem(chat.lastIndex)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -241,9 +275,17 @@ private fun ChatPane(
                         turn = turn,
                         onRun = { approved ->
                             val destructive = turn.plan?.actions
-                                ?.any { it.destructive && it.index in approved } == true
-                            if (destructive) confirming = turn.id to approved
-                            else onConfirm(turn.id, approved)
+                                ?.filter { it.destructive && it.index in approved }
+                                .orEmpty()
+                            if (destructive.isNotEmpty()) {
+                                // The title names the actions actually approved, not a
+                                // fixed guess — a plan the server marks destructive is
+                                // never just "shut down or restart" (net/AiPlan.kt).
+                                val title = destructive.joinToString("; ") { it.summary }
+                                confirming = Triple(turn.id, approved, title)
+                            } else {
+                                onConfirm(turn.id, approved)
+                            }
                         },
                         onCancel = { onCancelPlan(turn.id) },
                     )
@@ -272,7 +314,7 @@ private fun ChatPane(
                 }
             }
             if (chat.isNotEmpty() && !streaming) {
-                TextButton(onClick = onClear) {
+                TextButton(onClick = { clearing = true }) {
                     Icon(Icons.Filled.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.size(4.dp))
                     Text("Clear")
@@ -297,10 +339,7 @@ private fun ChatPane(
                 // way to report that it blinked (§4.5).
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = {
-                    if (draft.isNotBlank() && !streaming) {
-                        onSend(draft)
-                        draft = ""
-                    }
+                    if (draft.isNotBlank() && !streaming) submit()
                 }),
                 maxLines = 4,
             )
@@ -314,8 +353,7 @@ private fun ChatPane(
                 filled = true,
                 enabled = draft.isNotBlank() && !streaming,
             ) {
-                onSend(draft)
-                draft = ""
+                submit()
             }
         }
     }
@@ -323,10 +361,10 @@ private fun ChatPane(
     // The second confirm on the two power modes that lose unsaved work — the same rule the
     // TV remote's power menu already follows, for the same reason: a mis-tap here costs
     // whatever was open on a machine in another room (§7).
-    confirming?.let { (turnId, approved) ->
+    confirming?.let { (turnId, approved, title) ->
         AlertDialog(
             onDismissRequest = { confirming = null },
-            title = { Text("Shut down or restart the PC?") },
+            title = { Text(title) },
             text = { Text("Anything unsaved on the PC will be lost.") },
             confirmButton = {
                 TextButton(onClick = {
@@ -336,6 +374,22 @@ private fun ChatPane(
             },
             dismissButton = {
                 TextButton(onClick = { confirming = null }) { Text("Cancel") }
+            },
+        )
+    }
+
+    // The transcript is the PC's own assistant window too (§ class doc) — clearing it
+    // here clears that, which is one tap doing more than it looks like it does.
+    if (clearing) {
+        AlertDialog(
+            onDismissRequest = { clearing = false },
+            title = { Text("Clear the conversation?") },
+            text = { Text("This clears the PC's own assistant window too.") },
+            confirmButton = {
+                TextButton(onClick = { clearing = false; onClear() }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearing = false }) { Text("Cancel") }
             },
         )
     }

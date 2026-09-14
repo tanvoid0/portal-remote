@@ -84,6 +84,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.portalremote.UploadProgress
 import com.portalremote.data.AppSettings
 import com.portalremote.data.DeckItem
 import com.portalremote.data.SavedHost
@@ -109,6 +110,7 @@ import com.portalremote.ui.theme.SystemBars
 import com.portalremote.ui.theme.accentGlow
 import com.portalremote.ui.theme.rememberPressScale
 import kotlin.math.absoluteValue
+import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONObject
 
 /** Slowest a dropped-input buzz may repeat. Long enough that a held gesture answers
@@ -184,7 +186,9 @@ fun RemoteScreen(
     aiCatalogLoading: Boolean,
     aiCatalogError: String?,
     onProbeAi: (retry: Boolean) -> Unit,
-    onSendChat: (String) -> Unit,
+    /** Returns whether the question actually left the phone — the transcript belongs to
+     *  the PC, so a send that went nowhere leaves nothing on screen to retype from. */
+    onSendChat: (String) -> Boolean,
     onConfirmPlan: (turnId: String, approved: List<Int>) -> Unit,
     onCancelPlan: (turnId: String) -> Unit,
     onRegenerateChat: () -> Unit,
@@ -195,6 +199,14 @@ fun RemoteScreen(
     onShareText: (String) -> Unit,
     onShareUri: (Uri) -> Unit,
     onRetryShare: (Long) -> Unit,
+    /** Files' folder and its upload live in the ViewModel: this screen's cross-fades
+     *  dispose the Files tab, which used to cancel an upload in flight. */
+    filesPath: String,
+    onFilesPath: (String) -> Unit,
+    upload: UploadProgress?,
+    uploadMessages: SharedFlow<String>,
+    onUpload: (Uri) -> Unit,
+    onCancelUpload: () -> Unit,
     onForget: () -> Unit,
 ) {
     // Saveable for the same reason ControlScreen's mode is: a rotation on the mirror
@@ -215,6 +227,11 @@ fun RemoteScreen(
     // bar around it is a picture of another screen in a frame.
     var fullscreen by remember { mutableStateOf(false) }
     if (fullscreen) BackHandler { fullscreen = false }
+    // Back from any other tab used to close the session outright. Control is the tab
+    // the app opens on, so it is the one place where back still means "leave".
+    if (!fullscreen && tab != RemoteTab.CONTROL) {
+        BackHandler { tab = RemoteTab.CONTROL }
+    }
     // Status bar stays up everywhere except here — the one screen whose content is
     // itself a screen, per docs/design-system.md §13.
     SystemBars(immersive = fullscreen)
@@ -256,8 +273,12 @@ fun RemoteScreen(
     // timer doesn't reliably count as activity — opt-in, since holding the screen
     // awake costs battery.
     val view = LocalView.current
-    DisposableEffect(settings.keepScreenOn) {
-        view.keepScreenOn = settings.keepScreenOn
+    // Gated on the connection as well, because that is what Settings promises: with the
+    // PC off or the token rejected the screen was held awake anyway, for a session that
+    // is not happening.
+    val keepAwake = settings.keepScreenOn && !reconnecting
+    DisposableEffect(keepAwake) {
+        view.keepScreenOn = keepAwake
         onDispose { view.keepScreenOn = false }
     }
 
@@ -356,6 +377,7 @@ fun RemoteScreen(
                             onText = { s -> gatedSend(Protocol.text(s)) },
                             onTap = { key -> gatedSend(Protocol.tap(key)) },
                             onCombo = { keys -> gatedSend(Protocol.combo(*keys.toTypedArray())) },
+                            send = gatedSend,
                             onMedia = { action -> gatedSend(Protocol.media(action)) },
                             onSeek = { ms -> gatedSend(Protocol.seek(ms)) },
                             cast = cast,
@@ -407,6 +429,12 @@ fun RemoteScreen(
                             onShareText = onShareText,
                             onShareUri = onShareUri,
                             onRetryShare = onRetryShare,
+                            filesPath = filesPath,
+                            onFilesPath = onFilesPath,
+                            upload = upload,
+                            uploadMessages = uploadMessages,
+                            onUpload = onUpload,
+                            onCancelUpload = onCancelUpload,
                             bottomInset = padding.calculateBottomPadding(),
                         )
                         RemoteTab.DECK -> DeckTabs(

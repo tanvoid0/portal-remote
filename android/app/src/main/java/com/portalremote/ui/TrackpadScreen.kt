@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TouchApp
@@ -43,17 +44,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -62,106 +64,27 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
-import com.portalremote.ui.theme.Haptics
+import com.portalremote.data.Prefs
 import com.portalremote.ui.theme.HudPanelShape
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.Motion
 import com.portalremote.ui.theme.PortalRemoteTheme
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlin.math.sign
 
 /** Width of the right-edge scroll rail. Wide enough to hit without looking (§9's 48dp
  *  floor is about controls; this is a strip along a full-height edge, so 44dp with the
  *  screen edge behind it is comfortably past the same target). */
 private val SCROLL_RAIL_WIDTH = 44.dp
-
-/**
- * Hold-to-keep-scrolling — shared by the rail and two-finger vertical scroll (see
- * [startHoldToScroll]).
- *
- * Either surface is 1:1 while the finger moves, which is right for a nudge and useless
- * for a long document: a phone-height pad is maybe twelve notches of travel, so
- * reaching the bottom of anything means repeating the same swipe over and over. So once
- * the finger has been still for [RAIL_HOLD_MS] it switches to rate control —
- * displacement from where the gesture started becomes a speed, the way holding a
- * scrollbar's track does. Moving again hands control straight back to 1:1.
- *
- * Rate is squared, not linear, so the first third of the travel is a slow crawl you
- * can stop on a line, and full tilt is reserved for the far end.
- */
-private const val RAIL_HOLD_MS = 120L
-private const val RAIL_TICK_MS = 16L
-
-/** Displacement from where the gesture started below which holding does nothing. A
- *  finger parked where it landed is a finger resting on the pad, not a request to
- *  scroll forever. */
-private const val RAIL_DEAD_ZONE = 20f
-
-/** Displacement past the dead zone at which the rate hits [RAIL_MAX_PX_PER_SEC]. */
-private const val RAIL_FULL_SPEED = 160f
-
-/** Top auto-scroll rate, in the finger-travel pixels [WheelScroll] takes — about 26
- *  notches a second, which is a fast but still readable page-flick. */
-private const val RAIL_MAX_PX_PER_SEC = 1600f
-
-/**
- * Finger travel to emit for one tick of auto-scroll, given how far the held finger sits
- * from where its gesture began. Pure and separate from the job below so the curve — dead
- * zone, squared ramp, ceiling — can be checked without a clock; see `HoldScrollTest`.
- */
-internal fun holdScrollStep(offset: Float, tickMs: Long = RAIL_TICK_MS): Float {
-    val over = abs(offset) - RAIL_DEAD_ZONE
-    if (over <= 0f) return 0f
-    val t = (over / RAIL_FULL_SPEED).coerceAtMost(1f)
-    return sign(offset) * t * t * RAIL_MAX_PX_PER_SEC * (tickMs / 1000f)
-}
-
-/**
- * The hold-to-keep-scrolling mechanic itself, factored out so the rail and the
- * two-finger vertical scroll share one rate curve instead of two that could drift
- * apart. [offset] is displacement from wherever the caller considers the gesture's
- * start — the rail's distance from touch-down, or the two-finger case's cumulative
- * pan since the axis locked; [lastMoveMs] is the last time that offset actually
- * changed, which is what "held still" means here.
- */
-private fun startHoldToScroll(
-    scope: CoroutineScope,
-    wheel: WheelScroll,
-    haptics: Haptics,
-    offset: () -> Float,
-    lastMoveMs: () -> Long,
-): Job = scope.launch {
-    var running = false
-    while (isActive) {
-        delay(RAIL_TICK_MS)
-        // Pointer uptime, not wall clock: [Finger.uptimeMs] is what stamps `lastMoveMs`,
-        // and wall clock jumps whenever the network corrects it.
-        val holding = SystemClock.uptimeMillis() - lastMoveMs() >= RAIL_HOLD_MS
-        val step = if (holding) holdScrollStep(offset()) else 0f
-        if (step == 0f) {
-            running = false
-            continue
-        }
-        // One bump as it takes over, then silence: this is continuous motion, and
-        // Haptics.kt's rule is that continuous motion gets nothing.
-        if (!running) { running = true; haptics.tick() }
-        // `coasting` because it isn't a finger: it suppresses the per-notch tick and
-        // leaves the scroll echo re-stamping, which is what says the auto-scroll is
-        // still running.
-        wheel.by(dy = step, coasting = true)
-    }
-}
 
 /**
  * The pad's full gesture vocabulary, for the list in Settings.
@@ -235,10 +158,8 @@ fun TrackpadScreen(
     onClick: (button: String, down: Boolean?) -> Unit,
     /** A key combo the multi-finger gestures stand for — see [swipeShortcut]. */
     onShortcut: (keys: List<String>) -> Unit,
-    onText: (String) -> Unit,
-    onTap: (key: String) -> Unit,
-    /** Fired the moment the type bar below gets focus — the shell uses this to jump
-     *  to the Keyboard tab, which is where that focus actually belongs. */
+    /** The shell uses this to jump to the Keyboard tab, whose field takes focus and
+     *  opens the IME — the one thing the type bar below is for. */
     onFocusKeyboard: () -> Unit,
 ) {
     Column(
@@ -247,19 +168,17 @@ fun TrackpadScreen(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // A trigger, not a place to actually type: focusing it hands off to the
-        // Keyboard tab's own field immediately, before the IME has a chance to open
-        // here. Not auto-focused itself — that would fire the handoff the instant
-        // this tab is shown, which is not what landing on Trackpad means.
-        KeyCaptureField(
-            onText = onText,
-            onTap = onTap,
-            autoFocus = false,
-            label = "Tap to type",
-            modifier = Modifier
-                .fillMaxWidth()
-                .onFocusChanged { if (it.isFocused) onFocusKeyboard() },
-        )
+        // A trigger, not a place to type — it hands off to the Keyboard tab. It used to
+        // be a full text field doing the same on focus, which cost 64dp of the pad for
+        // an outline and a floating label nobody ever typed into.
+        KeyButton(
+            onClick = onFocusKeyboard,
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+        ) {
+            Icon(Icons.Filled.Keyboard, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text("Tap to type", modifier = Modifier.padding(start = 8.dp))
+        }
         TrackpadSurface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -317,11 +236,29 @@ private fun TrackpadSurface(
     // sending after the finger is no longer being read.
     var railJob by remember { mutableStateOf<Job?>(null) }
     var twoFingerHoldJob by remember { mutableStateOf<Job?>(null) }
-    DisposableEffect(Unit) { onDispose { railJob?.cancel(); twoFingerHoldJob?.cancel() } }
+    // A hold-to-drag that is still running when this surface leaves the composition —
+    // the user switched to the Keyboard sub-tab, or pressed Home — takes the PC's left
+    // button with it: the pointer-input coroutine is cancelled before the gesture can
+    // release it, and the desktop is left rubber-band-selecting on every later move
+    // with nothing on the phone saying so.
+    var dragging by remember { mutableStateOf(false) }
+    val latestDragEnd by rememberUpdatedState(onDragEnd)
+    DisposableEffect(Unit) {
+        onDispose {
+            railJob?.cancel()
+            twoFingerHoldJob?.cancel()
+            if (dragging) latestDragEnd()
+        }
+    }
     // The gesture legend is onboarding, not chrome: once a finger has landed on the
     // pad the user has the idea, and a permanent two-line caption in the middle of
     // the surface is the most-looked-at clutter on the most-used screen.
-    var used by remember { mutableStateOf(false) }
+    // Stored rather than remembered: the Control tab's cross-fade disposes this whole
+    // surface on every sub-tab change, so composable state put the legend back in the
+    // middle of the pad every time the user came back from Keyboard or Media.
+    val context = LocalContext.current
+    val prefs = remember(context) { Prefs(context) }
+    val used by prefs.padLegendSeen.collectAsState(initial = true)
 
     // 100ms scale pulse confirming a resolved tap — see docs/design-system.md §7.
     // Drag/scroll never touch this: the pad tracks the finger 1:1 with no animation.
@@ -367,7 +304,12 @@ private fun TrackpadSurface(
     // tell the pad has.
     val wheel = remember(settings.naturalScroll, haptics) {
         WheelScroll(scope) { _, dy, coasting ->
-            val direction = if (settings.naturalScroll) -1 else 1
+            // Windows takes a *positive* wheel delta as "scroll up", which moves the
+            // content down the screen — so following the finger down, which is what
+            // natural scrolling means and what Settings promises, is the positive one.
+            // These signs were the wrong way round: the toggle did the opposite of its
+            // own label in both places that read it.
+            val direction = if (settings.naturalScroll) 1 else -1
             onScroll(direction * dy * WHEEL_DELTA)
             // One tick per notch under a finger, so scrolling has detents like a real
             // wheel. Never while coasting: a 4000px/s flick is ~60 notches a second,
@@ -465,7 +407,7 @@ private fun TrackpadSurface(
                     railJob?.cancel()
                     twoFingerHoldJob?.cancel()
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    used = true
+                    if (!used) scope.launch { prefs.markPadLegendSeen() }
                     // Catching a coasting scroll is how you stop one, the same as
                     // slapping a spinning wheel — and it must happen on *any* touch,
                     // before this gesture is even classified.
@@ -499,6 +441,7 @@ private fun TrackpadSurface(
                                 onShortcut(action.keys)
                             }
                             PadAction.DragStart -> {
+                                dragging = true
                                 // The gesture just changed meaning under a finger that
                                 // hasn't moved — the strongest haptic in the app earns its
                                 // place here, and it's also how the user knows the hold
@@ -507,7 +450,7 @@ private fun TrackpadSurface(
                                 showEcho(Icons.Filled.OpenWith, "Dragging")
                                 onDragStart()
                             }
-                            PadAction.DragEnd -> { haptics.tick(); onDragEnd() }
+                            PadAction.DragEnd -> { dragging = false; haptics.tick(); onDragEnd() }
                             PadAction.RailStart -> {
                                 // Landing on the rail means this gesture will scroll rather
                                 // than move — the one thing about the pad you can't see
@@ -595,7 +538,9 @@ private fun TrackpadSurface(
             )
             Icon(
                 Icons.Filled.UnfoldMore,
-                contentDescription = "Scroll",
+                // Decorative: the strip is not clickable, and announcing it as an item
+                // offers a screen reader something that cannot be activated.
+                contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                     .copy(alpha = 0.3f + 0.45f * railGlow),
             )
@@ -668,11 +613,25 @@ private fun ClickButton(
     val scale = remember { Animatable(1f) }
     val scope = rememberCoroutineScope()
     val haptics = LocalHaptics.current
+    // This button exists to be *held* while another finger drags, so leaving the screen
+    // mid-hold is a real thing to do — and it cancels the gesture coroutine inside
+    // waitForUpOrCancellation, which means the release below never runs and the PC keeps
+    // the button down for the rest of the session.
+    var down by remember { mutableStateOf(false) }
+    val latestUp by rememberUpdatedState(onUp)
+    DisposableEffect(Unit) { onDispose { if (down) latestUp() } }
 
     Button(
+        // Stays a no-op: the press/release pair below has already fired by the time a
+        // touch would reach this, and doing it here as well sends the PC two clicks.
         onClick = {},
         modifier = modifier
-            .height(56.dp)
+            .height(48.dp)
+            // A screen reader never produces the pointer events the hold path is built
+            // on, so without this the button announces itself and then sends nothing.
+            .semantics {
+                onClick(label = label) { onDown(); onUp(); true }
+            }
             .graphicsLayer { scaleX = scale.value; scaleY = scale.value }
             // Press and release each get their own haptic: this button can be *held*
             // while another finger drags, so "still down" is real state the user has
@@ -681,10 +640,12 @@ private fun ClickButton(
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     haptics.tap()
+                    down = true
                     onDown()
                     scope.launch { scale.animateTo(Motion.PressScale, Motion.pressSpec()) }
                     waitForUpOrCancellation()
                     haptics.tick()
+                    down = false
                     onUp()
                     scope.launch { scale.animateTo(1f, Motion.pressSpec()) }
                 }

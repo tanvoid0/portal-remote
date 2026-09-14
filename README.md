@@ -73,8 +73,8 @@ redrawn as neutral stand-ins. Nothing else is retouched. Re-shooting them is in
 - **Drive the PC by hand** — a precision trackpad (multi-finger gestures, momentum,
   fine-control gain curve), a keyboard, media keys, and a TV-style D-pad remote for the
   couch.
-- **See the screen** — live MJPEG mirroring at ~14.5fps, per-monitor, pinch to zoom to
-  4×, tap to click where you looked.
+- **See the screen** — live MJPEG mirroring at ~14.5fps, per-monitor or a single app's
+  window, pinch to zoom to 4×, tap to click where you looked.
 - **Watch the machine** — a live resource dashboard drawn as an instrument panel: CPU
   per core, memory, a minute of history, network throughput, every drive, and what's
   using the most CPU right now. The PC only samples itself while that screen is open.

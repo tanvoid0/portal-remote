@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -143,7 +144,9 @@ fun MediaScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
+        // Bottom, not centre: the transport and the volume are what gets tapped, and
+        // the bottom of the screen is where the thumb already is.
+        verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CastTargets(castTargets, castTarget, castScanning, onCastTarget, onScanCastTargets)
@@ -651,11 +654,14 @@ private fun CastLink(onCast: (url: String) -> Unit, onCastFile: (Uri) -> String?
     // Normalising as the user types is also the enabled-state check: if it can't be
     // made into a URL there is nothing to send.
     val url = CastUrl.normalize(typed)
+    val keyboard = LocalSoftwareKeyboardController.current
     val submit = {
         url?.let {
             onCast(it)
             lastSent = it
             typed = ""
+            // One link, one cast — nothing about this field expects a second line.
+            keyboard?.hide()
         }
         Unit
     }
@@ -908,23 +914,32 @@ private fun CastProgress(status: CastStatus, canSeek: Boolean, onPlayer: (JSONOb
  */
 @Composable
 private fun CastHint(status: CastStatus) {
+    val isError: Boolean
     val message = when {
-        status.waitingForGesture ->
+        status.waitingForGesture -> {
+            isError = false
             "Press the button on the screen you're casting to — a browser won't start " +
                 "playback until the page has been touched once."
+        }
         // HTMLMediaElement.error codes. 4 is the common one and the only one with a
         // useful answer, so it gets its own wording rather than a number.
-        status.errorCode == 4 ->
+        status.errorCode == 4 -> {
+            isError = true
             "That screen can't play this format. Cast with no receiver page open and it " +
                 "will land in the PC's own player instead."
-        status.errorCode != 0 ->
+        }
+        status.errorCode != 0 -> {
+            isError = true
             "The receiver reported a playback error (code ${status.errorCode})."
+        }
         else -> return
     }
     Text(
         message,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        // A real receiver error gets CastFile's error colour, not the same dim hint
+        // tint as "tap the screen first" — one is a nudge, the other is a failure.
+        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 8.dp),
     )
 }

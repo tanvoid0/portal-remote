@@ -38,15 +38,30 @@ public static class ScreenEndpoints
             })
         }));
 
+        // Which windows are open, for mirroring one app instead of a whole display.
+        group.MapGet("/windows", () => Results.Ok(new
+        {
+            windows = WinInput.Windows().Select(w => new
+            {
+                handle = w.Handle,
+                title = w.Title,
+                process = w.Process
+            })
+        }));
+
         // Single frame — handy for `curl`-checking the capture path without a client.
-        group.MapGet("/frame", (int? monitor, int? width, int? quality) =>
+        group.MapGet("/frame", (int? monitor, long? window, int? width, int? quality) =>
             Results.File(
-                ScreenCapture.Jpeg(monitor, ClampWidth(width), ClampQuality(quality)),
+                ScreenCapture.Jpeg(monitor, window, ClampWidth(width), ClampQuality(quality)),
                 "image/jpeg"));
 
         group.MapGet("/mjpeg", async (HttpContext context, ILoggerFactory loggerFactory,
-                                      int? monitor, int? fps, int? width, int? quality) =>
+                                      int? monitor, long? window, int? fps, int? width, int? quality) =>
         {
+            // The capture is of the window's screen region, so it has to be in front
+            // to show anything but what covers it — see WinInput.Focus.
+            if (window is not null) WinInput.Focus(window.Value);
+
             var log = loggerFactory.CreateLogger("PortalRemote.Screen");
             var peer = context.Connection.RemoteIpAddress?.ToString() ?? "<unknown>";
 
@@ -57,8 +72,9 @@ public static class ScreenEndpoints
             context.Response.ContentType = $"multipart/x-mixed-replace; boundary={Boundary}";
             context.Response.Headers.CacheControl = "no-store";
 
-            log.LogInformation("Mirror started for {Peer} (monitor {Monitor}, {Fps}fps, {Width}px, q{Quality})",
-                peer, monitor?.ToString() ?? "primary", rate, frameWidth, frameQuality);
+            log.LogInformation("Mirror started for {Peer} ({Target}, {Fps}fps, {Width}px, q{Quality})",
+                peer, window is not null ? $"window {window}" : $"monitor {monitor?.ToString() ?? "primary"}",
+                rate, frameWidth, frameQuality);
 
             var ct = context.RequestAborted;
             // PeriodicTimer paces off a fixed period rather than sleeping after each
@@ -81,16 +97,18 @@ public static class ScreenEndpoints
                     var startedAt = captureTime.ElapsedTicks;
                     try
                     {
-                        jpeg = ScreenCapture.Jpeg(monitor, frameWidth, frameQuality);
+                        jpeg = ScreenCapture.Jpeg(monitor, window, frameWidth, frameQuality);
                         captureTicks += captureTime.ElapsedTicks - startedAt;
                         reportedCaptureFailure = false;
                     }
                     catch (Exception ex) when (ex is Win32Exception or ExternalException or InvalidOperationException)
                     {
                         // GDI capture fails outright while the workstation is locked or a
-                        // UAC prompt owns the secure desktop. Skip the frame and keep the
-                        // response open so the mirror simply resumes when the desktop
-                        // comes back, instead of dropping the client into a retry loop.
+                        // UAC prompt owns the secure desktop, and a mirrored window that
+                        // gets minimised or closed has no area at all. Skip the frame and
+                        // keep the response open so the mirror simply resumes when the
+                        // desktop (or the window) comes back, instead of dropping the
+                        // client into a retry loop.
                         if (!reportedCaptureFailure)
                         {
                             log.LogWarning("Screen capture unavailable ({Reason}); holding the stream open", ex.Message);
