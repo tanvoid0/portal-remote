@@ -1,0 +1,44 @@
+{
+  "product": {
+    "tagline": "Use your Android phone as a trackpad, keyboard, remote and second screen for your Windows PC, over your own Wi-Fi, with no account or cloud.",
+    "summary": "Portal Remote pairs an Android phone with a Windows PC on the same network and lets you drive the PC from the sofa. Move the cursor and type, watch the screen live, cast to the PC or a TV, and send links and files either way. The phone talks straight to a small tray app on the PC, so there is no account and no relay in between.",
+    "features": [
+      {
+        "title": "Trackpad, keyboard and remote",
+        "detail": "A precision trackpad with multi-finger gestures and momentum, a keyboard with shortcut keys, media keys, and a TV-style D-pad for the couch."
+      },
+      {
+        "title": "See the PC's screen",
+        "detail": "Live mirroring at about 14.5 frames a second, per monitor or a single app's window. Pinch to zoom up to 4x and tap to click where you looked."
+      },
+      {
+        "title": "Play and cast",
+        "detail": "See what the PC is playing with cover art and a real scrubber, and send a link or a file to the PC, a Roku or a DLNA TV."
+      },
+      {
+        "title": "A browser that blocks ads",
+        "detail": "The in-app browser blocks ads, trackers and popups, turns down cookie prompts from the major consent vendors, and hands any video it finds to the cast button."
+      },
+      {
+        "title": "Send things both ways",
+        "detail": "Share from the phone's share sheet or press Ctrl+Alt+V on the PC and it lands on the other device's clipboard. Browse a shared folder on the PC to download or upload."
+      },
+      {
+        "title": "Watch the machine",
+        "detail": "A live dashboard of CPU per core, memory, network, every drive and the busiest processes. The PC only measures itself while you are looking."
+      },
+      {
+        "title": "An assistant that asks first",
+        "detail": "One conversation shared by phone and PC that can press media keys, type or run shortcuts on the PC, approved one action at a time. Needs Agent Platform, which the app sets up."
+      },
+      {
+        "title": "Pairs in one tap",
+        "detail": "Tap the PC in the list the phone finds on your network and allow it on the PC, or scan a QR code. Both halves update themselves from GitHub releases."
+      }
+    ],
+    "platforms": [
+      "Windows 10 (1809 or later) and 11",
+      "Android 8.0 or later"
+    ]
+  }
+}
