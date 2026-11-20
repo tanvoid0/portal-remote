@@ -19,9 +19,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.portalremote.net.ConnectionState
 import com.portalremote.ui.PairScreen
 import com.portalremote.ui.RemoteScreen
-import com.portalremote.ui.theme.HudAccent
 import com.portalremote.ui.theme.LocalHaptics
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.accentHues
 import com.portalremote.ui.theme.hudCanvas
 import com.portalremote.ui.theme.rememberHaptics
 
@@ -30,8 +30,8 @@ fun PortalRemoteApp(viewModel: AppViewModel = viewModel()) {
     // Read before the theme rather than inside it: the accent is a stored preference, and
     // the theme has to be built from it before anything under it composes, or the app
     // repaints itself a frame after launch.
-    val accentName by viewModel.settings.collectAsState()
-    PortalRemoteTheme(accent = HudAccent.from(accentName.accent)) {
+    val prefs by viewModel.settings.collectAsState()
+    PortalRemoteTheme(accent = accentHues(prefs.accent, prefs.accentHue, prefs.accentSecondHue)) {
         // The ruled ground, once, for the whole app — see docs/design-system.md §3. Every
         // panel in every screen rests on this one surface rather than carrying its own
         // texture, which is what makes a tab switch read as moving across one machine

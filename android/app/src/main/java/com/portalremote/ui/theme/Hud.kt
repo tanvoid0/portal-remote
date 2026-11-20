@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -69,8 +70,16 @@ data class HudColors(
     val bracket: Color get() = live
 }
 
+/** One accent choice, resolved: the live/second pair for each face. */
+data class AccentHues(
+    val darkLive: Color,
+    val darkSecond: Color,
+    val lightLive: Color,
+    val lightSecond: Color,
+)
+
 /**
- * The two accent hues, as a swappable set.
+ * The curated accent pairs.
  *
  * Separated from the neutrals because they are the only part of the palette that is a
  * *taste*: everything else — how far a panel sits from its canvas, how quiet the grid
@@ -79,21 +88,15 @@ data class HudColors(
  * because each pair below is picked at a luminance that clears §9 on both faces, and
  * `ContrastTest` checks every one of them.
  *
- * [warn] and [alarm] deliberately do not vary. They are status, not brand: amber has to
- * keep meaning "getting full" and red "this is wrong", whichever accent is on. That also
- * constrains the choices here — no accent may be an amber or a red, or the machine would
- * have two vocabularies for the same colour.
+ * [HudColors.warn] and [HudColors.alarm] deliberately do not vary. They are status, not
+ * brand: amber has to keep meaning "getting full" and red "this is wrong", whichever
+ * accent is on. That also constrains the choices here — no preset may be an amber or a
+ * red, or the machine would have two vocabularies for the same colour.
  */
-enum class HudAccent(
-    val label: String,
-    internal val darkLive: Color,
-    internal val darkSecond: Color,
-    internal val lightLive: Color,
-    internal val lightSecond: Color,
-) {
+enum class HudAccent(val label: String, val hues: AccentHues) {
     /** The default. Cyan reads as a signal where a mid blue reads as a link, and the
      *  violet beside it is far enough to separate two traces on one chart. */
-    ICE("Ice", Color(0xFF22D3EE), Color(0xFFA78BFA), Color(0xFF0E7490), Color(0xFF6D28D9)),
+    ICE("Ice", AccentHues(Color(0xFF22D3EE), Color(0xFFA78BFA), Color(0xFF0E7490), Color(0xFF6D28D9))),
 
     /**
      * Magenta over blue. The loudest pair here, and the one that most reads as a screen
@@ -105,23 +108,70 @@ enum class HudAccent(
      * who doesn't separate hue — which `ContrastTest` catches, and which is the reason
      * the second hue here is darker than the first rather than merely different.
      */
-    NEON("Neon", Color(0xFFF472B6), Color(0xFF0284C7), Color(0xFFBE185D), Color(0xFF0284C7)),
+    NEON("Neon", AccentHues(Color(0xFFF472B6), Color(0xFF0284C7), Color(0xFFBE185D), Color(0xFF0284C7))),
 
     /** Sky blue and teal — the calmest, and the closest to the blue this app shipped
      *  with before the kit existed. The light teal is a step brighter than its blue for
      *  the same reason [NEON]'s second is a step darker: two 700-weights are the same
      *  grey once the hue is taken away. */
-    DEEP("Deep", Color(0xFF60A5FA), Color(0xFF2DD4BF), Color(0xFF1D4ED8), Color(0xFF0D9488)),
+    DEEP("Deep", AccentHues(Color(0xFF60A5FA), Color(0xFF2DD4BF), Color(0xFF1D4ED8), Color(0xFF0D9488))),
+
+    /** Lavender over fuchsia: the indigo is a 300-weight, paler than the others' 400s,
+     *  because an indigo-400 and a fuchsia-400 are the same luminance — the pair only
+     *  separates once one of them is lifted most of the way to white. */
+    IRIS("Iris", AccentHues(Color(0xFFA5B4FC), Color(0xFFD946EF), Color(0xFF4F46E5), Color(0xFFC026D3))),
 
     /** Almost no hue at all: steel, with a single warm second. For a machine that
      *  should look like a tool rather than a toy. */
-    STEEL("Steel", Color(0xFFCBD5E1), Color(0xFF94A3B8), Color(0xFF334155), Color(0xFF64748B));
+    STEEL("Steel", AccentHues(Color(0xFFCBD5E1), Color(0xFF94A3B8), Color(0xFF334155), Color(0xFF64748B)));
 
     companion object {
         /** Parse a stored name; anything unrecognised falls back to the default rather
          *  than crashing an app whose only fault is being older than the setting. */
         fun from(name: String?): HudAccent = entries.firstOrNull { it.name == name } ?: ICE
     }
+}
+
+/** The `AppSettings.accent` value that means "the two hues the user dialled in". */
+const val CUSTOM_ACCENT = "CUSTOM"
+
+/** What a stored accent setting draws in — a preset by name, or the custom pair. */
+fun accentHues(name: String?, liveHue: Float, secondHue: Float): AccentHues =
+    if (name == CUSTOM_ACCENT) customAccent(liveHue, secondHue) else HudAccent.from(name).hues
+
+/**
+ * A pair from two hue angles, at luminances that clear §9 *by construction*.
+ *
+ * A free colour picker is an invitation to a pretty screen nobody can read, so the
+ * user chooses only the hue: each tone is then walked up or down its own lightness
+ * until its WCAG luminance lands in a band that holds against both faces. The bands are
+ * what the presets already sit in — a live that is lit on dark and ink on light, and a
+ * second far enough from it in luminance that two traces on one chart stay two traces —
+ * so any two hues produce a pair the presets would have passed. `ContrastTest` sweeps
+ * the wheel to prove it.
+ */
+fun customAccent(liveHue: Float, secondHue: Float): AccentHues = AccentHues(
+    darkLive = tone(liveHue, lo = 0.36f, hi = 0.70f),
+    darkSecond = tone(secondHue, lo = 0.15f, hi = 0.22f),
+    lightLive = tone(liveHue, lo = 0.05f, hi = 0.10f),
+    lightSecond = tone(secondHue, lo = 0.15f, hi = 0.21f),
+)
+
+/** A hue at full instrument saturation, with its lightness bisected until its WCAG
+ *  luminance falls inside [lo, hi]. Luminance is monotonic in HSL lightness, so twenty
+ *  halvings land within a rounding error of the target. */
+private fun tone(hue: Float, lo: Float, hi: Float, sat: Float = 0.85f): Color {
+    val h = ((hue % 360f) + 360f) % 360f
+    val natural = Color.hsl(h, sat, 0.55f)
+    val target = natural.luminance().coerceIn(lo, hi)
+    if (target == natural.luminance()) return natural
+    var low = 0f
+    var high = 1f
+    repeat(20) {
+        val mid = (low + high) / 2f
+        if (Color.hsl(h, sat, mid).luminance() < target) low = mid else high = mid
+    }
+    return Color.hsl(h, sat, (low + high) / 2f)
 }
 
 /** The dark neutrals: lit type on a black face. */
@@ -141,7 +191,7 @@ private val DarkNeutrals = HudColors(
 )
 
 /** The palette for one accent on one face. */
-fun hudColors(accent: HudAccent, dark: Boolean): HudColors {
+fun hudColors(accent: AccentHues, dark: Boolean): HudColors {
     val base = if (dark) DarkNeutrals else LightNeutrals
     return base.copy(
         live = if (dark) accent.darkLive else accent.lightLive,
@@ -150,7 +200,7 @@ fun hudColors(accent: HudAccent, dark: Boolean): HudColors {
 }
 
 /** The default palettes, for previews, tests and anything composed outside the theme. */
-val DarkHud = hudColors(HudAccent.ICE, dark = true)
+val DarkHud = hudColors(HudAccent.ICE.hues, dark = true)
 
 /**
  * Light: the same instrument as a technical drawing — ink on paper, with the panels as
@@ -182,7 +232,7 @@ private val LightNeutrals = HudColors(
     glow = 0.22f,
 )
 
-val LightHud = hudColors(HudAccent.ICE, dark = false)
+val LightHud = hudColors(HudAccent.ICE.hues, dark = false)
 
 internal val LocalHudColors = staticCompositionLocalOf { DarkHud }
 

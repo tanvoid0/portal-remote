@@ -87,6 +87,17 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
 Filename: "{app}\PortalRemote.exe"; Description: "Start {#AppName} now"; \
     Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+; Remove the lock-screen service, if there is one, while the exe it points at still
+; exists. It checks first and exits silently when the feature was never switched on, so
+; the ordinary uninstall is unchanged — no prompt, no pause. When there *is* a service,
+; removing it needs administrator rights that this uninstaller does not have
+; (PrivilegesRequired=lowest), so the exe asks for them itself and Windows shows one
+; prompt. Declining leaves a service pointing at a deleted exe, which is inert but untidy:
+; `sc delete PortalRemoteSecureDesktop` from an admin prompt is the manual way out.
+Filename: "{app}\PortalRemote.exe"; Parameters: "--uninstall-secure-desktop"; \
+    Flags: runhidden waituntilterminated; RunOnceId: "RemoveSecureDesktopService"
+
 ; Deliberately not removed on uninstall: %APPDATA%\portal-remote holds the config and
 ; the pairing token, and keeping it means reinstalling does not make every paired phone
 ; scan a new QR code. It is a few hundred bytes, and "Rotate pairing token" in the app

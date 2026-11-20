@@ -9,6 +9,7 @@ using PortalRemote.Devices;
 using PortalRemote.Input;
 using PortalRemote.Media;
 using PortalRemote.Metrics;
+using PortalRemote.Secure;
 using PortalRemote.Share;
 
 namespace PortalRemote.Control;
@@ -317,6 +318,19 @@ public static class ControlEndpoint
                     assistant.Cancel(Id(message));
                     return;
             }
+        }
+
+        // While the PC is sitting on a desktop this process cannot reach — the lock
+        // screen, an elevation prompt, Ctrl+Alt+Del — injection from here is silently
+        // swallowed by Windows, so input goes to the LocalSystem helper that can reach
+        // it instead. Only input verbs, and only while that helper is actually there:
+        // TryForward says no to everything otherwise and the ordinary path below runs,
+        // which is what a PC without the service installed always does.
+        if (kind.ValueKind == JsonValueKind.String &&
+            SecureChannel.InputVerbs.Contains(kind.GetString()!) &&
+            SecureDesktopClient.Instance.TryForward(message))
+        {
+            return;
         }
 
         try

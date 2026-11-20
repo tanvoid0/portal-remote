@@ -14,6 +14,7 @@ using PortalRemote.Media;
 using PortalRemote.Metrics;
 using PortalRemote.Mirror;
 using PortalRemote.Pairing;
+using PortalRemote.Secure;
 using PortalRemote.Share;
 using PortalRemote.Tray;
 using PortalRemote.Update;
@@ -33,6 +34,26 @@ internal static class Program
         // only to write a firewall rule. No tray, no server, no message loop.
         if (args.Contains(Reachability.InstallFirewallArg, StringComparer.OrdinalIgnoreCase))
             return Reachability.InstallFirewallRule();
+
+        // Same shape, and for the same reason: these are the two LocalSystem halves of
+        // the secure-desktop path — one started by the service manager, one spawned into
+        // the console session by that service. Neither has a tray, a message loop or a
+        // socket, and both have to return above SingleInstance.Claim: they are not second
+        // copies of the app competing with it, they are the other two thirds of it.
+        if (args.Contains(SecureChannel.ServiceArg, StringComparer.OrdinalIgnoreCase))
+            return SecureDesktopService.Run();
+
+        if (args.Contains(SecureChannel.HelperArg, StringComparer.OrdinalIgnoreCase))
+            return DesktopHelper.Run();
+
+        // And the elevated one-shots that register or remove that service. Same pattern
+        // as the firewall rule above: launched by the tray with the runas verb, does the
+        // one privileged thing, exits.
+        if (args.Contains(ServiceInstall.InstallArg, StringComparer.OrdinalIgnoreCase))
+            return ServiceInstall.Install();
+
+        if (args.Contains(ServiceInstall.UninstallArg, StringComparer.OrdinalIgnoreCase))
+            return ServiceInstall.RemoveIfPresent();
 
         ApplicationConfiguration.Initialize();
 
@@ -204,7 +225,20 @@ internal static class Program
         // should appear whether or not this machine has one.
         _ = nowPlaying.StartAsync();
 
-        using var tray = new TrayIcon(config, connectionState, approval, share, assistant, ai, devices, onExit: Application.ExitThread);
+        // Only when the user has turned it on. Two gates rather than one: the service is
+        // not registered until they ask for it, and this side does not even look for it
+        // until the same flag says so. While it is not connected — and whenever the PC is
+        // on an ordinary desktop — every input message takes the in-process path it always
+        // has, which is what makes the default install the app it was before this existed.
+        if (config.EnableSecureDesktop) SecureDesktopClient.Instance.Start();
+
+        // The service runs its own copy of this exe, which an in-place update does not
+        // touch — see ServiceInstall. It is the one copy that runs as SYSTEM, so it is the
+        // last one that should quietly go on running an older build.
+        var secureDesktopStale = config.EnableSecureDesktop && ServiceInstall.IsStale();
+
+        using var tray = new TrayIcon(config, connectionState, approval, share, assistant, ai, devices, stats,
+            onExit: Application.ExitThread);
 
         // Someone double-clicked the shortcut of an app that was already running in the
         // tray. Show them the window they were asking for.
@@ -214,7 +248,13 @@ internal static class Program
         // next step — show it rather than leaving a new user hunting the tray.
         // A phone that cannot reach this PC has no way to say why, so the PC says it
         // instead — at the moment the user is most likely to be about to try.
-        if (config.IsFirstRun) tray.ShowWindow();
+        if (secureDesktopStale)
+        {
+            tray.Notify(ServerInfo.Name,
+                "Lock screen control is running an older build. Re-run Lock screen control "
+                + "in the tray menu to update it.");
+        }
+        else if (config.IsFirstRun) tray.ShowWindow();
         else if (warning is not null) tray.Notify(ServerInfo.Name, warning);
         else tray.Notify(ServerInfo.Name, $"Listening on {PairingService.HttpBase(config)}");
 

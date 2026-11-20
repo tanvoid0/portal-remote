@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text.Json.Serialization;
 using Microsoft.Win32;
 
 namespace PortalRemote.Metrics;
@@ -59,7 +60,7 @@ public sealed partial class SystemStats : IDisposable
 
     /// <summary>The last computed sample, so a phone that subscribes mid-second has
     /// something to draw immediately instead of a blank screen for a second.</summary>
-    private object? _latest;
+    private SysSample? _latest;
 
     public SystemStats()
     {
@@ -70,7 +71,7 @@ public sealed partial class SystemStats : IDisposable
 
     /// <summary>Raised once a second, with a ready-to-serialize payload, while anyone
     /// is subscribed. Fires on a thread-pool thread.</summary>
-    public event Action<object>? Changed;
+    public event Action<SysSample>? Changed;
 
     /// <summary>
     /// Start sampling for one client. Takes the first reading straight away so the
@@ -103,7 +104,7 @@ public sealed partial class SystemStats : IDisposable
 
     /// <summary>The most recent sample, or null if nothing has been sampled since the
     /// last subscriber left.</summary>
-    public object? Latest
+    public SysSample? Latest
     {
         get { lock (_gate) return _latest; }
     }
@@ -120,7 +121,7 @@ public sealed partial class SystemStats : IDisposable
 
     private void Tick()
     {
-        object payload;
+        SysSample payload;
         try
         {
             payload = Sample();
@@ -143,7 +144,7 @@ public sealed partial class SystemStats : IDisposable
     }
 
     /// <summary>Everything, as one message. Called on the timer thread only.</summary>
-    private object Sample()
+    private SysSample Sample()
     {
         var now = Stopwatch.GetTimestamp();
         var seconds = (now - _lastSampleTicks) / (double)Stopwatch.Frequency;
@@ -167,46 +168,39 @@ public sealed partial class SystemStats : IDisposable
         memory.Length = (uint)Marshal.SizeOf<MemoryStatus>();
         var haveMemory = GlobalMemoryStatusEx(ref memory);
 
-        return new
-        {
-            t = "sys",
+        return new SysSample(
             // The average of the cores rather than a separate whole-machine reading:
             // two calls to the same counter set a second apart would disagree with the
             // bars underneath them, and the bars are the ones being looked at.
-            cpu = Math.Round(cores.Length == 0 ? 0 : cores.Average(), 1),
-            cores = cores.Select(c => Math.Round(c, 1)).ToArray(),
-            cpuName = ProcessorName,
-            mem = new
-            {
-                used = haveMemory ? (long)(memory.TotalPhys - memory.AvailPhys) : 0L,
-                total = haveMemory ? (long)memory.TotalPhys : 0L
-            },
-            net = new { up = Math.Round(up), down = Math.Round(down) },
-            disks = ReadDisks(),
-            top = top.Select(p => new { name = p.Name, cpu = Math.Round(p.Cpu, 1), mem = p.Memory }).ToArray(),
-            uptimeMs = Environment.TickCount64,
-            os = OperatingSystemName
-        };
+            Cpu: Math.Round(cores.Length == 0 ? 0 : cores.Average(), 1),
+            Cores: cores.Select(c => Math.Round(c, 1)).ToArray(),
+            CpuName: ProcessorName,
+            Mem: new MemSample(
+                Used: haveMemory ? (long)(memory.TotalPhys - memory.AvailPhys) : 0L,
+                Total: haveMemory ? (long)memory.TotalPhys : 0L),
+            Net: new NetSample(Up: Math.Round(up), Down: Math.Round(down)),
+            Disks: ReadDisks(),
+            Top: top.Select(p => new ProcessLoad(p.Name, Math.Round(p.Cpu, 1), p.Memory)).ToArray(),
+            UptimeMs: Environment.TickCount64,
+            Os: OperatingSystemName);
     }
 
     /// <summary>Fixed, ready drives only — a card reader with no card in it is not a
     /// disk this machine is using, and a network drive's free space is another
     /// machine's business.</summary>
-    private static object[] ReadDisks()
+    private static DiskSample[] ReadDisks()
     {
-        var disks = new List<object>();
+        var disks = new List<DiskSample>();
         foreach (var drive in DriveInfo.GetDrives())
         {
             try
             {
                 if (!drive.IsReady || drive.DriveType != DriveType.Fixed) continue;
-                disks.Add(new
-                {
-                    name = drive.Name.TrimEnd('\\'),
-                    label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? null : drive.VolumeLabel,
-                    used = drive.TotalSize - drive.TotalFreeSpace,
-                    total = drive.TotalSize
-                });
+                disks.Add(new DiskSample(
+                    Name: drive.Name.TrimEnd('\\'),
+                    Label: string.IsNullOrWhiteSpace(drive.VolumeLabel) ? null : drive.VolumeLabel,
+                    Used: drive.TotalSize - drive.TotalFreeSpace,
+                    Total: drive.TotalSize));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -438,7 +432,49 @@ public readonly record struct ProcessorTimes(long Idle, long Total);
 public readonly record struct ProcessSample(string Name, TimeSpan Cpu, long Memory);
 
 /// <summary>One process's share of the last second.</summary>
-public readonly record struct ProcessLoad(string Name, double Cpu, long Memory);
+public readonly record struct ProcessLoad(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("cpu")] double Cpu,
+    [property: JsonPropertyName("mem")] long Memory);
+
+/// <summary>
+/// One second of the machine — the <c>sys</c> message the phone's Stats screen draws,
+/// and the same object the tray window's Stats tab draws from. Typed rather than the
+/// anonymous object it used to be so the desktop can read it back without a JSON round
+/// trip; the property names pin the wire shape the phone already parses.
+/// </summary>
+public sealed record SysSample(
+    [property: JsonPropertyName("cpu")] double Cpu,
+    [property: JsonPropertyName("cores")] double[] Cores,
+    [property: JsonPropertyName("cpuName")] string CpuName,
+    [property: JsonPropertyName("mem")] MemSample Mem,
+    [property: JsonPropertyName("net")] NetSample Net,
+    [property: JsonPropertyName("disks")] DiskSample[] Disks,
+    [property: JsonPropertyName("top")] ProcessLoad[] Top,
+    [property: JsonPropertyName("uptimeMs")] long UptimeMs,
+    [property: JsonPropertyName("os")] string Os)
+{
+    /// <summary>The message kind. First in the record body rather than a parameter so
+    /// it serializes first, where the phone's dispatcher looks for it.</summary>
+    [JsonPropertyName("t")]
+    [JsonPropertyOrder(-1)]
+    public string T => "sys";
+}
+
+public sealed record MemSample(
+    [property: JsonPropertyName("used")] long Used,
+    [property: JsonPropertyName("total")] long Total);
+
+/// <summary>Bytes per second each way.</summary>
+public sealed record NetSample(
+    [property: JsonPropertyName("up")] double Up,
+    [property: JsonPropertyName("down")] double Down);
+
+public sealed record DiskSample(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("label")] string? Label,
+    [property: JsonPropertyName("used")] long Used,
+    [property: JsonPropertyName("total")] long Total);
 
 /// <summary>
 /// The arithmetic that turns two readings into a rate, separated from the Windows calls

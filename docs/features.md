@@ -105,6 +105,10 @@ swing rather than a cut, and snap instead under the system "remove animations" s
 Not sampled: GPU load (the only route is the `GPU Engine` performance-counter category,
 which means a new dependency and hundreds of milliseconds to bind) and per-disk I/O.
 
+The tray window has the same dashboard under its **Stats** tab, drawn from the same
+sample ([`StatsView`](../server/PortalRemote.Server/Tray/StatsView.cs)) and subject to the
+same rule — it subscribes only while that tab is on screen.
+
 ## How it looks
 
 The phone is drawn as an instrument panel: chamfered panels with a bracket at their
@@ -119,13 +123,17 @@ dimension, shape and type style, and differ only in colour and in how hard the g
 renders — on light it drops to a trace, because a glow is light *added* to a dark ground
 and on a white one the same passes read as a printing fault.
 
-**Settings → Colour** picks one of four accent pairs (Ice, Neon, Deep, Steel), applied
-live across the whole app and stored in `AppSettings.accent`. Only the accents are the
-user's: the neutrals, and what amber and red mean, stay put. `ContrastTest` measures
-every accent against both faces at WCAG's thresholds, which is what makes the picker safe
-to extend — two of the four shipped pairs were changed *by that test*, because hues that
-differ strongly in hue can still sit within a few percent in luminance and become one
-shape to anyone who doesn't separate colour.
+**Settings → Colour** picks one of five accent pairs (Ice, Neon, Deep, Iris, Steel) or a
+custom pair from two hue rails, applied live across the whole app and stored in
+`AppSettings.accent` (plus `accentHue`/`accentSecondHue` for the custom one). Only the
+accents are the user's: the neutrals, and what amber and red mean, stay put — the rails
+skip the red-through-amber arc for the same reason. `ContrastTest` measures every preset
+against both faces at WCAG's thresholds, which is what makes the picker safe to extend —
+two of the shipped pairs were changed *by that test*, because hues that differ strongly
+in hue can still sit within a few percent in luminance and become one shape to anyone who
+doesn't separate colour. The custom pair can't fail it: the user picks only the hue, and
+`customAccent` bisects each tone's lightness into a luminance band the presets already sit
+in, which the test proves by sweeping the wheel at 15° steps.
 
 The reasoning behind all of it is in [design-system.md](design-system.md) §3–§7.
 

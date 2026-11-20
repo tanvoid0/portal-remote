@@ -156,18 +156,7 @@ public sealed class HudPanel : WinControl
         }
 
         if (!_section)
-        {
-            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (var path = Shapes.Panel(rect, cut))
-            {
-                using var fill = new SolidBrush(_colors.Surface);
-                using var pen = new Pen(_colors.Border);
-                g.FillPath(fill, path);
-                g.DrawPath(pen, path);
-            }
-
-            Shapes.DrawBrackets(g, rect, _colors.Accent, cut, LogicalToDeviceUnits(2));
-        }
+            PaintFace(g, new Rectangle(0, 0, Width - 1, Height - 1), _colors, cut, LogicalToDeviceUnits(2));
 
         if (_title is null) return;
 
@@ -182,26 +171,49 @@ public sealed class HudPanel : WinControl
             x += px + LogicalToDeviceUnits(8);
         }
 
-        var tracking = LogicalToDeviceUnits((int)HudText.LabelTracking);
-        var size = HudText.Measure(_title, Fonts.Label, tracking);
-        HudText.Draw(g, _title, Fonts.Label, new Point(x, titleTop), _colors.TextSecondary, tracking);
-
-        // The rule running out from the label. This is what makes a header one line
-        // rather than two things floating near each other — the phone's
-        // HudSectionHeader, and the reason a group reads as a group.
-        var ruleLeft = x + size.Width + LogicalToDeviceUnits(10);
-        var ruleRight = Width - Padding.Right;
-        if (ruleRight > ruleLeft)
-        {
-            using var pen = new Pen(_colors.Grid);
-            var mid = titleTop + size.Height / 2;
-            g.DrawLine(pen, ruleLeft, mid, ruleRight, mid);
-        }
+        PaintTitle(g, _title, new Point(x, titleTop), Width - Padding.Right, _colors,
+            LogicalToDeviceUnits((int)HudText.LabelTracking), LogicalToDeviceUnits(10));
 
         if (!_rule) return;
         using (var pen = new Pen(_colors.Border))
         {
             g.DrawLine(pen, 0, 0, Width, 0);
         }
+    }
+
+    /// <summary>The bracketed panel face on its own, for a surface that paints several
+    /// panels itself rather than hosting one control per panel (the Stats tab).</summary>
+    public static void PaintFace(Graphics g, Rectangle rect, PaletteColors colors, int cut, float bracketWeight)
+    {
+        using (var path = Shapes.Panel(rect, cut))
+        {
+            using var fill = new SolidBrush(colors.Surface);
+            using var pen = new Pen(colors.Border);
+            g.FillPath(fill, path);
+            g.DrawPath(pen, path);
+        }
+
+        Shapes.DrawBrackets(g, rect, colors.Accent, cut, bracketWeight);
+    }
+
+    /// <summary>A tracked label with the rule running out from it to [ruleRight]. This is
+    /// what makes a header one line rather than two things floating near each other — the
+    /// phone's HudSectionHeader, and the reason a group reads as a group. Returns the
+    /// label's height.</summary>
+    public static int PaintTitle(
+        Graphics g, string title, Point at, int ruleRight, PaletteColors colors, int tracking, int ruleGap)
+    {
+        var size = HudText.Measure(title, Fonts.Label, tracking);
+        HudText.Draw(g, title, Fonts.Label, at, colors.TextSecondary, tracking);
+
+        var ruleLeft = at.X + size.Width + ruleGap;
+        if (ruleRight > ruleLeft)
+        {
+            using var pen = new Pen(colors.Grid);
+            var mid = at.Y + size.Height / 2;
+            g.DrawLine(pen, ruleLeft, mid, ruleRight, mid);
+        }
+
+        return size.Height;
     }
 }

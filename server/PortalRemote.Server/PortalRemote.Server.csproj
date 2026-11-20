@@ -47,6 +47,14 @@
 
   <ItemGroup>
     <PackageReference Include="QRCoder" Version="1.8.0" />
+    <!-- The two Microsoft packages below are what the secure-desktop path needs and the
+         shared framework does not carry: ServiceBase, so the LocalSystem half can be a
+         real service the SCM starts and restarts, and NamedPipeServerStreamAcl, so its
+         pipes are created *with* their DACL. The second matters more than it looks —
+         creating a pipe and then calling SetAccessControl leaves a window in which the
+         pipe exists with a default descriptor, and that window is the whole attack. -->
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+    <PackageReference Include="System.IO.Pipes.AccessControl" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>

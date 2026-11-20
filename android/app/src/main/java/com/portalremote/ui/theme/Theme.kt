@@ -172,8 +172,9 @@ internal val PortalShapes = Shapes(
 @Composable
 fun PortalRemoteTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    /** Which accent pair to draw in — the user's choice, persisted in `AppSettings`. */
-    accent: HudAccent = HudAccent.ICE,
+    /** Which accent pair to draw in — the user's choice, resolved from `AppSettings`
+     *  by [accentHues]. */
+    accent: AccentHues = HudAccent.ICE.hues,
     content: @Composable () -> Unit,
 ) {
     // Recomputed only when the face or the accent actually changes; the derivations

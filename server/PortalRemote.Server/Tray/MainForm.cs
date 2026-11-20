@@ -7,6 +7,7 @@ using PortalRemote.Config;
 using PortalRemote.Devices;
 using PortalRemote.Control;
 using PortalRemote.Files;
+using PortalRemote.Metrics;
 using PortalRemote.Pairing;
 using PortalRemote.Share;
 using PortalRemote.Theme;
@@ -21,7 +22,9 @@ namespace PortalRemote.Tray;
 ///
 /// The left column is the share thread once anything has ever paired, and the pairing QR
 /// while nothing has: a paired PC whose main view is still "scan to pair" is answering a
-/// question the user already answered. Either half is one tab from the other.
+/// question the user already answered. Either is one tab from the other, and from the
+/// third: the phone's resource dashboard, drawn here for the PC it is about
+/// (<see cref="StatsView"/>).
 ///
 /// <b>The right column is a settings list, not a stack of cards.</b> One bracketed panel
 /// at the top for the thing that is actually live — which phones this PC knows and what
@@ -76,6 +79,10 @@ public sealed class MainForm : Form
     // ---- left column, the tab strip ------------------------------------------
     private readonly TokenButton _showThread;
     private readonly TokenButton _showPair;
+    private readonly TokenButton _showStats;
+
+    /// <summary>Which of the left column's three views is up.</summary>
+    private enum View { Thread, Pair, Stats }
 
     // ---- left column, behind: pairing ----------------------------------------
     private readonly Panel _pairPanel;
@@ -84,6 +91,9 @@ public sealed class MainForm : Form
     private readonly Label _address;
     private readonly Label _hint;
     private readonly TokenButton _copy;
+
+    // ---- left column, behind: the dashboard ----------------------------------
+    private readonly StatsView _statsView;
 
     // ---- right column --------------------------------------------------------
     private readonly HudPanel _devicePanel;
@@ -129,7 +139,7 @@ public sealed class MainForm : Form
     public Action? OpenAssistant { get; init; }
 
     public MainForm(ServerConfig config, ConnectionState connectionState, ShareHub share, AiHealth ai,
-        DeviceRegistry devices)
+        DeviceRegistry devices, SystemStats stats)
     {
         _config = config;
         _connectionState = connectionState;
@@ -175,9 +185,11 @@ public sealed class MainForm : Form
         // saw the one that switched away — a lone "Pair a phone" button above a thread,
         // which reads as something that starts a pairing rather than as a tab.
         _showThread = new TokenButton { Text = "Messages", Glyph = Glyphs.Conversation, Width = 132 };
-        _showThread.Click += (_, _) => ShowPairing(false);
+        _showThread.Click += (_, _) => Show(View.Thread);
         _showPair = new TokenButton { Text = "Pair", Glyph = Glyphs.QrCode, Secondary = true, Width = 108 };
-        _showPair.Click += (_, _) => ShowPairing(true);
+        _showPair.Click += (_, _) => Show(View.Pair);
+        _showStats = new TokenButton { Text = "Stats", Glyph = Glyphs.Stats, Secondary = true, Width = 108 };
+        _showStats.Click += (_, _) => Show(View.Stats);
 
         var tabs = new FlowLayoutPanel
         {
@@ -187,11 +199,14 @@ public sealed class MainForm : Form
             WrapContents = false,
         };
         _showThread.Margin = new Padding(0, 0, LogicalToDeviceUnits(6), 0);
-        _showPair.Margin = new Padding(0);
+        _showPair.Margin = new Padding(0, 0, LogicalToDeviceUnits(6), 0);
+        _showStats.Margin = new Padding(0);
         _showThread.Height = LogicalToDeviceUnits(34);
         _showPair.Height = LogicalToDeviceUnits(34);
+        _showStats.Height = LogicalToDeviceUnits(34);
         tabs.Controls.Add(_showThread);
         tabs.Controls.Add(_showPair);
+        tabs.Controls.Add(_showStats);
 
         // ---- left column, front: the thread ---------------------------------------
         _thread = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
@@ -294,9 +309,15 @@ public sealed class MainForm : Form
         _pairPanel.Controls.Add(_hint);
         _pairPanel.Controls.Add(_copy);
 
+        // ---- left column, behind: the dashboard -----------------------------------
+        // Hidden until its tab is picked, and it samples the machine only while shown —
+        // see StatsView.
+        _statsView = new StatsView(stats) { Dock = DockStyle.Fill, Visible = false };
+
         var leftColumn = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 20, 0) };
         leftColumn.Controls.Add(_sharePanel);
         leftColumn.Controls.Add(_pairPanel);
+        leftColumn.Controls.Add(_statsView);
         leftColumn.Controls.Add(tabs);
 
         // ---- right column, the live panel -----------------------------------------
@@ -561,8 +582,8 @@ public sealed class MainForm : Form
         _ai.Changed += OnAiChanged;
 
         // Nothing has ever paired: the QR is the only useful thing this window can show,
-        // so it is the half that's up.
-        ShowPairing(!config.Paired);
+        // so it is the view that's up.
+        Show(config.Paired ? View.Thread : View.Pair);
         RefreshDevices();
         Refresh(config);
     }
@@ -596,16 +617,18 @@ public sealed class MainForm : Form
         return row;
     }
 
-    /// <summary>Which half of the left column is up. Mutually exclusive rather than
-    /// stacked: both want the whole column, and a QR code beside a composer is two primary
+    /// <summary>Which view of the left column is up. Mutually exclusive rather than
+    /// stacked: each wants the whole column, and a QR code beside a composer is two primary
     /// actions on one surface. The tab strip's fill follows, so the strip says which of
-    /// the two you are looking at.</summary>
-    private void ShowPairing(bool pairing)
+    /// the three you are looking at.</summary>
+    private void Show(View view)
     {
-        _pairPanel.Visible = pairing;
-        _sharePanel.Visible = !pairing;
-        _showPair.Secondary = !pairing;
-        _showThread.Secondary = pairing;
+        _sharePanel.Visible = view == View.Thread;
+        _pairPanel.Visible = view == View.Pair;
+        _statsView.Visible = view == View.Stats;
+        _showThread.Secondary = view != View.Thread;
+        _showPair.Secondary = view != View.Pair;
+        _showStats.Secondary = view != View.Stats;
     }
 
     /// <summary>Re-render for the current address/token/settings, and re-apply the palette
@@ -680,13 +703,14 @@ public sealed class MainForm : Form
         _statusCard.Invalidate();
         _thread.BackColor = _colors.Bg;
         _aiState.BackColor = _colors.Bg;
+        _statsView.ApplyTheme(_colors);
 
         foreach (var panel in new[] { _devicePanel, _sharingSection, _assistantSection, _advancedSection })
             panel.ApplyTheme(_colors);
 
         foreach (var button in new[]
-                 { _copy, _send, _attach, _showPair, _showThread, _changeShare, _openShare, _copyCast,
-                   _openCast, _aiGet, _aiOpen, _aiCheck, _rotate })
+                 { _copy, _send, _attach, _showPair, _showThread, _showStats, _changeShare, _openShare,
+                   _copyCast, _openCast, _aiGet, _aiOpen, _aiCheck, _rotate })
             button.ApplyTheme(_colors);
 
         foreach (var bubble in _thread.Controls.OfType<Bubble>()) bubble.ApplyTheme(_colors);
@@ -1283,7 +1307,7 @@ public sealed class MainForm : Form
         Refresh(_config);
         // Nothing can reach this PC until a phone scans the new code, so put the code
         // in front of the user rather than leaving them on a thread that cannot send.
-        ShowPairing(true);
+        Show(View.Pair);
     }
 
     private static void OpenPath(string path) =>

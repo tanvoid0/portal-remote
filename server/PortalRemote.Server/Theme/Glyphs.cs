@@ -39,6 +39,9 @@ public static class Glyphs
     public const string Assistant = "\uE99A";
     public const string Wrench = "\uE90F";
     public const string Power = "\uE7E8";
+    /// <summary>A pulse trace, for the Stats tab \u2014 the closest this font has to the
+    /// phone's Insights icon on the same tab. Verified by rendering, per the note above.</summary>
+    public const string Stats = "\uE9D9";
 
     /// <summary>A phone, for the device rows in the window. Segoe MDL2's CellPhone is
     /// a plain slab at 20px, which is exactly what a row icon should be \u2014 the outline

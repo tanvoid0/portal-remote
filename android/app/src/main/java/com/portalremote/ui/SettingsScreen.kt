@@ -12,12 +12,15 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Computer
@@ -51,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -63,8 +68,13 @@ import androidx.compose.ui.unit.dp
 import com.portalremote.data.AppSettings
 import com.portalremote.data.SavedHost
 import com.portalremote.net.ServerHello
+import com.portalremote.ui.theme.CUSTOM_ACCENT
 import com.portalremote.ui.theme.HudAccent
+import com.portalremote.ui.theme.HudColors
+import com.portalremote.ui.theme.HudType
 import com.portalremote.ui.theme.PortalRemoteTheme
+import com.portalremote.ui.theme.accentHues
+import com.portalremote.ui.theme.customAccent
 import com.portalremote.ui.theme.hudColors
 import com.portalremote.ui.theme.rememberHaptics
 
@@ -179,10 +189,7 @@ fun SettingsScreen(
                 subtitle = "The two hues the whole app is drawn in. The neutrals, and " +
                     "what amber and red mean, stay put — those are legibility, not taste",
             ) {
-                AccentPicker(
-                    selected = HudAccent.from(settings.accent),
-                    onSelect = { choice -> onSettingsChange { it.copy(accent = choice.name) } },
-                )
+                AccentPicker(settings, onSettingsChange)
             }
 
             HorizontalDivider(color = PortalRemoteTheme.extendedColors.border)
@@ -317,61 +324,147 @@ private fun SectionHeader(icon: ImageVector, title: String) {
  * because every option here means something different on the two faces (a cyan that works
  * on black is not the cyan that works on white), so the only honest preview is the pair
  * you would get if you tapped it.
+ *
+ * The last swatch is the user's own pair. Choosing it opens two hue rails underneath —
+ * hue only, because lightness is what decides whether a screen can be read, and
+ * [customAccent] sets that itself so that whatever is dialled in here passes the same
+ * audit the presets do.
  */
 @Composable
-private fun AccentPicker(selected: HudAccent, onSelect: (HudAccent) -> Unit) {
+private fun AccentPicker(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
     val dark = isSystemInDarkTheme()
-    val hud = PortalRemoteTheme.hud
+    val options = HudAccent.entries.map { it.name to it.label } + (CUSTOM_ACCENT to "Custom")
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        HudAccent.entries.forEach { option ->
-            val colors = hudColors(option, dark)
-            val chosen = option == selected
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(MaterialTheme.shapes.small)
-                        .background(hud.sunken)
-                        .border(
-                            width = if (chosen) 2.dp else 1.dp,
-                            color = if (chosen) colors.live else hud.edge,
-                            shape = MaterialTheme.shapes.small,
-                        )
-                        .clickable { onSelect(option) }
-                        .semantics {
-                            role = Role.RadioButton
-                            this.selected = chosen
-                            contentDescription = option.label
-                        }
-                        .drawBehind {
-                            // Split diagonally, which is the same 45° the panels are cut
-                            // on — the swatch is a chip of the machine, not a paint dot.
-                            val inset = 7.dp.toPx()
-                            val box = size.width - inset * 2
-                            val path = Path().apply {
-                                moveTo(inset, inset)
-                                lineTo(inset + box, inset)
-                                lineTo(inset, inset + box)
-                                close()
-                            }
-                            drawPath(path, colors.live)
-                            val other = Path().apply {
-                                moveTo(inset + box, inset)
-                                lineTo(inset + box, inset + box)
-                                lineTo(inset, inset + box)
-                                close()
-                            }
-                            drawPath(other, colors.second)
-                        },
-                )
-                Text(
-                    option.label.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (chosen) hud.live else hud.textDim,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
+        options.forEach { (name, label) ->
+            AccentSwatch(
+                colors = hudColors(accentHues(name, settings.accentHue, settings.accentSecondHue), dark),
+                label = label,
+                chosen = name == settings.accent,
+                onSelect = { onSettingsChange { it.copy(accent = name) } },
+            )
         }
+    }
+    if (settings.accent == CUSTOM_ACCENT) {
+        HueRail("Live", settings.accentHue, dark, ::liveTone) { h -> onSettingsChange { it.copy(accentHue = h) } }
+        HueRail("Second", settings.accentSecondHue, dark, ::secondTone) { h -> onSettingsChange { it.copy(accentSecondHue = h) } }
+    }
+}
+
+@Composable
+private fun AccentSwatch(colors: HudColors, label: String, chosen: Boolean, onSelect: () -> Unit) {
+    val hud = PortalRemoteTheme.hud
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(MaterialTheme.shapes.small)
+                .background(hud.sunken)
+                .border(
+                    width = if (chosen) 2.dp else 1.dp,
+                    color = if (chosen) colors.live else hud.edge,
+                    shape = MaterialTheme.shapes.small,
+                )
+                .clickable(onClick = onSelect)
+                .semantics {
+                    role = Role.RadioButton
+                    this.selected = chosen
+                    contentDescription = label
+                }
+                .drawBehind {
+                    // Split diagonally, which is the same 45° the panels are cut
+                    // on — the swatch is a chip of the machine, not a paint dot.
+                    val inset = 7.dp.toPx()
+                    val box = size.width - inset * 2
+                    val path = Path().apply {
+                        moveTo(inset, inset)
+                        lineTo(inset + box, inset)
+                        lineTo(inset, inset + box)
+                        close()
+                    }
+                    drawPath(path, colors.live)
+                    val other = Path().apply {
+                        moveTo(inset + box, inset)
+                        lineTo(inset + box, inset + box)
+                        lineTo(inset, inset + box)
+                        close()
+                    }
+                    drawPath(other, colors.second)
+                },
+        )
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (chosen) hud.live else hud.textDim,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+    }
+}
+
+/** Yellow round to violet-pink: everything but red, orange and amber. */
+private val HUE_RANGE = 65f..335f
+
+private fun liveTone(hue: Float, dark: Boolean) =
+    customAccent(hue, hue).let { if (dark) it.darkLive else it.lightLive }
+
+private fun secondTone(hue: Float, dark: Boolean) =
+    customAccent(hue, hue).let { if (dark) it.darkSecond else it.lightSecond }
+
+/**
+ * One hue around the wheel, on a rail painted in the tones that hue would actually be
+ * drawn in on this face — not the raw spectrum, which promises a lemon yellow the audit
+ * would never let onto a white panel.
+ *
+ * The rail stops short of the red-through-amber arc. Those are [HudColors.alarm] and
+ * [HudColors.warn], and an accent in either would give the machine two meanings for one
+ * colour — the same rule the presets are held to.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HueRail(
+    label: String,
+    hue: Float,
+    dark: Boolean,
+    tone: (Float, Boolean) -> Color,
+    onChange: (Float) -> Unit,
+) {
+    val hud = PortalRemoteTheme.hud
+    val rail = remember(dark, tone) {
+        val span = HUE_RANGE.endInclusive - HUE_RANGE.start
+        Brush.horizontalGradient((0..12).map { tone(HUE_RANGE.start + span * it / 12f, dark) })
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+        Text(
+            label.uppercase(),
+            style = HudType.Label,
+            color = hud.textDim,
+            modifier = Modifier.width(64.dp),
+        )
+        Slider(
+            value = hue,
+            onValueChange = onChange,
+            valueRange = HUE_RANGE,
+            modifier = Modifier.weight(1f).semantics { contentDescription = "$label hue" },
+            track = {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(12.dp)
+                        .clip(MaterialTheme.shapes.extraSmall)
+                        .background(rail)
+                        .border(1.dp, hud.edge, MaterialTheme.shapes.extraSmall),
+                )
+            },
+            // The thumb is the tone under it, so the rail doesn't need a readout.
+            thumb = {
+                Box(
+                    Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(tone(hue, dark))
+                        .border(2.dp, hud.panel, CircleShape),
+                )
+            },
+        )
     }
 }
 

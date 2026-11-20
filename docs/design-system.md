@@ -93,14 +93,26 @@ a decorative divider should not.
 
 ### The accents are the only swappable part
 
-`HudAccent` is four pairs — **Ice** (cyan/violet, the default), **Neon** (magenta/blue),
-**Deep** (sky/teal) and **Steel** (near-neutral). The user picks one in Settings →
-Colour; it is stored in `AppSettings.accent` and read by `PortalRemoteTheme(accent = …)`,
-which recomputes the whole scheme. Adding a fifth is one line in the enum — every
-Material slot that needs it (`primaryContainer`, `onPrimaryContainer`, the pressed state,
-the tertiary set) is *derived* from the pair rather than listed, because hand-picking
-twelve values per accent is how a swappable palette stops being swappable after the
-second one.
+`HudAccent` is five curated pairs — **Ice** (cyan/violet, the default), **Neon**
+(magenta/blue), **Deep** (sky/teal), **Iris** (lavender/fuchsia) and **Steel**
+(near-neutral) — and a sixth choice, **Custom**, is two hues of the user's own. Each
+resolves to an `AccentHues` (a live/second pair per face); the choice is stored in
+`AppSettings.accent`, resolved by `accentHues(…)` and read by
+`PortalRemoteTheme(accent = …)`, which recomputes the whole scheme. Adding a preset is one
+line in the enum — every Material slot that needs it (`primaryContainer`,
+`onPrimaryContainer`, the pressed state, the tertiary set) is *derived* from the pair
+rather than listed, because hand-picking twelve values per accent is how a swappable
+palette stops being swappable after the second one.
+
+**Custom is hue-only, on purpose.** A free picker is an invitation to a pretty screen
+nobody can read, so the two rails in Settings set only the angle; `customAccent` then
+bisects each tone's HSL lightness until its WCAG luminance lands in a band the presets
+already sit in — lit on dark (live 0.36–0.70, second 0.15–0.22), ink on light (live
+0.05–0.10, second 0.15–0.21) — so live and second stay ≥1.25:1 apart and every tone clears
+§9 against both faces *by construction*. The rails are painted in those derived tones
+rather than the raw spectrum, so what is offered is what will be drawn: a yellow shows as
+the olive it becomes on white, not the lemon it can't be. The rails also stop at 65°–335°,
+skipping red through amber, for the reason under point 2 below.
 
 Three things deliberately do **not** vary:
 
@@ -110,8 +122,10 @@ Three things deliberately do **not** vary:
    full" and red "this is wrong", whichever accent is on. This also constrains what may
    *be* an accent — no amber, no red, or the machine would have two vocabularies for one
    colour.
-3. **What passes the audit.** `ContrastTest` runs the entire matrix — every accent × both
-   faces — against §9's thresholds, so a new accent is covered the moment it is declared.
+3. **What passes the audit.** `ContrastTest` runs the entire matrix — every preset × both
+   faces, and every custom hue against every other at 15° steps — against §9's thresholds,
+   so a new preset is covered the moment it is declared and the custom rails cannot reach
+   a pair that fails.
    Two of the four pairs were changed by that test rather than by eye: `Neon`'s blue and
    `Deep`'s teal are each a step away from their obvious value because pink-400 beside
    sky-400, and blue-700 beside teal-700, sit within a few percent of each other in
@@ -942,6 +956,19 @@ derived from. When adding a screen, reach for these before inventing a surface.
   - Every owner-drawn control carries the full desktop state set — default, hover,
     pressed, disabled, **focused**. The focus ring is not optional: WinForms paints none
     for an owner-drawn button, so without it keyboard navigation is invisible.
+  - **The Stats tab is the phone's dashboard, drawn for the PC it is about**
+    (`Tray/StatsView.cs`). Same panels in the same order, same sample — `SystemStats`
+    feeds both from one `SysSample`, so the two screens never disagree about the machine.
+    One control paints every panel with `HudPanel.PaintFace`/`PaintTitle` rather than
+    hosting a `HudPanel` per section: the surface is one readout that redraws as a unit,
+    and a y-cursor over a list of panels is less to get wrong than a docked stack of
+    self-sizing controls in a table for the dial row. Sampling follows the control's
+    *effective* visibility — switching tabs or hiding the window both release it.
+  - **Static where the phone moves.** No tweened readings and no radar sweep on the CPU
+    dial: §8 keeps desktop motion to the window's fade-in, because a 30fps GDI+ repaint
+    is neither cheap nor smooth without a compositor. Readings step once a second, the
+    rate the sample arrives at, which on a desktop monitor reads as a meter ticking
+    rather than a broken one.
 
 ---
 
@@ -1349,14 +1376,18 @@ reconnect. `BackHandler` closes it.
   chips (§7) are still on the mirror. Settings holds the preferences you set
   once (pointer speed, scroll direction, fine control, scroll momentum, keep-awake,
   haptics, accent) and the mirror's *default* preset, which the chips then write back to.
-- **The accent picker is the one place the palette is the user's** (§3). Four pairs,
-  drawn as swatches rather than named chips — the name of a colour is not the colour, and
-  each option means different hues on the two faces (a cyan that works on black is not the
-  cyan that works on white), so the only honest preview is the pair you would actually
-  get. The swatch is split on the same 45° the panels are cut on, so it reads as a chip of
-  the machine rather than a paint dot. Only the accents are offered: the neutrals, and
-  what amber and red mean, are legibility decisions the app has already made, and a picker
-  that can produce an unreadable screen is a bug with a settings row in front of it.
+- **The accent picker is the one place the palette is the user's** (§3). Five presets
+  and a Custom swatch, drawn as swatches rather than named chips — the name of a colour is
+  not the colour, and each option means different hues on the two faces (a cyan that works
+  on black is not the cyan that works on white), so the only honest preview is the pair
+  you would actually get. The swatch is split on the same 45° the panels are cut on, so it
+  reads as a chip of the machine rather than a paint dot. Choosing Custom opens two hue
+  rails (Live, Second) under the row, each painted in the tones that hue would actually be
+  drawn in on the current face, with a thumb in the tone under it. Only hue is offered:
+  the neutrals, and what amber and red mean, are legibility decisions the app has already
+  made, lightness is what decides whether a screen can be read (so `customAccent` sets it),
+  and a picker that can produce an unreadable screen is a bug with a settings row in front
+  of it.
 - **Feel preferences ship on.** Fine control defaults on and momentum defaults to
   `STANDARD`, which breaks §12's usual "defaults reproduce the old behaviour" rule on
   purpose: both are corrections to how the pad felt, and a correction nobody finds is

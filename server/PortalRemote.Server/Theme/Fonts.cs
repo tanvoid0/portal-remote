@@ -64,6 +64,10 @@ public static class Fonts
     /// <summary>A value worth reading off. The phone's <c>Readout</c>.</summary>
     public static Font Readout { get; } = new(MonoName, 11f, FontStyle.Bold);
 
+    /// <summary>The figure in the middle of a gauge. The phone's <c>Dial</c>, at the same
+    /// quarter of the dial's diameter.</summary>
+    public static Font Dial { get; } = new(MonoName, 22f, FontStyle.Bold);
+
     /// <summary>Kept as the section step for surfaces that have not been ported to the
     /// instrument register yet (the assistant window).</summary>
     public static Font Section { get; } = new(FamilyName, 10f, FontStyle.Bold);

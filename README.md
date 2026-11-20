@@ -89,8 +89,9 @@ redrawn as neutral stand-ins. Nothing else is retouched. Re-shooting them is in
 - **Browse and transfer files** — list, download and upload against a shared folder on
   the PC.
 - **Make it yours** — light and dark are the same instrument under different lighting, and
-  Settings → Colour swaps the accent between four pairs. Every one of them is checked
-  against WCAG on both themes, so the picker can't produce a screen you can't read.
+  Settings → Colour swaps the accent between five pairs, or two hues of your own. Every
+  one of them is checked against WCAG on both themes — the custom pair by construction —
+  so the picker can't produce a screen you can't read.
 - **Ask the assistant** — one conversation shared by the phone and the PC, which can also
   act on the PC (media keys, shortcuts, typing, power) with every action approved
   separately. Needs [agent-platform](https://github.com/tanvoid0/agent-platform) — see

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using PortalRemote.Auth;
 using PortalRemote.Config;
 using PortalRemote.Input;
+using PortalRemote.Secure;
 
 namespace PortalRemote.Mirror;
 
@@ -50,10 +51,15 @@ public static class ScreenEndpoints
         }));
 
         // Single frame — handy for `curl`-checking the capture path without a client.
-        group.MapGet("/frame", (int? monitor, long? window, int? width, int? quality) =>
-            Results.File(
-                ScreenCapture.Jpeg(monitor, window, ClampWidth(width), ClampQuality(quality)),
-                "image/jpeg"));
+        group.MapGet("/frame", async (int? monitor, long? window, int? width, int? quality) =>
+        {
+            var frameWidth = ClampWidth(width);
+            var frameQuality = ClampQuality(quality);
+            var jpeg = await SecureDesktopClient.Instance
+                           .GrabFrameAsync(monitor, frameWidth, frameQuality, CancellationToken.None)
+                       ?? ScreenCapture.Jpeg(monitor, window, frameWidth, frameQuality);
+            return Results.File(jpeg, "image/jpeg");
+        });
 
         group.MapGet("/mjpeg", async (HttpContext context, ILoggerFactory loggerFactory,
                                       int? monitor, long? window, int? fps, int? width, int? quality) =>
@@ -97,7 +103,14 @@ public static class ScreenEndpoints
                     var startedAt = captureTime.ElapsedTicks;
                     try
                     {
-                        jpeg = ScreenCapture.Jpeg(monitor, window, frameWidth, frameQuality);
+                        // While the PC is on the secure desktop this process cannot capture
+                        // it — the same wall that swallows its input — so the frame comes
+                        // from the LocalSystem helper instead. Null means there is no such
+                        // helper, or it could not take the shot either, and the local path
+                        // below runs exactly as it always did.
+                        jpeg = await SecureDesktopClient.Instance
+                                   .GrabFrameAsync(monitor, frameWidth, frameQuality, ct)
+                               ?? ScreenCapture.Jpeg(monitor, window, frameWidth, frameQuality);
                         captureTicks += captureTime.ElapsedTicks - startedAt;
                         reportedCaptureFailure = false;
                     }

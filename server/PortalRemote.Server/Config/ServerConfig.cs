@@ -64,6 +64,22 @@ public sealed class ServerConfig
     public bool EnableDlnaRenderer { get; set; }
 
     /// <summary>
+    /// Let the phone work on the Windows lock screen and elevation prompts, by way of a
+    /// LocalSystem service — see <c>Secure/SecureChannel.cs</c>.
+    ///
+    /// <b>Off by default, and it has to be.</b> Windows puts those screens on their own
+    /// desktop precisely to guarantee that a human is at the machine. Switching this on
+    /// trades that guarantee for reach: a paired phone can then approve any UAC prompt
+    /// and operate the lock screen, so whoever holds the pairing token holds that too.
+    /// It does not bypass the Windows password — the phone can only type it — but the
+    /// blast radius of a leaked token stops being "this user" and becomes "this machine".
+    ///
+    /// The flag alone does nothing: the service is registered by an explicit, elevated
+    /// action from the tray, and removed the same way.
+    /// </summary>
+    public bool EnableSecureDesktop { get; set; }
+
+    /// <summary>
     /// Phones this PC has seen, newest address wins. Kept so the window can name the
     /// devices that are paired but switched off — <see cref="Paired"/> only says that
     /// some phone once connected, which is not enough to draw a list.

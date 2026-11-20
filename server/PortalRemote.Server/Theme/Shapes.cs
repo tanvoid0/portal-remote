@@ -175,4 +175,47 @@ public static class Shapes
             g.FillEllipse(brush, center.X - r, center.Y - r, r * 2, r * 2);
         }
     }
+
+    /// <summary>A lit stroke — the phone's <c>glowLine</c>: two wide, nearly transparent
+    /// passes under the line itself. GDI+ has no blur either, and this is the same three
+    /// draws it fakes one with.</summary>
+    public static void DrawGlowLine(Graphics g, GraphicsPath path, Color color, float width, float glow)
+    {
+        if (glow > 0f)
+        {
+            Pass(4.5f, 0.07f);
+            Pass(2.2f, 0.16f);
+        }
+
+        using var pen = new Pen(color, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        g.DrawPath(pen, path);
+
+        void Pass(float scale, float alpha)
+        {
+            using var wide = new Pen(Color.FromArgb((int)(255 * alpha * glow), color), width * scale)
+            { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+            g.DrawPath(wide, path);
+        }
+    }
+
+    /// <summary><see cref="DrawGlowLine"/>, for an arc — the phone's <c>glowArc</c>.</summary>
+    public static void DrawGlowArc(
+        Graphics g, RectangleF bounds, float startAngle, float sweepAngle, Color color, float width, float glow)
+    {
+        if (glow > 0f)
+        {
+            Pass(3.0f, 0.07f);
+            Pass(1.8f, 0.18f);
+        }
+
+        using var pen = new Pen(color, width) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawArc(pen, bounds, startAngle, sweepAngle);
+
+        void Pass(float scale, float alpha)
+        {
+            using var wide = new Pen(Color.FromArgb((int)(255 * alpha * glow), color), width * scale)
+            { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawArc(wide, bounds, startAngle, sweepAngle);
+        }
+    }
 }

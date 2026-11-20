@@ -10,6 +10,9 @@ namespace PortalRemote.Theme;
 public sealed record PaletteColors(
     Color Accent,
     Color AccentPressed,
+    /// <summary>The second series on a chart, and the second thing worth telling apart
+    /// from the first — the phone's `second`, paired with `Accent` as its `live`.</summary>
+    Color Second,
     Color Bg,
     Color Surface,
     Color SurfaceRaised,
@@ -46,6 +49,7 @@ public static class Palette
     public static readonly PaletteColors Light = new(
         Accent: Color.FromArgb(0x0E, 0x74, 0x90),
         AccentPressed: Color.FromArgb(0x15, 0x5E, 0x75),
+        Second: Color.FromArgb(0x6D, 0x28, 0xD9),
         Bg: Color.FromArgb(0xE4, 0xEA, 0xF2),
         Surface: Color.FromArgb(0xFF, 0xFF, 0xFF),
         SurfaceRaised: Color.FromArgb(0xFF, 0xFF, 0xFF),
@@ -63,6 +67,7 @@ public static class Palette
     public static readonly PaletteColors Dark = new(
         Accent: Color.FromArgb(0x22, 0xD3, 0xEE),
         AccentPressed: Color.FromArgb(0x67, 0xE8, 0xF9),
+        Second: Color.FromArgb(0xA7, 0x8B, 0xFA),
         Bg: Color.FromArgb(0x04, 0x07, 0x0E),
         Surface: Color.FromArgb(0x0A, 0x12, 0x20),
         SurfaceRaised: Color.FromArgb(0x0A, 0x12, 0x20),

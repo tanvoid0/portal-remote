@@ -8,7 +8,9 @@ using PortalRemote.Config;
 using PortalRemote.Devices;
 using PortalRemote.Control;
 using PortalRemote.Files;
+using PortalRemote.Metrics;
 using PortalRemote.Pairing;
+using PortalRemote.Secure;
 using PortalRemote.Share;
 using PortalRemote.Theme;
 using PortalRemote.Update;
@@ -32,6 +34,7 @@ public sealed class TrayIcon : IDisposable
     private readonly AiAssistant _assistant;
     private readonly AiHealth _ai;
     private readonly DeviceRegistry _devices;
+    private readonly SystemStats _stats;
     private readonly Action _onExit;
     private readonly NotifyIcon _icon;
     private Icon _idleIcon;
@@ -64,6 +67,7 @@ public sealed class TrayIcon : IDisposable
         AiAssistant assistant,
         AiHealth ai,
         DeviceRegistry devices,
+        SystemStats stats,
         Action onExit)
     {
         _config = config;
@@ -73,6 +77,7 @@ public sealed class TrayIcon : IDisposable
         _assistant = assistant;
         _ai = ai;
         _devices = devices;
+        _stats = stats;
         _onExit = onExit;
 
         // The tray owns the only window, so it's the only thing that can put an
@@ -140,6 +145,7 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add("Copy address", Glyph(Glyphs.Copy), (_, _) => CopyAddress());
         menu.Items.Add("Open shared folder", Glyph(Glyphs.FolderOpen), (_, _) => OpenShareFolder());
         menu.Items.Add("Fix network access…", Glyph(Glyphs.Wrench), (_, _) => FixNetworkAccess());
+        menu.Items.Add("Lock screen control…", Glyph(Glyphs.Lock), (_, _) => ToggleSecureDesktop());
         menu.Items.Add("Check for updates…", Glyph(Glyphs.Sync), async (_, _) => await CheckForUpdates());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", Glyph(Glyphs.Power), (_, _) => _onExit());
@@ -226,7 +232,10 @@ public sealed class TrayIcon : IDisposable
     public void ShowWindow()
     {
         if (_window is null || _window.IsDisposed)
-            _window = new MainForm(_config, _connectionState, _share, _ai, _devices) { OpenAssistant = ShowAssistant };
+            _window = new MainForm(_config, _connectionState, _share, _ai, _devices, _stats)
+            {
+                OpenAssistant = ShowAssistant,
+            };
         else
             _window.Refresh(_config);
 
@@ -276,6 +285,80 @@ public sealed class TrayIcon : IDisposable
             + "it the keyboard, the mouse, the screen and the shared folder.",
             confirmText: "Allow",
             cancelText: "Deny");
+    }
+
+    /// <summary>
+    /// Switch control of the lock screen and elevation prompts on or off.
+    ///
+    /// A dialog with the trade-off spelled out rather than a checkbox in a settings list,
+    /// because this is the one setting in the app that changes what a stolen pairing token
+    /// is worth — and the cost of reading one paragraph is paid once, by somebody who went
+    /// looking for the feature.
+    /// </summary>
+    private void ToggleSecureDesktop()
+    {
+        ShowWindow();
+
+        // The registry of record is the service itself, not the flag: if a previous
+        // install left one behind, offering to turn it "on" again would be a lie.
+        if (_config.EnableSecureDesktop || ServiceInstall.IsInstalled())
+        {
+            var off = TokenDialog.Show(
+                _window,
+                "Turn off lock screen control?",
+                "Your phone will stop working while this PC is locked or showing a Windows "
+                + "permission prompt. Everything else — trackpad, keyboard, files, casting — "
+                + "carries on exactly as it does now.\n\n"
+                + "The background service this uses will be removed. Windows will ask you to "
+                + "confirm that.",
+                "Turn off",
+                "Keep it on");
+            if (!off) return;
+
+            if (!ServiceInstall.Request(install: false))
+            {
+                TokenDialog.Show(_window, "Nothing was changed",
+                    "The service is still installed — Windows did not get permission to remove it.");
+                return;
+            }
+
+            _config.EnableSecureDesktop = false;
+            _config.Save();
+            // The watcher in this process keeps looking for a pipe that is now gone, which
+            // costs one failed connect every few seconds until the app next restarts.
+            // ponytail: left running; give the client a Stop() if that ever shows up.
+            Notify(ServerInfo.Name, "Lock screen control is off.");
+            return;
+        }
+
+        var on = TokenDialog.Show(
+            _window,
+            "Control this PC from the lock screen?",
+            "Windows keeps the lock screen and permission (UAC) prompts on a separate desktop "
+            + "that ordinary programs cannot touch. That is what guarantees a person is really "
+            + "at the machine.\n\n"
+            + "Turning this on installs a background service that gives your paired phone that "
+            + "reach. Your Windows password still cannot be bypassed — the phone can only type "
+            + "it — but anyone holding the pairing token could then answer a permission prompt "
+            + "and use the lock screen as if they were sitting here.\n\n"
+            + "Turn it on if this PC is somewhere you trust. Windows will ask you to confirm.",
+            "Turn on",
+            "Cancel",
+            destructive: true);
+        if (!on) return;
+
+        if (!ServiceInstall.Request(install: true))
+        {
+            TokenDialog.Show(_window, "Nothing was changed",
+                "The service was not installed — Windows did not get permission, or it could "
+                + "not be started. Nothing about how your phone works has changed.");
+            return;
+        }
+
+        _config.EnableSecureDesktop = true;
+        _config.Save();
+        SecureDesktopClient.Instance.Start();
+        Notify(ServerInfo.Name, "Lock screen control is on.");
     }
 
     /// <summary>

@@ -47,7 +47,49 @@ app window if it's ever suspected leaked.
   desktop", not "can move my mouse". GDI capture fails outright against the lock screen
   and the UAC secure desktop; the stream handler treats that as a skipped frame and holds
   the response open rather than dropping the client, so the mirror should resume on
-  unlock (coded for, not yet exercised live).
+  unlock (coded for, not yet exercised live). With **lock screen control** on — see the
+  next bullet — those frames come from the LocalSystem helper instead and the mirror keeps
+  running; with it off, nothing here changes.
+- **Lock screen control turns the pairing token into a SYSTEM-level credential, and is off
+  by default because of it.** Windows puts the lock screen, UAC prompts and Ctrl+Alt+Del
+  on a separate desktop (`Winlogon`) that only SYSTEM may open — the mechanism that
+  guarantees a human is physically at the machine. Switching this on (tray → *Lock screen
+  control…*, one UAC prompt) registers a LocalSystem service, which spawns a helper into
+  the console session to inject and capture there. It does **not** bypass the Windows
+  password: the phone can only type it. But it does mean whoever holds the token can
+  approve any elevation prompt and drive the lock screen, so a leaked token stops meaning
+  "this user" and starts meaning "this machine". Five things hold that in:
+  - **The service runs its own copy of the exe under Program Files, not the one it was
+    turned on from.** This app installs per-user into `%LOCALAPPDATA%\Programs`
+    (`PrivilegesRequired=lowest`), which the user — and so anything running as the user —
+    can write to, because the in-place updater overwrites the exe there. A LocalSystem
+    service pointed at that path would let any code running as the user replace the binary
+    and be SYSTEM at the next boot: a permanent escalation bought with one UAC prompt, and
+    a worse hole than the feature it was guarding. The elevated install copies the binary
+    somewhere only administrators can write and registers that. The cost is that an update
+    leaves the copy stale, which the tray notices and says so.
+  - The service is not registered at all until the feature is switched on, and is removed
+    when it is switched off or the app is uninstalled. A default install is the app that
+    existed before this feature, unchanged.
+  - The service never touches the network. Kestrel, pairing and the token check all stay
+    in the tray app running as the user — moving any of them into SYSTEM would make the
+    LAN token a direct SYSTEM credential rather than one hop away from one.
+  - Only input verbs (plus a request for one mirror frame) may cross to SYSTEM, checked on
+    both sides of the pipe. `cast`, `power`, `open_url` and the assistant never do.
+  - The control pipe is created **by** the service, so a process running as the user
+    cannot squat the name and impersonate it, and its DACL admits only LocalSystem,
+    Administrators and the account currently at the physical console — not `Everyone` and
+    not `Authenticated Users`, either of which would be a clean local escalation to
+    SYSTEM-on-the-secure-desktop. The service-to-helper pipe admits SYSTEM alone, and
+    additionally checks the connecting process is the helper it spawned.
+  - **Both ends check who they are talking to, not just who may talk to them.** A DACL
+    governs the pipe *we* made; it says nothing about the pipe we just connected to. So
+    each client connects with `TokenImpersonationLevel.Anonymous` — a squatted server
+    cannot impersonate it — and then refuses any pipe LocalSystem does not own. Ownership
+    is the check that cannot be forged: setting an object's owner to SYSTEM needs
+    `SeRestorePrivilege`, which the account this defends against does not have. The server
+    also holds each pipe name for the life of the service rather than dropping it between
+    clients, so there is no instant in which the name is free to take.
 - **A file cast from the phone to a TV carries its own secret, not the pairing token.**
   The phone serves picked files at `http://phone:port/f/<id>?token=…`, and that URL is
   handed to whatever plays it — which, since the Roku and DLNA senders landed, can be a

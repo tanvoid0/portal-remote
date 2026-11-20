@@ -79,6 +79,11 @@ data class AppSettings(
      *  app is drawn in. Only the accents are the user's to pick: the neutrals, and what
      *  amber and red mean, are legibility decisions the app has already made. */
     val accent: String = "ICE",
+    /** The two hue angles the `CUSTOM` accent is built from, within the arc the picker
+     *  offers (yellow round to pink; red and amber are status). Kept even while a preset
+     *  is on, so switching back doesn't lose the pair someone dialled in. */
+    val accentHue: Float = 175f,
+    val accentSecondHue: Float = 330f,
 )
 
 /** Persists the last-paired server so the app can reconnect without rescanning. */
@@ -99,6 +104,8 @@ class Prefs(private val context: Context) {
         val MIRROR_PRESET = stringPreferencesKey("mirror_preset")
         val HAPTICS = booleanPreferencesKey("haptics")
         val ACCENT = stringPreferencesKey("accent")
+        val ACCENT_HUE = floatPreferencesKey("accent_hue")
+        val ACCENT_SECOND_HUE = floatPreferencesKey("accent_second_hue")
         val DECK_ITEMS = stringPreferencesKey("deck_items")
         val QUICK_PHRASES = stringPreferencesKey("quick_phrases")
         val PAD_LEGEND_SEEN = booleanPreferencesKey("pad_legend_seen")
@@ -139,6 +146,8 @@ class Prefs(private val context: Context) {
             mirrorPreset = prefs[Keys.MIRROR_PRESET] ?: defaults.mirrorPreset,
             haptics = prefs[Keys.HAPTICS] ?: defaults.haptics,
             accent = prefs[Keys.ACCENT] ?: defaults.accent,
+            accentHue = prefs[Keys.ACCENT_HUE] ?: defaults.accentHue,
+            accentSecondHue = prefs[Keys.ACCENT_SECOND_HUE] ?: defaults.accentSecondHue,
         )
     }
 
@@ -152,6 +161,8 @@ class Prefs(private val context: Context) {
             prefs[Keys.MIRROR_PRESET] = settings.mirrorPreset
             prefs[Keys.HAPTICS] = settings.haptics
             prefs[Keys.ACCENT] = settings.accent
+            prefs[Keys.ACCENT_HUE] = settings.accentHue
+            prefs[Keys.ACCENT_SECOND_HUE] = settings.accentSecondHue
         }
     }
 
