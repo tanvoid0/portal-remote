@@ -63,6 +63,13 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.filled.Mouse
+import androidx.compose.material.icons.filled.UnfoldMore
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -273,6 +280,17 @@ fun ScreenScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
     var typing by remember { mutableStateOf(false) }
+    var options by remember { mutableStateOf(false) }
+    // Full-screen controls: shown by a still long press on the picture, so no corner
+    // button or edge sits on top of the desktop's own corners.
+    var revealed by remember { mutableStateOf(false) }
+    LaunchedEffect(revealed, fullscreen) {
+        if (revealed && fullscreen) { kotlinx.coroutines.delay(6000); revealed = false }
+    }
+    // A visible scroll strip down the right edge, live at every zoom. On by default
+    // because two-finger scrolling is the thing users fail at; off for anyone who needs
+    // clicks on the desktop's right edge. See MIRROR_RAIL_WIDTH.
+    var scrollStrip by rememberSaveable { mutableStateOf(false) }
     // Pinch-zoom is the answer to "I can't read that", but nothing on a bare video
     // frame says so. One line, gone the moment a finger lands — see the same pattern
     // on the trackpad.
@@ -287,6 +305,17 @@ fun ScreenScreen(
     // outside composition and needs the state objects themselves.
     val zoom = remember { mutableStateOf(1f) }
     val pan = remember { mutableStateOf(Offset.Zero) }
+
+    // What the toolbar says instead of nine chips: the source and the quality, one line.
+    val summary = buildString {
+        append(
+            window?.process?.ifEmpty { null }
+                ?: if (monitor == ALL_MONITORS) "All displays"
+                else monitors.firstOrNull { it.index == monitor }?.label ?: "Display",
+        )
+        append(" · ").append(preset.label)
+        if (touchMode) append(" · Touch")
+    }
 
     // The app is locked portrait (see AndroidManifest) everywhere except here: this is
     // the one screen whose content is itself a wide picture. Unconditional because this
@@ -379,6 +408,7 @@ fun ScreenScreen(
                             // effect until the handler was restarted for some other reason.
                             .pointerInput(
                                 monitor, window, settings.naturalScroll, haptics, settings.momentum, touchMode,
+                                scrollStrip,
                             ) {
                                 if (touchMode) {
                                     touchPassthroughGestures(monitor, window?.handle, send) { touched = true }
@@ -386,8 +416,10 @@ fun ScreenScreen(
                                     mirrorGestures(
                                         monitor, window?.handle, zoom, pan, haptics, wheel,
                                         MomentumLevel.from(settings.momentum), scope, send,
+                                        scrollStrip, { revealed = true },
                                     ) {
                                         touched = true
+                                        revealed = false
                                     }
                                 }
                             }
@@ -402,6 +434,26 @@ fun ScreenScreen(
                 }
 
                 if (!touched && frame != null && error == null) MirrorGestureHint()
+
+                // Shows where the strip is; no pointer handler, so touches still reach
+                // the frame's gesture loop, which owns the strip's behaviour.
+                if (scrollStrip && !touchMode && frame != null && error == null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .width(MIRROR_RAIL_WIDTH)
+                            .fillMaxHeight(0.5f)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(Color.White.copy(alpha = 0.08f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.UnfoldMore,
+                            contentDescription = "Scroll strip",
+                            tint = Color.White.copy(alpha = 0.5f),
+                        )
+                    }
+                }
 
                 // Typing while watching the screen you're typing into is the whole
                 // point, so the keyboard lives here rather than on its own tab — the
@@ -419,20 +471,13 @@ fun ScreenScreen(
 
             if (!fullscreen) {
                 MirrorControls(
-                    monitors = monitors,
-                    monitor = monitor,
-                    window = window,
-                    preset = preset,
+                    summary = summary,
                     zoom = zoom.value,
                     typing = typing,
-                    touchMode = touchMode,
                     fullscreen = false,
-                    onMonitor = { monitor = it; window = null },
-                    onPickWindow = { pickingWindow = true },
-                    onPreset = { preset = it; onPresetChange(it) },
+                    onOptions = { options = true },
                     onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
                     onToggleTyping = { typing = !typing },
-                    onToggleTouchMode = { touchMode = !touchMode },
                     onToggleFullscreen = { onFullscreen(true) },
                 )
             }
@@ -440,20 +485,34 @@ fun ScreenScreen(
 
         if (fullscreen) {
             FloatingMirrorControls(
+                visible = revealed,
+                summary = summary,
+                zoom = zoom.value,
+                typing = typing,
+                onOptions = { options = true; revealed = false },
+                onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
+                onToggleTyping = { typing = !typing; revealed = false },
+                onExitFullscreen = { onFullscreen(false) },
+            )
+        }
+    }
+
+    if (options) {
+        ModalBottomSheet(onDismissRequest = { options = false }) {
+            MirrorOptionsSheet(
                 monitors = monitors,
                 monitor = monitor,
                 window = window,
                 preset = preset,
-                zoom = zoom.value,
-                typing = typing,
                 touchMode = touchMode,
-                onMonitor = { monitor = it; window = null },
-                onPickWindow = { pickingWindow = true },
+                scrollStrip = scrollStrip,
+                zoomed = zoom.value > 1f,
+                onMonitor = { monitor = it; window = null; options = false },
+                onPickWindow = { options = false; pickingWindow = true },
                 onPreset = { preset = it; onPresetChange(it) },
+                onTouchMode = { touchMode = it },
+                onScrollStrip = { scrollStrip = it },
                 onResetZoom = { zoom.value = 1f; pan.value = Offset.Zero },
-                onToggleTyping = { typing = !typing },
-                onToggleTouchMode = { touchMode = !touchMode },
-                onExitFullscreen = { onFullscreen(false) },
             )
         }
     }
@@ -563,43 +622,19 @@ private fun pickerRowColors(selected: Boolean) = ListItemDefaults.colors(
  */
 @Composable
 private fun FloatingMirrorControls(
-    monitors: List<RemoteMonitor>,
-    monitor: Int?,
-    window: RemoteWindow?,
-    preset: MirrorPreset,
+    visible: Boolean,
+    summary: String,
     zoom: Float,
     typing: Boolean,
-    touchMode: Boolean,
-    onMonitor: (Int?) -> Unit,
-    onPickWindow: () -> Unit,
-    onPreset: (MirrorPreset) -> Unit,
+    onOptions: () -> Unit,
     onResetZoom: () -> Unit,
     onToggleTyping: () -> Unit,
-    onToggleTouchMode: () -> Unit,
     onExitFullscreen: () -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-
-    // No pointer handler on this Box itself, so everything that isn't the button or
-    // the panel falls straight through to the frame's gesture loop underneath.
+    // No pointer handler on this Box itself, so everything that isn't the panel falls
+    // straight through to the frame's gesture loop underneath.
     Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-        IconButton(
-            onClick = { open = !open },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(8.dp)
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.35f)),
-        ) {
-            Icon(
-                if (open) Icons.Filled.Close else Icons.Filled.Tune,
-                contentDescription = if (open) "Hide controls" else "Show controls",
-                tint = Color.White,
-            )
-        }
-
-        if (open) {
+        if (visible) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
                 // Same shape and edge as the floating keyboard beside it: two floating
@@ -611,22 +646,15 @@ private fun FloatingMirrorControls(
                 border = BorderStroke(1.dp, PortalRemoteTheme.hud.edge),
             ) {
                 MirrorControls(
-                    monitors = monitors,
-                    monitor = monitor,
-                    window = window,
-                    preset = preset,
+                    summary = summary,
                     zoom = zoom,
                     typing = typing,
-                    touchMode = touchMode,
                     fullscreen = true,
-                    onMonitor = onMonitor,
-                    onPickWindow = onPickWindow,
-                    onPreset = onPreset,
+                    onOptions = onOptions,
                     onResetZoom = onResetZoom,
                     // The keyboard lands where this panel is; two floating panels on
-                    // one edge is one too many, and the chips are not needed mid-type.
-                    onToggleTyping = { open = false; onToggleTyping() },
-                    onToggleTouchMode = onToggleTouchMode,
+                    // one edge is one too many, and the bar is not needed mid-type.
+                    onToggleTyping = onToggleTyping,
                     onToggleFullscreen = onExitFullscreen,
                 )
             }
@@ -742,6 +770,7 @@ private fun FloatingKeyboard(
 @Composable
 private fun MirrorGestureHint() {
     Text(
+        "Long press still for controls\n" +
         "Pinch to zoom · two fingers scroll, hold to keep going\n" +
             "Swipe two to go back · three for desktops",
         style = MaterialTheme.typography.bodySmall,
@@ -772,6 +801,9 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
      *  can't just be launched from here. */
     scope: CoroutineScope,
     send: (JSONObject) -> Unit,
+    /** Strip live at 1x too, not only once zoomed. */
+    stripAlways: Boolean,
+    onReveal: () -> Unit,
     onTouch: () -> Unit,
 ) {
     val longPressTimeoutMs = viewConfiguration.longPressTimeoutMillis
@@ -797,7 +829,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
         // The rail is decided by where the finger *landed*, once, same as the
         // trackpad's — a drag that wanders out of the strip keeps scrolling, and one
         // that wanders in stays whatever it already was.
-        val onRail = zoom.value > 1f && down.position.x >= area.width - MIRROR_RAIL_WIDTH.toPx()
+        val onRail = (stripAlways || zoom.value > 1f) && down.position.x >= area.width - MIRROR_RAIL_WIDTH.toPx()
         var mode = if (onRail) TouchMode.RAIL else TouchMode.WAITING
         // A rail touch isn't pointing at anything on the desktop — moving the cursor
         // under it would drag the pointer to the edge of the screen for no reason.
@@ -808,6 +840,9 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
         var panTravel = 0f
         var twoFinger = TwoFingerIntent.UNDECIDED
         var pointerCount = 1
+        // The button goes down on the first move after a long press, not at the press
+        // itself - a still long press is the way to bring up the controls.
+        var dragDown = false
         // The axis a three-finger swipe committed to, and whether it has already fired.
         // A swipe says its piece once, however far the fingers carry on — and a release
         // after one must not also click, the same rule the pad has.
@@ -849,7 +884,6 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                 // finger can now drag a window, a selection, a slider.
                 mode = TouchMode.DRAG
                 haptics.press()
-                send(Protocol.mouseClick("left", down = true))
                 continue
             }
 
@@ -876,6 +910,9 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                 when {
                     // A tap on the rail is not a click — the strip is a scrollbar.
                     mode == TouchMode.RAIL -> Unit
+                    // Held still, never moved: that was a request for the controls, not
+                    // a click. Moved: the button went down at the first move, so up now.
+                    mode == TouchMode.DRAG && !dragDown -> onReveal()
                     mode == TouchMode.DRAG -> {
                         haptics.tick()
                         send(Protocol.mouseClick("left", down = false))
@@ -1001,6 +1038,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                         TwoFingerIntent.PAN ->
                             pan.value = clampPan(pan.value + centroidShift, zoom.value, area)
 
+                        // (Stale below: two fingers sideways at 1x is back/forward.)
                         // Both axes, unlike the trackpad — the pad spends its
                         // horizontal two-finger gesture on back/forward, but nothing
                         // competes for it here, and a wide timeline or spreadsheet is
@@ -1089,6 +1127,12 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.mirrorGe
                     if (mode == TouchMode.WAITING) {
                         if (totalMove <= TAP_SLOP) continue
                         mode = TouchMode.POINT
+                    }
+                    if (mode == TouchMode.DRAG && !dragDown &&
+                        (primary.position - down.position).getDistance() > TAP_SLOP
+                    ) {
+                        dragDown = true
+                        send(Protocol.mouseClick("left", down = true))
                     }
                     pointAt(primary.position.x, primary.position.y)
                 }
@@ -1179,100 +1223,152 @@ private fun MirrorMessage(message: String, onRetry: () -> Unit) {
     }
 }
 
-/** Monitor picker (only when there's a choice to make), the app chip, plus the quality preset. */
+/**
+ * The toolbar: one compact row. The summary opens the options sheet (source, quality,
+ * input mode, scroll strip) — everything that is set once and left, kept off the
+ * row so the row can be four big targets instead of nine small chips that scroll
+ * sideways and hide the one you wanted.
+ */
 @Composable
 private fun MirrorControls(
-    monitors: List<RemoteMonitor>,
-    monitor: Int?,
-    window: RemoteWindow?,
-    preset: MirrorPreset,
+    summary: String,
     zoom: Float,
     typing: Boolean,
-    touchMode: Boolean,
     fullscreen: Boolean,
-    onMonitor: (Int?) -> Unit,
-    onPickWindow: () -> Unit,
-    onPreset: (MirrorPreset) -> Unit,
+    onOptions: () -> Unit,
     onResetZoom: () -> Unit,
     onToggleTyping: () -> Unit,
-    onToggleTouchMode: () -> Unit,
     onToggleFullscreen: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Three unrelated groups of chips share this one scrolling row — which monitor,
-        // how good it looks, and what a touch does. Every chip carries its group's
-        // glyph so the row reads as three runs rather than as nine similar pills.
-        if (monitors.size > 1) {
-            monitors.forEach { display ->
-                FilterChip(
-                    selected = window == null && monitor == display.index,
-                    onClick = { onMonitor(display.index) },
-                    leadingIcon = { ChipIcon(Icons.Filled.Monitor) },
-                    label = { Text(display.label) },
-                )
-            }
-            FilterChip(
-                selected = window == null && monitor == ALL_MONITORS,
-                onClick = { onMonitor(ALL_MONITORS) },
-                leadingIcon = { ChipIcon(Icons.Filled.SelectAll) },
-                label = { Text("All") },
-            )
+        TextButton(onClick = onOptions, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Filled.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(8.dp))
+            Text(summary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         }
-        // One app rather than a display. Names the app while one is picked so the row
-        // says what the frame is showing; tapping it again opens the list to change.
-        FilterChip(
-            selected = window != null,
-            onClick = onPickWindow,
-            leadingIcon = { ChipIcon(Icons.Filled.WebAsset) },
-            label = { Text(window?.process?.ifEmpty { null } ?: "App") },
-        )
-        MirrorPreset.entries.forEach { option ->
-            FilterChip(
-                selected = preset == option,
-                onClick = { onPreset(option) },
-                leadingIcon = { ChipIcon(option.icon) },
-                label = { Text(option.label) },
-            )
-        }
-        FilterChip(
-            selected = typing,
-            onClick = onToggleTyping,
-            leadingIcon = { ChipIcon(Icons.Filled.Keyboard) },
-            label = { Text("Type") },
-        )
-        FilterChip(
-            selected = touchMode,
-            onClick = onToggleTouchMode,
-            leadingIcon = { ChipIcon(Icons.Filled.TouchApp) },
-            label = { Text("Touch") },
-        )
-        FilterChip(
-            selected = fullscreen,
-            onClick = onToggleFullscreen,
-            leadingIcon = {
-                ChipIcon(if (fullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen)
-            },
-            label = { Text(if (fullscreen) "Exit" else "Full screen") },
-        )
-        // Pinching back to exactly 1x is fiddly, so offer the way out explicitly —
-        // and only while there's something to undo.
+        // Pinching back to exactly 1x is fiddly, so offer the way out — only while
+        // there's something to undo.
         if (zoom > 1f) {
-            FilterChip(
-                selected = false,
-                onClick = onResetZoom,
-                leadingIcon = { ChipIcon(Icons.Filled.FitScreen) },
-                label = { Text("${"%.1f".format(zoom)}× · reset") },
+            TextButton(onClick = onResetZoom) { Text("${"%.1f".format(zoom)}× reset") }
+        }
+        IconButton(onClick = onToggleTyping) {
+            Icon(
+                Icons.Filled.Keyboard,
+                contentDescription = if (typing) "Stop typing" else "Type on PC",
+                tint = if (typing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onToggleFullscreen) {
+            Icon(
+                if (fullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+                contentDescription = if (fullscreen) "Exit full screen" else "Full screen",
             )
         }
     }
 }
+
+/** Everything the old chip row held, in one wrapping sheet: no sideways scrolling, a
+ *  heading per choice, nothing hidden off the edge. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MirrorOptionsSheet(
+    monitors: List<RemoteMonitor>,
+    monitor: Int?,
+    window: RemoteWindow?,
+    preset: MirrorPreset,
+    touchMode: Boolean,
+    scrollStrip: Boolean,
+    zoomed: Boolean,
+    onMonitor: (Int?) -> Unit,
+    onPickWindow: () -> Unit,
+    onPreset: (MirrorPreset) -> Unit,
+    onTouchMode: (Boolean) -> Unit,
+    onScrollStrip: (Boolean) -> Unit,
+    onResetZoom: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp).padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OptionHeading("Show")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (monitors.size > 1) {
+                monitors.forEach { d ->
+                    FilterChip(
+                        selected = window == null && monitor == d.index,
+                        onClick = { onMonitor(d.index) },
+                        leadingIcon = { ChipIcon(Icons.Filled.Monitor) },
+                        label = { Text(d.label) },
+                    )
+                }
+                FilterChip(
+                    selected = window == null && monitor == ALL_MONITORS,
+                    onClick = { onMonitor(ALL_MONITORS) },
+                    leadingIcon = { ChipIcon(Icons.Filled.SelectAll) },
+                    label = { Text("All") },
+                )
+            }
+            FilterChip(
+                selected = window != null,
+                onClick = onPickWindow,
+                leadingIcon = { ChipIcon(Icons.Filled.WebAsset) },
+                label = { Text(window?.process?.ifEmpty { null } ?: "One app…") },
+            )
+        }
+        OptionHeading("Quality")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MirrorPreset.entries.forEach { o ->
+                FilterChip(
+                    selected = preset == o,
+                    onClick = { onPreset(o) },
+                    leadingIcon = { ChipIcon(o.icon) },
+                    label = { Text(o.label) },
+                )
+            }
+        }
+        OptionHeading("Touch does")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = !touchMode,
+                onClick = { onTouchMode(false) },
+                leadingIcon = { ChipIcon(Icons.Filled.Mouse) },
+                label = { Text("Mouse clicks") },
+            )
+            FilterChip(
+                selected = touchMode,
+                onClick = { onTouchMode(true) },
+                leadingIcon = { ChipIcon(Icons.Filled.TouchApp) },
+                label = { Text("Real touch") },
+            )
+        }
+        ListItem(
+            headlineContent = { Text("Scroll strip") },
+            supportingContent = { Text("Drag the right edge to scroll. Turn off to click there.") },
+            trailingContent = { Switch(checked = scrollStrip, onCheckedChange = onScrollStrip) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = Modifier.padding(horizontal = 0.dp),
+        )
+        if (zoomed) {
+            TextButton(onClick = onResetZoom) {
+                ChipIcon(Icons.Filled.FitScreen)
+                Spacer(Modifier.size(8.dp))
+                Text("Reset zoom")
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionHeading(text: String) = Text(
+    text,
+    style = MaterialTheme.typography.labelLarge,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.padding(top = 8.dp),
+)
 
 /** Chip leading icons at Material3's own 18dp, which `Icon`'s 24dp default overshoots
  *  — nine chips on one scrolling row can't spend 6dp each on nothing. Shared with
