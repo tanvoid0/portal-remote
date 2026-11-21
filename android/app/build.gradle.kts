@@ -43,6 +43,12 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
+            // Installs beside the release app instead of clashing with it: a local build
+            // is version code 1 and CI's is the run number, so on a phone that already
+            // has a release Android refuses the debug one as a downgrade. Own app id also
+            // means its own pairing data.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
             // The server speaks plain HTTP on the LAN, allowed via the network
             // security config rather than a blanket cleartext opt-in.
             isMinifyEnabled = false
